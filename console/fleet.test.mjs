@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { sharedHomeName } from './homes.mjs';
 import { withDefaultReview } from './defaultReview.mjs';
 
+import { sessionForStartToken, startTokenHash } from './sessionStarts.mjs';
 import { commentConsoleUrl, createFleet, failedComment, failureReason, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
 
 const APPROVAL_GRACE_MS = 5 * 60_000;
@@ -16,7 +17,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null, reviewAgents = null, reviewGates = undefined } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null, reviewAgents = null, reviewGates = undefined, startableRepos = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
@@ -110,7 +111,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     ...(runsOnName ? { runsOnName } : {}),
   };
   const fleet = createFleet({
-    config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, qaRecordings, now: () => clock,
+    config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, qaRecordings, now: () => clock, startableRepos,
     pings, pullRequests: async () => gates, ...(reviewGates !== undefined ? { reviewGates: typeof reviewGates === 'function' ? reviewGates : async () => reviewGates } : {}), projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, reviewAgents, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
@@ -193,6 +194,23 @@ test('a label from a writer starts a session and announces it on the issue', asy
   assert.equal(env.STARTED_BY, 'joel');
   assert.equal(env.SESSION_URL, `https://console.test/s/${session.id}`);
   assert.equal(env.PGHOST, 'db');
+});
+
+test('a private session names its agent to the container, and a resume of one but claude starts its prompt again', async () => {
+  const { fleet, calls } = setup();
+  const grok = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', agent: 'grok', model: 'grok-build', effort: 'high', permissionMode: 'acceptEdits' });
+  assert.deepEqual([calls.started[0].env.AGENT, calls.started[0].env.MODEL, calls.started[0].env.EFFORT], ['grok', 'grok-build', 'high']);
+  await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', agent: 'opencode', model: 'anthropic/claude-sonnet-4-5' });
+  assert.equal(calls.started[1].env.AGENT, 'opencode');
+  await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  assert.equal(calls.started[2].env.AGENT, undefined, 'claude is the image\'s default');
+  await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: '', agent: 'grok' }), /say what Grok Build should do/);
+  await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: 'x', agent: 'opencode', model: 'no-provider' }), /not a name OpenCode takes/);
+  grok.claudeSession = '0b6e9c7a-1d2f-4e5a-9b8c-7d6e5f4a3b2c';
+  await fleet.stopSession?.(grok.id).catch(() => {});
+  grok.status = 'stopped';
+  await fleet.resumePrivate({ owner: 'joel', id: grok.id });
+  assert.equal(grok.resumeClaude, null, 'only claude reopens a conversation');
 });
 
 test('a session is told the domain its app answers under, and nothing when session apps are off', async () => {
@@ -394,6 +412,37 @@ test('a comment on the pull request a shared session opened goes to that session
   assert.deepEqual(resumed, { outcome: 'resumed', sessionId: session.id });
   assert.equal(fleet.sessions().length, 1);
   assert.equal(calls.started.length, 2);
+});
+
+test('a pull request on another repo is kept only for a private session, on a project its owner may start on', async () => {
+  const projects = [
+    { name: 'r', repo: 'o/r', default: true },
+    { name: 'cloud', repo: 'o/cloud', default: false },
+    { name: 'secret', repo: 'o/secret', default: false },
+  ];
+  const asked = [];
+  const { fleet, statuses, advance } = setup({ projects, startableRepos: async (login) => { asked.push(login); return ['o/r', 'o/cloud']; } });
+  const own = 'https://github.com/o/r/pull/7';
+  const cloud = 'https://github.com/o/cloud/pull/151';
+  const secret = 'https://github.com/o/secret/pull/1';
+  const mine = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const shared = fleet.sessions().find((s) => !s.owner);
+  statuses[mine.id] = { state: 'done', prUrl: own, prUrls: [own, cloud, secret] };
+  statuses[shared.id] = { state: 'done', prUrl: own, prUrls: [own, cloud] };
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().find((s) => s.id === mine.id).prUrls, [own, cloud], 'a project the owner may not start on is dropped');
+  assert.deepEqual(fleet.sessions().find((s) => s.id === shared.id).prUrls, [own], 'a shared session keeps its own repo\'s alone');
+  assert.deepEqual(asked, ['joel'], 'asked for the private session alone');
+  statuses[mine.id] = { state: 'done', prUrl: own, prUrls: [own] };
+  await fleet.tick();
+  assert.equal(asked.length, 1, 'not asked when the status names no other repo');
+  statuses[mine.id] = { state: 'done', prUrl: own, prUrls: [own, cloud] };
+  await fleet.tick();
+  assert.equal(asked.length, 1, 'kept a minute');
+  advance(61_000);
+  await fleet.tick();
+  assert.equal(asked.length, 2, 'asked again after it');
 });
 
 test('a container that dies while starting fails with its last log line', async () => {
@@ -1175,6 +1224,45 @@ test('a session started or resumed for a parent in its person\'s Herdr is told t
   assert.equal(envOf(child).WOODSHED_HERDR_PARENT, '1', 'woodshed session herdr --parent resumes it waiting');
 });
 
+test('each run of a person\'s own session gets a start token, kept only as its hash, and none once it stops', async () => {
+  const { fleet, calls, statuses, store } = setup();
+  const envOf = (session) => calls.started.filter((c) => c.env.SESSION_ID === session.id).at(-1).env;
+  const mine = await fleet.startPrivate({ owner: 'joel', prompt: 'Plan the billing page' });
+  const token = envOf(mine).WOODSHED_START_TOKEN;
+  assert.match(token, /^wst_[0-9a-f]{64}$/);
+  assert.equal(mine.startTokenHash, startTokenHash(token));
+  assert.ok(!JSON.stringify(store.state).includes(token), 'the console keeps the hash, never the token');
+  assert.equal(sessionForStartToken(token, fleet.sessions())?.id, mine.id);
+
+  const shared = await fleet.createSession({ kind: 'task', number: null, title: 's', startedBy: 'joel', trigger: 'console', prompt: 'p' });
+  assert.equal(envOf(shared).WOODSHED_START_TOKEN, undefined, 'a shared session has no one person to start sessions as');
+
+  const child = await fleet.startPrivate({ owner: 'joel', prompt: 'Add CSV export', startedFrom: mine.id });
+  assert.equal(child.startedFrom, mine.id);
+  assert.equal(child.startedApart, undefined, 'a piece of the starting session\'s work');
+  const apart = await fleet.startPrivate({ owner: 'joel', prompt: 'Audit refunds', startedFrom: mine.id, startedApart: true });
+  assert.deepEqual([apart.startedFrom, apart.startedApart], [mine.id, true], 'work of its own, still saying where it came from');
+  const ofTeam = await fleet.createSession({ kind: 'task', number: null, title: 't', startedBy: 'joel', trigger: 'label', startedFrom: mine.id, startedApart: true });
+  assert.deepEqual([ofTeam.startedFrom, ofTeam.startedApart], [undefined, undefined], 'only a person\'s own session says where it came from');
+
+  statuses[mine.id] = { state: 'working' };
+  await fleet.tick();
+  await fleet.stop(mine, 'stopped from the console', { by: 'joel' });
+  assert.equal(mine.startTokenHash, null, 'a stopped session starts nothing more');
+  assert.equal(sessionForStartToken(token, fleet.sessions()), null);
+  assert.equal(fleet.find(child.id).status, 'starting', 'stopping it does nothing to the session it started');
+
+  await fleet.resumePrivate({ owner: 'joel', id: mine.id });
+  const again = envOf(mine).WOODSHED_START_TOKEN;
+  assert.ok(again && again !== token, 'a resume is a new run, with a token of its own');
+  assert.equal(sessionForStartToken(token, fleet.sessions()), null, 'the last run\'s token still does nothing');
+  assert.equal(sessionForStartToken(again, fleet.sessions())?.id, mine.id);
+
+  // Once it has seen production data it starts nothing, whatever token it holds.
+  mine.taintedAt = new Date().toISOString();
+  assert.equal(sessionForStartToken(again, fleet.sessions()), null);
+});
+
 test('Resume starts a private session whose start failed again, with the conversation it had before', async () => {
   const { fleet, calls, statuses, alive } = setup();
   const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
@@ -1218,6 +1306,14 @@ test('Resume starts a stopped private session again on its branch, reopening cla
   await fleet.stop(never, 'stopped from the console');
   const fresh = await fleet.resumePrivate({ owner: 'joel', id: never.id });
   assert.equal(fresh.prompt, 'Never got going');
+
+  // The agents its owner started beside its own in the last run, and what they were allowed, are not this run's.
+  await fleet.stop(fresh, 'stopped from the console');
+  fleet.allowAgent(fresh, 'codex');
+  fresh.agents = [{ id: 'agent-2', agent: 'codex' }];
+  await fleet.resumePrivate({ owner: 'joel', id: fresh.id });
+  assert.equal(fresh.extraAgents, null);
+  assert.equal(fresh.agents, null);
   assert.equal(calls.started.at(-1).env.RESUME_SESSION, undefined);
 });
 
@@ -2976,6 +3072,24 @@ test('a review runs whom its author chose, and says so on the pull request', asy
   assert.match(codex.calls.comments[0].body, /Reviewing\*\* with Codex in/);
 });
 
+test('a review on its author\'s Grok Build and OpenCode sign-ins records whose they are, and the session gets none of them', async (t) => {
+  const lines = [];
+  t.mock.method(console, 'log', (...args) => lines.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')));
+  const ownSignIns = { grok: { login: 'joel', via: 'login' }, opencode: { login: 'joel', provider: 'openai' } };
+  const { fleet, calls } = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['claude', 'grok', 'opencode'], choice: 'claude+grok+opencode', ownSignIns, why: null }) } });
+  await fleet.reviewOnTag({ number: 7 });
+  const [session] = fleet.sessions();
+  assert.deepEqual(session.review.ownSignIns, ownSignIns);
+  await fleet.tick();
+  const env = calls.started[0].env;
+  assert.equal(env.REVIEW_AGENTS, 'claude grok opencode');
+  assert.equal(env.REVIEW_OPENCODE_PROVIDER, 'openai', 'which provider its config points at the console');
+  assert.equal(env.REVIEW_CODEX_AUTH, undefined);
+  assert.ok(!Object.keys(env).some((k) => /XAI_API_KEY|AGENT_AUTH|GROK|OPENAI_API_KEY|ANTHROPIC_API_KEY/.test(k)), 'no sign-in in the session');
+  assert.match(calls.comments[0].body, /Reviewing\*\* with Claude Code, Grok Build and OpenCode in/);
+  assert.ok(lines.some((l) => l.includes('fleet: review session started') && l.includes('"grok":"own login"') && l.includes('"opencode":"own openai key"')));
+});
+
 test('team keys that could not be read start no review and skip nothing: QA and the Slack post keep waiting', async () => {
   const unread = { forReview: async () => ({ agents: [], choice: null, why: 'the team keys could not be read: timed out', keysUnread: true }) };
   const gates = { ...QA_GATES, review: { ...PULL_GATES.review, rerun: '[woodshed-review]', runner: 'woodshed' } };
@@ -3029,6 +3143,41 @@ test('a head without the review tag starts nothing', async () => {
   github.commitMessage = async () => 'feat: no tag here';
   assert.deepEqual(await fleet.reviewOnTag({ number: 7 }), { unrecorded: true });
   assert.equal(fleet.sessions().length, 0);
+});
+
+// #333 and #334: the review approved the head, then the session merged main in with git's own message, which carries
+// no tag, and the repo dismissed the stale approval. The pull request sat with no approval and no review coming.
+test('a push that dismissed the review\'s approval is reviewed again, tag or not', async () => {
+  const approved = 'a'.repeat(40);
+  const merged = 'b'.repeat(40);
+  const untagged = (state) => {
+    const t = reviewSetup();
+    let head = approved;
+    t.github.pull = async () => ({ ...REVIEW_PULL, head: { ...REVIEW_PULL.head, sha: head } });
+    t.github.reviews = async () => [{ id: 1, user: { login: 'woodshed-reviewer[bot]' }, state, commit_id: approved, body: '## Woodshed review — APPROVE' }];
+    return { ...t, push: (message) => { head = merged; t.github.commitMessage = async () => message; } };
+  };
+
+  const dismissed = untagged('DISMISSED');
+  await dismissed.fleet.reviewOnTag({ number: 7 });
+  await dismissed.fleet.reviewFinished(dismissed.fleet.sessions()[0], REVIEW_RESULT);
+  dismissed.push("Merge remote-tracking branch 'origin/main' into woodshed/joel-1234abcd");
+  const again = await dismissed.fleet.reviewOnTag({ number: 7 });
+  assert.equal(again.outcome, 'started', JSON.stringify(again));
+  assert.equal(dismissed.fleet.sessions()[1].review.sha, merged);
+  assert.deepEqual(await dismissed.fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'once for the commit');
+
+  const kept = untagged('APPROVED');
+  await kept.fleet.reviewOnTag({ number: 7 });
+  await kept.fleet.reviewFinished(kept.fleet.sessions()[0], REVIEW_RESULT);
+  kept.push("Merge branch 'main' into joel/gtm");
+  assert.deepEqual(await kept.fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'a repo that keeps stale approvals still has one');
+
+  const changes = untagged('DISMISSED');
+  await changes.fleet.reviewOnTag({ number: 7 });
+  await changes.fleet.reviewFinished(changes.fleet.sessions()[0], { ...REVIEW_RESULT, conclusion: 'REQUEST_CHANGES' });
+  changes.push('fix: half of it');
+  assert.deepEqual(await changes.fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'a fix after changes were asked for waits for the tag, as before');
 });
 
 test('reviewFinished submits the formal review and the Merge risk check as the console App, then stops', async () => {
@@ -4249,7 +4398,7 @@ test('a hand-off and a lockdown never overlap: a lockdown under way refuses the 
   assert.deepEqual(attachments.written, {}, 'no attachment');
 });
 
-test('a hand-off checks the branch before it stops anything, and carries the permission mode the new agent runs', async () => {
+test('a hand-off checks the branch before it stops anything, and gives the new agent no looser a permission mode than the old one had', async () => {
   const { fleet, statuses, answers, github } = setup({ attachments: fakeAttachments() });
   github.defaultBranch = async () => 'main';
   answers['/transcript'] = { entries: [] };
@@ -4268,7 +4417,12 @@ test('a hand-off checks the branch before it stops anything, and carries the per
   statuses[edits.id] = { state: 'done', branch: 'joel/edits' };
   await fleet.tick();
   const fromEdits = await fleet.handOffPrivate({ owner: 'joel', id: edits.id, agent: 'codex' });
-  assert.equal(fromEdits.options.permissionMode, 'auto', 'Codex has no acceptEdits: its default');
+  assert.equal(fromEdits.options.permissionMode, 'plan', 'Codex has no acceptEdits, and its next mode runs commands unasked: read-only');
+  const auto = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/auto' });
+  statuses[auto.id] = { state: 'done', branch: 'joel/auto' };
+  await fleet.tick();
+  const toGrok = await fleet.handOffPrivate({ owner: 'joel', id: auto.id, agent: 'grok' });
+  assert.deepEqual([toGrok.options.agent, toGrok.options.permissionMode], ['grok', 'auto'], 'auto to auto, on another agent of the registry');
 });
 
 test('the hand-off file is written by the real attachments store and goes out in the new session\'s tar', async (t) => {

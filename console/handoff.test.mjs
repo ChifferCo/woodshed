@@ -46,10 +46,10 @@ test('the prompt puts the person\'s note first and says whether the conversation
   assert.match(without, /was not handed over/);
 });
 
-test('a note is trimmed, and refused rather than cut when too long; an agent with no name is called by its id', () => {
+test('a note is trimmed, and refused rather than cut when too long; agents are called by their products\' names', () => {
   assert.equal(handoffNote('  hi  '), 'hi');
   assert.equal(handoffNote(undefined), '');
   assert.throws(() => handoffNote('x'.repeat(MAX_NOTE_CHARS + 1)), { shown: true });
   assert.throws(() => handoffNote(42), { shown: true });
-  assert.equal(agentName('gemini'), 'gemini');
+  assert.deepEqual(['claude', 'codex', 'grok', 'opencode', undefined].map(agentName), ['Claude Code', 'Codex', 'Grok Build', 'OpenCode', 'Claude Code']);
 });

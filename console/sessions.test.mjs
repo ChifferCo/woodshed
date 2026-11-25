@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  parseCommand, publicSession, sharedRunningCount, routeQa, routeTrigger, sessionsToStart, statusUpdate, stopReason, pauseAt, withSessionLimits, canSee, activePrivateCount, parseWorkOn, sessionOptions,
+  parseCommand, publicSession, sharedRunningCount, routeQa, routeTrigger, sessionsToStart, statusUpdate, woodshedRunsOn, stopReason, pauseAt, withSessionLimits, canSee, activePrivateCount, parseWorkOn, sessionOptions,
   keptIds, pullNumber, planUsageFrom, sessionLink,
+  agentsFrom, runsCodex,
 } from './sessions.mjs';
 
 const HOUR = 3_600_000;
@@ -241,6 +242,57 @@ test('statusUpdate keeps every pull request the session reported, oldest first, 
   assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: url(10) }), { state: 'done', prUrl: 'https://github.com/evil/r/pull/1' }, 'now').prUrls, [url(10)]);
 });
 
+test('statusUpdate takes the pull requests of the session\'s other branches, in number order', () => {
+  const url = (n) => `https://github.com/o/r/pull/${n}`;
+  const first = statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrl: url(12), prUrls: [url(11), url(12), url(14)] }, 'now');
+  assert.deepEqual(first.prUrls, [url(11), url(12), url(14)]);
+  assert.equal(first.prUrl, url(12), 'prUrl stays the checked-out branch\'s');
+  const later = statusUpdate(session({ repo: 'o/r', prUrl: url(12), prUrls: [url(12)] }), { state: 'done', prUrl: url(12), prUrls: [url(11)] }, 'now');
+  assert.deepEqual(later.prUrls, [url(11), url(12)], 'an older one found later goes before');
+  const gone = statusUpdate(session({ repo: 'o/r', prUrl: url(12), prUrls: first.prUrls }), { state: 'done', prUrl: null, prUrls: [] }, 'now');
+  assert.deepEqual(gone.prUrls, first.prUrls, 'a branch deleted since keeps its pull request');
+  const odd = statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrls: ['https://github.com/evil/r/pull/1', 7, `${url(5)}/files`, url(6)] }, 'now');
+  assert.deepEqual(odd.prUrls, [url(6)]);
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrls: 'no' }, 'now').prUrls, []);
+  const many = Array.from({ length: 30 }, (_, i) => url(i + 1));
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrls: many }, 'now').prUrls, many.slice(-20), 'the 20 newest');
+});
+
+test('statusUpdate takes a pull request claude opened on another of the console\'s repos, and no other repo\'s', () => {
+  const own = 'https://github.com/o/r/pull/358';
+  const other = 'https://github.com/O/Cloud/pull/151';
+  const status = { state: 'done', prUrl: own, prUrls: [own, other, 'https://github.com/evil/r/pull/1'] };
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), status, 'now', { repos: ['o/r', 'o/cloud'] }).prUrls, [own, other]);
+  // Another repo's numbers say nothing of when: a lower number opened later is still the newest, and folds last.
+  const later = statusUpdate(session({ repo: 'o/r', prUrl: own, prUrls: [own] }), { state: 'done', prUrl: own, prUrls: [other] }, 'now', { repos: ['o/cloud'] });
+  assert.deepEqual(later.prUrls, [own, other]);
+  const older = 'https://github.com/o/r/pull/300';
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: own, prUrls: later.prUrls }), { state: 'done', prUrl: own, prUrls: [older] }, 'now', { repos: ['o/cloud'] }).prUrls,
+    [older, own, other], 'on its own repo, an older one found later still goes before');
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), status, 'now').prUrls, [own], 'with no other project, only its own repo');
+  assert.equal(statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrl: other }, 'now', { repos: ['o/cloud'] }).prUrl, null,
+    'prUrl stays the checked-out branch\'s, on its own repo');
+});
+
+test('a pull request says which of Woodshed\'s review and QA are at work on it', () => {
+  const url = (n) => `https://github.com/o/r/pull/${n}`;
+  const run = (number, extra) => session({ repo: 'o/r', kind: 'pr', number, status: 'running', ...extra });
+  const runsOn = woodshedRunsOn([
+    run(7, { review: { sha: 'a' } }), run(7, { qa: { sha: 'a' }, status: 'queued' }),
+    run(8, { qa: { sha: 'b' } }),
+    run(9, { review: { sha: 'c', conclusion: 'APPROVE' }, status: 'stopped' }),
+    run(10, {}),
+    session({ repo: 'o/other', kind: 'pr', number: 11, status: 'running', review: {} }),
+  ]);
+  assert.deepEqual(runsOn(url(7)), ['review', 'qa'], 'one waiting in line counts');
+  assert.deepEqual(runsOn(url(8)), ['qa']);
+  assert.deepEqual(runsOn(url(9)), [], 'a finished review is in the checks');
+  assert.deepEqual(runsOn(url(10)), [], 'a session working on the pull request is no reviewer');
+  assert.deepEqual(runsOn(url(11)), [], 'another repo\'s pull request of that number');
+  assert.deepEqual(runsOn('https://github.com/O/R/pull/8'), ['qa']);
+  assert.deepEqual(runsOn(null), []);
+});
+
 test('publicSession drops the token and the endpoint', () => {
   const view = publicSession(session({ token: 'secret', terminalToken: 'term', endpoint: { host: 'h' }, pendingMessages: ['a', 'b'] }));
   assert.equal(view.token, undefined);
@@ -320,6 +372,14 @@ test('the New session form\'s Work on names an issue or PR by number, or a branc
   assert.throws(() => sessionOptions({ agent: 'gemini' }), /the agent must be one of/);
   assert.throws(() => sessionOptions({ model: 'gpt' }), /the model must be one of/);
   assert.throws(() => sessionOptions({ permissionMode: 'bypassPermissions' }), /permission mode/);
+  // Grok Build and OpenCode: a model of the registry's shape, its efforts and its permission modes.
+  assert.deepEqual(sessionOptions({ agent: 'grok', model: 'grok-build', effort: 'high', permissionMode: 'acceptEdits' }), { agent: 'grok', model: 'grok-build', effort: 'high', permissionMode: 'acceptEdits' });
+  assert.deepEqual(sessionOptions({ agent: 'opencode' }), { agent: 'opencode', model: '', effort: '', permissionMode: 'auto' });
+  assert.deepEqual(sessionOptions({ agent: 'opencode', model: 'anthropic/claude-sonnet-4-5', permissionMode: 'plan' }).model, 'anthropic/claude-sonnet-4-5');
+  assert.throws(() => sessionOptions({ agent: 'opencode', model: 'claude-sonnet' }), /not a name OpenCode takes/, 'OpenCode names its provider');
+  for (const bad of ['grok build', 'x"y', '-x', 'a;rm']) assert.throws(() => sessionOptions({ agent: 'grok', model: bad }), /not a name Grok Build takes/, bad);
+  assert.equal(sessionOptions({ agent: 'opencode', permissionMode: 'acceptEdits' }).permissionMode, 'acceptEdits', 'held by configureOpencode\'s rules');
+  assert.throws(() => sessionOptions({ agent: 'grok', effort: 'minimal' }), /the effort must be one of/, 'Grok Build takes low to max');
 });
 
 test('statusd\'s claude session id is kept only when it looks like one', () => {
@@ -408,6 +468,20 @@ test('planUsageFrom preserves Codex attribution through status updates', () => {
   assert.deepEqual(statusUpdate({ ...session({}), owner: 'octocat', options: { agent: 'codex' } }, { state: 'done', planUsage: usage }, 'now').planUsage, usage);
 });
 
+test('planUsageFrom keeps a Grok Build window\'s week or month, and drops anything else on it', () => {
+  const usage = {
+    agent: 'grok', asOf: '2026-11-12T12:00:00.000Z', fiveHour: null,
+    sevenDay: { usedPercent: 140, resetsAt: '2026-11-19T00:00:00Z', label: 'Month', short: 'mo', spanMs: 30 * 86400_000, subscriptionTier: 'nope' },
+  };
+  assert.deepEqual(planUsageFrom(usage), {
+    agent: 'grok', asOf: '2026-11-12T12:00:00.000Z', fiveHour: null,
+    sevenDay: { usedPercent: 100, resetsAt: '2026-11-19T00:00:00.000Z', label: 'Month', short: 'mo', spanMs: 30 * 86400_000 },
+  });
+  const stripped = planUsageFrom({ ...usage, sevenDay: { usedPercent: 40, resetsAt: null, label: 'Lifetime', short: 'yr', spanMs: -5 } });
+  assert.deepEqual(stripped.sevenDay, { usedPercent: 40, resetsAt: null });
+  assert.equal(planUsageFrom({ agent: 'grok', fiveHour: null, sevenDay: { usedPercent: 1, resetsAt: null, spanMs: 401 * 86400_000 } }).sevenDay.spanMs, undefined);
+});
+
 test('statusUpdate keeps whether text waits in the agent\'s box, for Chat to say so, and nothing else as true', () => {
   const nowIso = '2026-10-21T12:00:00.000Z';
   assert.equal(statusUpdate(session(), { state: 'done', boxText: true }, nowIso).boxText, true);
@@ -419,4 +493,31 @@ test('statusUpdate keeps whether the session\'s statusd sends with the guards', 
   const nowIso = '2026-10-21T12:00:00.000Z';
   assert.equal(statusUpdate(session(), { state: 'done', safeSend: true }, nowIso).safeSend, true);
   assert.equal(statusUpdate(session(), { state: 'done' }, nowIso).safeSend, false, 'an older statusd says nothing of it');
+});
+
+test('the agents beside a session\'s own are read from statusd field by field, and none from a session that starts none', () => {
+  assert.equal(agentsFrom(undefined), null, 'an older image, or a shared session');
+  const read = agentsFrom([
+    { id: 'agent-2', agent: 'codex', model: 'gpt-5.5', effort: 'high', permissionMode: 'plan', startedAt: '2026-11-23T10:00:00.000Z', state: 'working',
+      heldIds: ['msg-00000001', 'x', 42], deliveredIds: [], refusedIds: [], leftInBox: { id: 'msg-00000002' }, extra: 'dropped' },
+    { id: 'agent-3', agent: 'bash', state: 'done' },
+    { id: '../claude', agent: 'claude' },
+    { id: 'agent-4', agent: 'claude', model: '$(id)', state: 'sleeping', leftInBox: { id: '<b>' } },
+  ]);
+  assert.deepEqual(read, [
+    { id: 'agent-2', agent: 'codex', model: 'gpt-5.5', effort: 'high', permissionMode: 'plan', startedAt: '2026-11-23T10:00:00.000Z', state: 'working',
+      heldIds: ['msg-00000001'], deliveredIds: [], refusedIds: [], leftInBox: { id: 'msg-00000002' } },
+    { id: 'agent-4', agent: 'claude', model: null, effort: null, permissionMode: null, startedAt: null, state: null,
+      heldIds: [], deliveredIds: [], refusedIds: [], leftInBox: null },
+  ]);
+  assert.equal(agentsFrom(Array.from({ length: 9 }, (_, i) => ({ id: `agent-${(i % 8) + 2}`, agent: 'claude' }))).length, 3);
+});
+
+test('codex runs in a Codex session, and in a private one whose owner started a Codex agent in it', () => {
+  assert.equal(runsCodex({ options: { agent: 'codex' } }), true);
+  assert.equal(runsCodex({ owner: 'octocat', extraAgents: ['codex'] }), true);
+  assert.equal(runsCodex({ owner: 'octocat', extraAgents: ['claude'] }), false);
+  assert.equal(runsCodex({ owner: null, extraAgents: ['codex'] }), false, 'a shared session starts no other agent');
+  assert.equal(runsCodex({ owner: 'octocat', extraAgents: ['codex'], taintedAt: '2026-11-23T10:00:00Z' }), false, 'nor one that has seen production data');
+  assert.equal(runsCodex({}), false);
 });

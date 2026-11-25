@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import fs from 'node:fs';
+import net from 'node:net';
 
 import { CONSOLE_FAILED, createAuth } from './auth.mjs';
 import { createAddedProjects, createHostProjects } from './addedProjects.mjs';
@@ -8,7 +10,8 @@ import { createConsoleSettings, liveConfig } from './consoleSettings.mjs';
 import { createProjectColors } from './projectColors.mjs';
 import { createTunnel } from './dbTunnel.mjs';
 import { createCliSignIn } from './cliSignIn.mjs';
-import { createHandler } from './server.mjs';
+import { createConsoleUpgrade, createHandler } from './server.mjs';
+import agentsRegistry from '../shared/agents.cjs';
 import { createSlack } from './slack.mjs';
 import { createUserSettings } from './userSettings.mjs';
 
@@ -474,7 +477,7 @@ test('with sign-in always required, no route but sign-in\'s own answers a signed
       assert.equal((await getWith(port, open, { host: 'console.example' })).status, 200, open);
     }
     const me = await (await fetch(`http://127.0.0.1:${port}/api/me`, { headers: { host: 'console.example' } })).json();
-    assert.deepEqual(me, { supported: true, signIn: true, available: Boolean(secret), login: null, visitor: null, asked: null, admin: false, asking: 0, names: {}, repo: null, workflows: [] });
+    assert.deepEqual(me, { supported: true, signIn: true, available: Boolean(secret), login: null, visitor: null, asked: null, admin: false, asking: 0, people: false, names: {}, repo: null, workflows: [] });
   }
   assert.deepEqual(reached.filter((r) => r !== 'find ffffffff'), [], 'nothing reached a session, a secret or GitHub');
 });
@@ -528,7 +531,7 @@ test('an admin invites, accepts and removes on the People page, a member who is 
   assert.deepEqual((await post(port, '/api/people/invite', { login: '@outsider' }, mia)).status, 400, 'a handle without write access could never sign in');
   const invited = await post(port, '/api/people/invite', { login: '@ana-k' }, mia);
   assert.equal(invited.status, 200);
-  assert.deepEqual(invited.body.members.find((m) => m.login === 'ana-k'), { login: 'ana-k', addedBy: 'mia-dev', addedAt: invited.body.members.find((m) => m.login === 'ana-k').addedAt, how: 'invited' });
+  assert.deepEqual(invited.body.members.find((m) => m.login === 'ana-k'), { login: 'ana-k', addedBy: 'mia-dev', addedAt: invited.body.members.find((m) => m.login === 'ana-k').addedAt, how: 'invited', access: 'private', accessDiffers: null });
   assert.equal((await post(port, '/api/people/admin', { login: 'mia-dev', admin: false }, mia)).status, 409, 'the last admin keeps it');
   assert.equal((await post(port, '/api/people/admin', { login: 'sam-ops', admin: true }, mia)).status, 200);
   assert.equal((await getWith(port, '/api/people', sam)).status, 200, 'made an admin, they open People');
@@ -574,7 +577,7 @@ test('on a console with no list of people, everyone signed in reaches the Secret
   for (const [path, body] of writes) assert.ok([200, 201].includes((await post(port, path, body, as)).status), `POST ${path}`);
   assert.ok(reached.includes('events') && reached.includes('startManual'));
   const me = await (await fetch(`http://127.0.0.1:${port}/api/me`, { headers: as })).json();
-  assert.deepEqual(me, { supported: true, signIn: true, available: true, login: 'mia-dev', visitor: null, asked: null, admin: true, asking: 0, names: {}, repo: 'o/r', workflows: [] });
+  assert.deepEqual(me, { supported: true, signIn: true, available: true, login: 'mia-dev', visitor: null, asked: null, admin: true, asking: 0, people: false, names: {}, repo: 'o/r', workflows: [] });
 });
 
 test('a member who is not an admin loads the console\'s own pages, and every call behind them answers 403', async (t) => {
@@ -745,7 +748,15 @@ test('with sign-in available but not turned on, the menu and the server agree th
 // never existed, and nothing reaches the session. Its owner gets through on each.
 test('a teammate gets the unknown-id answer on every route of someone\'s private session', async (t) => {
   const reached = [];
-  const mine = { id: '3f9a1c20', status: 'running', title: 'mine', owner: 'octocat', startedBy: 'octocat', token: 'tok', terminalToken: 'tt', endpoint: { host: '127.0.0.1', termPort: 1, statusPort: 1, shellPort: 1 } };
+  // The session's ttyd: whoever's terminal websocket reaches it.
+  const ttyd = net.createServer((conn) => {
+    conn.once('data', (d) => reached.push(`ttyd ${d.toString().split(' ')[1]}`));
+    conn.on('error', () => {});
+    conn.end();
+  });
+  const termPort = await listen(ttyd);
+  t.after(() => ttyd.close());
+  const mine = { id: '3f9a1c20', status: 'running', title: 'mine', owner: 'octocat', startedBy: 'octocat', token: 'tok', terminalToken: 'tt', endpoint: { host: '127.0.0.1', termPort, statusPort: 1, shellPort: 1 } };
   const shared = { id: '7c21e0d4', status: 'running', title: 'shared', owner: null, startedBy: 'sam-ops' };
   const fleet = {
     sessions: () => [mine, shared],
@@ -771,8 +782,24 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
   };
   const handle = createHandler({ config, fleet, auth, review });
   const server = http.createServer((req, res) => { handle(req, res); });
+  server.on('upgrade', createConsoleUpgrade({ config, fleet, auth }));
   const port = await listen(server);
   t.after(() => server.close());
+
+  // A terminal's websocket, the only way into one: its answer's first line, or what came back before it closed.
+  function websocket(login, id, kind = 'term') {
+    return new Promise((resolve) => {
+      const client = net.connect(port, '127.0.0.1', () => {
+        client.write([`GET /${kind}/${id}/ws HTTP/1.1`, 'Host: console.example', 'Origin: https://console.example', `Cookie: woodshed_session=${login}`,
+          'Upgrade: websocket', 'Connection: Upgrade', 'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+          'Sec-WebSocket-Protocol: tty', '', ''].join('\r\n'));
+      });
+      let got = '';
+      client.on('data', (d) => { got += d; });
+      client.on('error', () => {});
+      client.on('close', () => resolve(got.split('\r\n')[0]));
+    });
+  }
 
   async function answer(login, id, { method = 'GET', path, host = 'console.example' }) {
     const headers = { host, cookie: `woodshed_session=${login}`, accept: 'text/html', 'x-woodshed': '1', origin: 'https://console.example' };
@@ -806,6 +833,9 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
     const nobody = await answer('mia-dev', 'ffffffff', { ...route, host: route.host?.replace('ID', 'ffffffff') });
     assert.deepEqual(theirs, nobody, `${route.method ?? 'GET'} ${route.host ?? ''}${route.path}`);
   }
+  for (const kind of ['term', 'shell']) {
+    assert.equal(await websocket('mia-dev', mine.id, kind), await websocket('mia-dev', 'ffffffff', kind), `${kind} websocket`);
+  }
   assert.deepEqual(reached, [], 'nothing reached the private session for a teammate');
 
   const listed = JSON.parse((await answer('mia-dev', '', { path: '/api/sessions' })).body).sessions.map((s) => s.id);
@@ -816,7 +846,8 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
   assert.equal((await answer('octocat', mine.id, { method: 'POST', path: '/api/sessions/ID/stop' })).status, 200);
   assert.equal((await answer('octocat', mine.id, { path: '/api/sessions/ID/review' })).status, 200);
   assert.equal((await answer('octocat', mine.id, { path: '/auth/app?id=ID&next=/' })).status, 302);
-  assert.notEqual((await answer('octocat', mine.id, { path: '/term/ID/' })).status, 404, 'the owner reaches the terminal');
+  await websocket('octocat', mine.id);
+  assert.deepEqual(reached.splice(-1), ['ttyd /term/3f9a1c20/ws'], 'the owner reaches the terminal, by its websocket');
   assert.equal((await answer('octocat', mine.id, { method: 'POST', path: '/api/sessions/ID/extend' })).status, 200);
   assert.equal((await answer('octocat', mine.id, { method: 'POST', path: '/api/sessions/ID/limits' })).status, 200);
   assert.deepEqual(reached, ['stop 3f9a1c20', 'review 3f9a1c20', 'appCode', 'extend 3f9a1c20', 'setLimits 3f9a1c20']);
@@ -896,8 +927,17 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
     // Whose page it is, so the rail draws from what it kept only for the same person.
     assert.match(await getBody(port, page, as('octocat')), /<meta name="woodshed-login" content="octocat">/, `${page} names who it is for`);
     // The same scripts on each, since session.js moves between them in place.
-    assert.deepEqual(scripts.slice(-9), ['terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'], `${page} is the shell`);
+    assert.deepEqual(scripts.slice(-8), ['dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'], `${page} is the shell`);
+    // The notifications on every page, ahead of the shell that opens them on ⌘J: the browser's own list, then the bell.
+    assert.deepEqual(scripts.slice(scripts.indexOf('keys.cjs'), scripts.indexOf('keys.cjs') + 4), ['keys.cjs', 'browserNotifications.js', 'notificationBell.js', 'shell.js'], `${page} has the notifications`);
   }
+  // The browser's bell runs the desktop app's own rule for what notifies, served from desktop/ under the page's version.
+  const attentionUrl = /data-attention="(\/static\/attention\.mjs\?v=[0-9a-f]{12})"/.exec(await getBody(port, '/', as('octocat')))?.[1];
+  assert.ok(attentionUrl, 'the page names the rule');
+  const rule = await fetch(`http://127.0.0.1:${port}${attentionUrl}`);
+  assert.equal(rule.status, 200);
+  assert.match(rule.headers.get('content-type'), /javascript/);
+  assert.equal(await rule.text(), fs.readFileSync(new URL('../desktop/attention.mjs', import.meta.url), 'utf8'));
   assert.match(await getBody(port, '/static/sharedHome.js', as('octocat')), /createSharedHome/);
   assert.match(await getBody(port, '/static/messageBox.js', as('octocat')), /createMessageBox/);
   assert.match(await getBody(port, '/static/chatThread.cjs', as('octocat')), /WoodshedChatThread/);
@@ -905,7 +945,7 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.match(await getBody(port, '/static/dictation.js', as('octocat')), /W\.dictation = /);
   // The settings pages are one page: each address loads every settings page's script, so common.js moves between
   // them in place. My settings' Repo settings card draws its layers with the repo page's parts, loaded before both.
-  const SETTINGS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+  const SETTINGS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
   for (const page of ['/settings', '/console-settings', '/console-settings/repos/app', '/secrets', '/people', '/events']) {
     const settingsScripts = [...(await getBody(port, page, as('octocat'))).matchAll(/<script src="\/static\/([\w.]+)\?v=[0-9a-f]{12}"/g)].map((m) => m[1]);
     assert.deepEqual(settingsScripts.slice(-SETTINGS.length), SETTINGS, `${page} is the settings page`);
@@ -1001,17 +1041,123 @@ test('New session offers only the agents set up to run, and a Codex start needs 
   const as = { cookie: 'woodshed_session=mia-dev' };
   const agents = async () => JSON.parse(await getBody(port, '/api/my', as)).agents;
 
-  assert.deepEqual(await agents(), { claude: true, codex: false }, 'no Codex sign-in and no team key');
+  const none = Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, false]));
+  assert.deepEqual(await agents(), { claude: true, codex: false, ...none }, 'no Codex sign-in and no team key');
   assert.deepEqual(await post(port, '/api/my/sessions', { prompt: 'go', agent: 'codex' }, as),
     { status: 409, body: { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' } });
   teamKey = 'sk-team';
-  assert.deepEqual(await agents(), { claude: true, codex: true }, 'the team key runs Codex');
+  assert.deepEqual(await agents(), { claude: true, codex: true, ...none }, 'the team key runs Codex');
   assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'codex' }, as)).status, 201);
   teamKey = null;
   await post(port, '/api/my/codex-auth', { value: 'sk-own' }, as);
-  assert.deepEqual(await agents(), { claude: true, codex: true }, 'their own sign-in runs Codex');
+  assert.deepEqual(await agents(), { claude: true, codex: true, ...none }, 'their own sign-in runs Codex');
   claude.delete('mia-dev');
-  assert.deepEqual(await agents(), { claude: false, codex: true }, 'no Claude token, no Claude');
+  assert.deepEqual(await agents(), { claude: false, codex: true, ...none }, 'no Claude token, no Claude');
+});
+
+test('Grok Build and OpenCode are offered and start only on their owner\'s own sign-in', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const started = [];
+  const stopped = { id: '0a1b2c3d', owner: 'mia-dev', status: 'stopped', options: { agent: 'grok' } };
+  const fleet = {
+    sessions: () => [], find: (id) => (id === stopped.id ? stopped : null),
+    startPrivate: async (args) => { started.push(args); return { id: '0a1b2c3e', owner: args.owner, token: 'secret', status: 'queued' }; },
+    resumePrivate: async () => stopped,
+  };
+  const own = new Map();
+  const userSettings = {
+    refresh: async () => {},
+    view: () => ({
+      claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: true, available: true,
+      agentAuth: Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, { set: own.has(id), savedAt: null }])),
+    }),
+    setAgentAuth: async (login, id, value) => { own.set(id, value); },
+    removeAgentAuth: async (login, id) => { own.delete(id); },
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet, auth, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+  const me = async () => JSON.parse(await getBody(port, '/api/my', as));
+
+  assert.deepEqual((await me()).agents, { claude: false, codex: false, ...Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, false])) });
+  assert.deepEqual(await post(port, '/api/my/sessions', { prompt: 'go', agent: 'grok' }, as),
+    { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } });
+  assert.deepEqual(await post(port, `/api/my/sessions/${stopped.id}/resume`, {}, as),
+    { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } }, 'a resume needs it too');
+  // A session starting or resuming one of its person's goes through the same checks (sessionStarts.mjs).
+  assert.deepEqual(await handle.startMine('mia-dev', { prompt: 'go', agent: 'grok' }, { startedFrom: 'aaaa0001' }),
+    { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } });
+  assert.deepEqual(await handle.resumeMine('mia-dev', stopped.id), { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } });
+  assert.equal(started.length, 0);
+  const saved = await post(port, '/api/my/agent-auth/grok', { value: 'xai-own-key-0123456789' }, as);
+  assert.equal(saved.status, 200);
+  assert.deepEqual([saved.body.agents.grok, saved.body.agentAuth.grok.set], [true, true]);
+  assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'grok', model: 'grok-build' }, as)).status, 201, 'no Claude token needed');
+  assert.equal(started[0].agent, 'grok');
+  assert.equal((await handle.startMine('mia-dev', { prompt: 'go', agent: 'grok' }, { startedFrom: 'aaaa0001' })).status, 201);
+  assert.deepEqual([started[1].agent, started[1].startedFrom], ['grok', 'aaaa0001']);
+  assert.equal((await handle.startMine('mia-dev', { prompt: 'go', agent: 'opencode' }, { startedFrom: 'aaaa0001' })).status, 409, 'opencode\'s sign-in is not saved');
+  assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'opencode' }, as)).status, 409);
+  for (const id of ['codex', 'claude', 'nope']) assert.equal((await post(port, `/api/my/agent-auth/${id}`, { value: 'x' }, as)).status, 404, id);
+  assert.equal((await post(port, '/api/my/agent-auth/grok/remove', {}, as)).body.agents.grok, false);
+  assert.equal((await post(port, '/api/my/agent-auth/grok', { value: 'x' }, { ...as, origin: 'https://evil.example' })).status, 403);
+  // A multi-provider auth.json past the usual 16 KiB body, within the registry's limit: held to that limit, not the body's.
+  const big = JSON.stringify(Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`provider${i}`, { type: 'api', key: `"k${i}"-${'x'.repeat(400)}` }])));
+  assert.ok(big.length > 16 * 1024 && big.length < agentsRegistry.agent('opencode').signIn.maxChars, String(big.length));
+  const bigSaved = await post(port, '/api/my/agent-auth/opencode', { value: big }, as);
+  assert.equal(bigSaved.status, 200, JSON.stringify(bigSaved.body));
+  assert.equal(bigSaved.body.agents.opencode, true);
+  // The request itself stays bounded (the registry's limit on the decoded value is checkSignIn's, in shared/agents.test.mjs).
+  assert.deepEqual(await post(port, '/api/my/agent-auth/opencode', { value: 'x'.repeat(170 * 1024) }, as), { status: 400, body: { error: 'body too large' } });
+});
+
+test('New session\'s Grok Build models are the owner\'s own list, forgotten when the sign-in changes', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const forgot = [];
+  const listed = { models: [{ slug: 'grok-4.7', name: 'Grok 4.7', description: '', efforts: ['low', 'high'], defaultEffort: 'high' }], source: 'login', note: null };
+  const grokModels = { list: async (login) => ({ ...listed, login }), forget: (login) => forgot.push(login) };
+  const own = new Map();
+  const userSettings = {
+    refresh: async () => {},
+    view: () => ({
+      claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: true, available: true,
+      agentAuth: Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, { set: own.has(id), savedAt: null }])),
+    }),
+    setAgentAuth: async (login, id, value) => { own.set(id, value); },
+    removeAgentAuth: async (login, id) => { own.delete(id); },
+  };
+  const started = [];
+  const fleet = { sessions: () => [], find: () => null, startPrivate: async (args) => { started.push(args); return { id: '0a1b2c3e', owner: args.owner, token: 'secret', status: 'queued' }; } };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet, auth, userSettings, grokModels });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+
+  assert.deepEqual(JSON.parse(await getBody(port, '/api/my/grok-models', as)), { ...listed, login: 'mia-dev' });
+  assert.equal((await post(port, '/api/my/agent-auth/grok', { value: 'xai-own-key-0123456789' }, as)).status, 200);
+  assert.deepEqual(forgot, ['mia-dev'], 'saving forgets the list');
+  // A model the list does not have still starts: the registry's shape is the check, as when the list cannot be read.
+  assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'grok', model: 'grok-typed-by-hand', effort: 'xhigh' }, as)).status, 201);
+  assert.equal(started[0].model, 'grok-typed-by-hand');
+  await post(port, '/api/my/agent-auth/opencode', { value: JSON.stringify({ p: { type: 'api', key: 'k' } }) }, as);
+  assert.deepEqual(forgot, ['mia-dev'], 'another agent\'s sign-in leaves it');
+  assert.equal((await post(port, '/api/my/agent-auth/grok/remove', {}, as)).status, 200);
+  assert.deepEqual(forgot, ['mia-dev', 'mia-dev'], 'removing forgets it too');
+
+  const handleWithout = createHandler({ config, fleet, auth, userSettings });
+  const without = http.createServer((req, res) => { handleWithout(req, res); });
+  const otherPort = await listen(without);
+  t.after(() => without.close());
+  const none = JSON.parse(await getBody(otherPort, '/api/my/grok-models', as));
+  assert.deepEqual([none.models, none.source], [[], null]);
+  assert.match(none.note, /type a model name/);
 });
 
 test('the first Claude token starts your own databases, and New session waits for them', async (t) => {
@@ -1811,7 +1957,7 @@ test('Console settings turns each source\'s webhooks off and on, says who did, a
 test('My settings\' Reviews card: each person picks who reviews their pull requests, from what can run for them', async (t) => {
   const { createReviewAgents } = await import('./reviewAgents.mjs');
   const { createUserSettings } = await import('./userSettings.mjs');
-  const secrets = { values: new Map(), async read(n) { return this.values.get(n) ?? null; }, async write(n, v) { this.values.set(n, v); }, async remove(n) { this.values.delete(n); }, async list() { return [...this.values.keys()]; } };
+  const secrets = { values: new Map(), async read(n) { return this.values.get(n) ?? null; }, async write(n, v) { this.values.set(n, v); }, async save(n, v) { this.values.set(n, v); }, async remove(n) { this.values.delete(n); }, async list() { return [...this.values.keys()]; } };
   const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets });
   const reviewAgents = createReviewAgents({ userSettings, connected: async () => ({ claude: true, codex: false }) });
   const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
@@ -1823,7 +1969,8 @@ test('My settings\' Reviews card: each person picks who reviews their pull reque
   const as = { cookie: 'woodshed_session=mia-dev' };
   const get = async () => (await fetch(`http://127.0.0.1:${port}/api/my/reviews`, { headers: as })).json();
 
-  assert.deepEqual(await get(), { available: { claude: true, codex: false }, own: { claude: false, codex: false }, best: 'claude', choice: null },
+  const off = { grok: false, opencode: false };
+  assert.deepEqual(await get(), { available: { claude: true, codex: false, ...off }, own: { claude: false, codex: false, ...off }, ownWhy: { grok: null, opencode: null }, best: 'claude', choice: null },
     'the team Anthropic key alone: Claude Code is the most there is');
   const none = await post(port, '/api/my/reviews', { choice: 'none', login: 'joel' }, as);
   assert.equal(none.status, 200);
@@ -1833,6 +1980,16 @@ test('My settings\' Reviews card: each person picks who reviews their pull reque
   assert.equal((await post(port, '/api/my/reviews', { choice: 'everyone' }, as)).status, 400);
   assert.equal((await post(port, '/api/my/reviews', { choice: null }, as)).body.choice, null, 'back to the default');
   assert.equal((await post(port, '/api/my/reviews', { choice: 'both' }, { ...as, origin: 'https://evil.example' })).status, 403);
+
+  // Grok Build reviews only on the person's own sign-in, switched on for reviews: offered once one is saved.
+  assert.equal((await post(port, '/api/my/agent-auth/grok/reviews', { on: true }, as)).status, 409, 'no sign-in saved yet');
+  assert.equal((await post(port, '/api/my/agent-auth/grok', { value: 'xai-made-up-mia-0123456789' }, as)).status, 200);
+  assert.deepEqual([(await get()).available.grok, (await get()).own.grok], [true, true]);
+  const picked = await post(port, '/api/my/reviews', { choice: 'grok+claude' }, as);
+  assert.equal(picked.body.choice, 'claude+grok');
+  const offNow = await post(port, '/api/my/agent-auth/grok/reviews', { on: false }, as);
+  assert.deepEqual([offNow.status, offNow.body.ownAgentForReviews.grok, (await get()).available.grok], [200, false, false]);
+  assert.equal((await post(port, '/api/my/agent-auth/claude/reviews', { on: true }, as)).status, 404, 'Claude Code has no own sign-in here');
 });
 
 test('My settings\' Agent terminal: each person picks tmux or Herdr for their own private sessions, tmux by default', async (t) => {
@@ -2116,6 +2273,54 @@ test('an admin turns on sessions from GitHub, then Can be assigned, and only the
   assert.equal(admin.status, 200);
   assert.equal(admin.body.members.find((m) => m.login === 'mia-dev').admin, true);
   assert.equal((await post(port, '/api/people/admin', { login: 'mia-dev', admin: true }, {})).status, 401);
+});
+
+test('a People role sets the three switches at once, and reads back from them; an invite may name one', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const { createMembers } = await import('./members.mjs');
+  const store = { state: { members: { 'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true }, 'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' } } }, save() {} };
+  const members = createMembers({ store });
+  const released = [];
+  const fleet = { releaseAssignments: (args) => { released.push(args); }, sessions: () => [], find: () => null };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => (/mia-dev/.test(String(cookie)) ? { login: 'mia-dev' } : null), visitorFor: async () => null };
+  const handle = createHandler({ config, fleet, auth, members });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const mia = { cookie: 'woodshed_session=mia-dev' };
+  const switches = (body, login) => {
+    const m = body.members.find((x) => x.login === login);
+    return [m.access, Boolean(m.admin), Boolean(m.githubSessions), Boolean(m.assignable), m.accessDiffers];
+  };
+
+  const listed = await (await fetch(`http://127.0.0.1:${port}/api/people`, { headers: mia })).json();
+  assert.deepEqual(listed.roles.map((r) => r.id), ['owner', 'member', 'contributor', 'private']);
+  assert.ok(listed.roles.every((r) => r.label && r.explain), 'each role comes with what it gives');
+  assert.deepEqual(switches(listed, 'sam-ops'), ['private', false, false, false, null], 'every switch off reads as Private only');
+  assert.deepEqual(switches(listed, 'mia-dev'), ['owner', true, false, false, 'Opens these settings pages, no sessions from GitHub, never assigned a shared session'],
+    'an admin from before roles is an Owner, and says what it lacks');
+
+  const member = await post(port, '/api/people/access', { login: 'sam-ops', access: 'member' }, mia);
+  assert.deepEqual(switches(member.body, 'sam-ops'), ['member', false, true, true, null]);
+  const contributor = await post(port, '/api/people/access', { login: 'sam-ops', access: 'contributor' }, mia);
+  assert.deepEqual(switches(contributor.body, 'sam-ops'), ['contributor', false, true, false, null]);
+  assert.deepEqual(released, [{ login: 'sam-ops', by: 'mia-dev' }], 'no longer assignable: their shared sessions go back');
+  const owner = await post(port, '/api/people/access', { login: 'sam-ops', access: 'owner' }, mia);
+  assert.deepEqual(switches(owner.body, 'sam-ops'), ['owner', true, true, true, null]);
+  const back = await post(port, '/api/people/access', { login: 'sam-ops', access: 'private' }, mia);
+  assert.deepEqual(switches(back.body, 'sam-ops'), ['private', false, false, false, null]);
+
+  assert.equal((await post(port, '/api/people/access', { login: 'sam-ops', access: 'admin' }, mia)).status, 400, 'only the roles People offers');
+  assert.equal((await post(port, '/api/people/access', { login: 'nobody', access: 'member' }, mia)).status, 409, 'only members');
+  const last = await post(port, '/api/people/access', { login: 'mia-dev', access: 'member' }, mia);
+  assert.deepEqual([last.status, last.body.error], [409, 'the console needs an admin: make someone else one first']);
+  assert.equal(members.hasGithubSessions('mia-dev'), false, 'a refused admin change changes nothing else');
+
+  const invited = await post(port, '/api/people/invite', { login: 'lee-dev', access: 'contributor' }, mia);
+  assert.deepEqual(switches(invited.body, 'lee-dev'), ['contributor', false, true, false, null]);
+  assert.equal((await post(port, '/api/people/invite', { login: 'bo-dev', access: 'boss' }, mia)).status, 400);
+  assert.equal(members.isMember('bo-dev'), false, 'a role that is not one invites nobody');
 });
 
 test('a local console with no sign-in and no GitHub App gives the person at the keyboard a login of their own', async () => {
@@ -2603,4 +2808,129 @@ test('the console\'s limit on one message is statusd\'s own, so nothing it accep
   const { MAX_MESSAGE_CHARS } = await import('./server.mjs');
   const statusdSource = await (await import('node:fs/promises')).readFile(new URL('../session/statusd.mjs', import.meta.url), 'utf8');
   assert.match(statusdSource, new RegExp(`const MAX_SEND_CHARS = ${MAX_MESSAGE_CHARS};`));
+});
+
+test('another agent in a private session: its owner\'s alone, checked as New session checks it, and each one\'s Chat routes go to statusd', async (t) => {
+  const asked = [];
+  const statusd = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      asked.push({ method: req.method, url: req.url, body });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+  });
+  const statusPort = await listen(statusd);
+  t.after(() => statusd.close());
+  const mine = { id: '0a1b2c3d', status: 'running', title: 't', token: 'tok', owner: 'local', endpoint: { host: '127.0.0.1', termPort: 1, statusPort } };
+  const theirs = { ...mine, id: '1b2c3d4e', owner: 'octocat' };
+  const tainted = { ...mine, id: '2c3d4e5f', taintedAt: '2026-11-23T10:00:00Z' };
+  const grok = { ...mine, id: '3d4e5f6a', options: { agent: 'grok' } };
+  const all = [mine, theirs, tainted, grok];
+  const allowed = [];
+  const fleet = {
+    sessions: () => all, find: (id) => all.find((s) => s.id === id) ?? null, isLocked: () => false,
+    allowAgent: (s, agent) => allowed.push([s.id, agent]) > 0,
+  };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, launcher: { kind: 'docker' }, localLogin: 'local',
+  };
+  let hasClaude = false;
+  const userSettings = { claudeToken: async () => hasClaude ? 'dummy-owner-claude-token' : null };
+  const server = http.createServer(createHandler({ config, fleet, userSettings }));
+  const port = await listen(server);
+  t.after(() => server.close());
+  const call = (path, body, method = 'POST') => fetch(`http://127.0.0.1:${port}${path}`, {
+    method, headers: { 'content-type': 'application/json', 'x-woodshed': '1' }, ...(body !== undefined && { body: JSON.stringify(body) }),
+  });
+
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'claude', model: 'opus', prompt: 'look' })).status, 200);
+  assert.deepEqual(allowed, [['0a1b2c3d', 'claude']]);
+  assert.deepEqual(JSON.parse(asked[0].body), { agent: 'claude', model: 'opus', effort: '', permissionMode: 'auto', prompt: 'look' });
+  assert.equal(asked[0].url, '/agents');
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'claude', model: 'opus; rm -rf /' })).status, 400, 'a model New session does not offer');
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'bash' })).status, 400);
+  assert.equal((await call('/api/sessions/1b2c3d4e/agents', { agent: 'claude' })).status, 404, 'someone else\'s session');
+  assert.equal((await call('/api/sessions/2c3d4e5f/agents', { agent: 'claude' })).status, 409, 'a tainted session starts none');
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'grok' })).status, 400, 'Grok Build and OpenCode never start beside another');
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'opencode', model: 'openai/gpt-5' })).status, 400);
+  const missingClaude = await call('/api/sessions/3d4e5f6a/agents', { agent: 'claude' });
+  assert.equal(missingClaude.status, 409);
+  assert.match((await missingClaude.json()).error, /save your Claude token on My settings/);
+  assert.equal(asked.length, 1, 'nothing refused reached the session');
+  hasClaude = true;
+  assert.equal((await call('/api/sessions/3d4e5f6a/agents', { agent: 'claude' })).status, 200);
+  assert.equal((await call('/api/sessions/3d4e5f6a/agents', undefined, 'GET')).status, 200);
+  assert.deepEqual(allowed.at(-1), ['3d4e5f6a', 'claude']);
+  assert.equal(asked[1].url, '/agents/with-claude-token');
+  assert.equal(JSON.parse(asked[1].body).claudeToken, 'dummy-owner-claude-token');
+
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', undefined, 'GET')).status, 200);
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/transcript?limit=50&since=x', undefined, 'GET')).status, 200);
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/send', { text: 'hi', id: 'msg-00000001', extra: 1 })).status, 200);
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/interrupt', { keys: 'rm -rf /' })).status, 200);
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/stop', {})).status, 200);
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-1/stop', {})).status, 404, 'not an agent beside the session\'s own');
+  assert.deepEqual(asked.slice(3).map((a) => [a.method, a.url, a.body]), [
+    ['GET', '/agents', ''],
+    ['GET', '/agents/agent-2/transcript?limit=50', ''],
+    ['POST', '/agents/agent-2/send', '{"text":"hi","id":"msg-00000001"}'],
+    ['POST', '/agents/agent-2/interrupt', '{}'],
+    ['POST', '/agents/agent-2/stop', '{}'],
+  ]);
+});
+
+test('a Codex agent beside claude is started with its owner\'s sign-in, and allowed the team key only once it started', async (t) => {
+  const asked = [];
+  let answer = 409;
+  const statusd = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      asked.push(JSON.parse(body));
+      res.writeHead(answer, { 'content-type': 'application/json' });
+      res.end(answer === 200 ? '{"agent":{"id":"agent-2"}}' : '{"error":"at most 3 agents beside the session\'s own: stop one first"}');
+    });
+  });
+  const statusPort = await listen(statusd);
+  t.after(() => statusd.close());
+  const mine = { id: '0a1b2c3d', status: 'running', title: 't', token: 'tok', owner: 'local', options: { agent: 'claude' }, endpoint: { host: '127.0.0.1', termPort: 1, statusPort } };
+  const allowed = [];
+  const fleet = {
+    sessions: () => [mine], find: (id) => (id === mine.id ? mine : null), isLocked: () => false,
+    allowAgent: (s, agent) => allowed.push(agent) > 0,
+  };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, launcher: { kind: 'docker' }, localLogin: 'local',
+  };
+  const userSettings = { codexAuth: async (login) => (login === 'local' ? 'sk-own-key' : null), limitsFor: () => ({}) };
+  const server = http.createServer(createHandler({ config, fleet, userSettings }));
+  const port = await listen(server);
+  t.after(() => server.close());
+  const start = (agent) => fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/agents`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-woodshed': '1' }, body: JSON.stringify({ agent }),
+  });
+
+  const refused = await start('codex');
+  assert.equal(refused.status, 409);
+  assert.match((await refused.json()).error, /at most 3/);
+  assert.equal(asked[0].codexAuth, 'sk-own-key', 'the owner\'s own sign-in goes with the start');
+  assert.deepEqual(allowed, [], 'a start the session refused is allowed nothing');
+  answer = 200;
+  assert.equal((await start('codex')).status, 200);
+  assert.deepEqual(allowed, ['codex']);
+  assert.equal((await start('claude')).status, 200);
+  assert.equal(asked[2].codexAuth, undefined, 'a claude agent is sent no Codex sign-in');
+  // A lockdown that starts while the owner's sign-in is read: nothing is sent into the session.
+  let locked = false;
+  fleet.isLocked = () => locked;
+  userSettings.codexAuth = async () => { locked = true; return 'sk-own-key'; };
+  assert.equal((await start('codex')).status, 409);
+  assert.equal(asked.length, 3, 'the sign-in never reached the session');
+  mine.taintedAt = '2026-11-23T10:00:00Z';
+  assert.equal((await start('codex')).status, 409, 'a tainted session starts none');
+  assert.equal(asked.length, 3);
 });

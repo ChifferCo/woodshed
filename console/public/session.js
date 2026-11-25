@@ -149,6 +149,213 @@
   const launcher = W.createLauncher();
   const messageBox = W.createMessageBox();
   const chat = W.createChat({ openTerminal: () => setTab('tui'), openDiff: () => setTab('diff') });
+
+  // ---- The agents started beside a session's own (session/agents.mjs, statusd's /agents). Chat and TUI show the one
+  // picked on the pane bar's agent switch, kept per session in this browser tab; the session's own is shown when none is
+  // picked, or once the picked one stops. Only the owner of a running private session gets the switch, and only from a
+  // session image whose statusd starts them (its status says `agents`).
+  const AGENT_PICK_KEY = 'woodshed-agent-pick';
+  const agentPicks = (() => {
+    try {
+      const kept = JSON.parse(window.sessionStorage.getItem(AGENT_PICK_KEY) || '{}');
+      return kept && typeof kept === 'object' ? kept : {};
+    } catch {
+      return {};
+    }
+  })();
+  function keepAgentPick(sessionId, agentId) {
+    if (agentId) agentPicks[sessionId] = agentId;
+    else delete agentPicks[sessionId];
+    try {
+      window.sessionStorage.setItem(AGENT_PICK_KEY, JSON.stringify(agentPicks));
+    } catch {
+      // A private window keeps the pick for this page only.
+    }
+  }
+  // The session reports an agents array when its image supports starting extra agents.
+  const canRunAgents = (s) => s?.status === 'running' && Array.isArray(s.agents) && Boolean(s.owner) && s.owner === data?.login;
+  // This run's: a Resume starts the session's own agent alone, and the console's last read may still be the run before.
+  // One started from this page, until the console's read of the session has it (a read asked for before the start
+  // would take it off the switch again for a few seconds).
+  const justStarted = new Map();
+  function agentsOf(s) {
+    if (!canRunAgents(s)) return [];
+    const since = Date.parse(s.startedAt ?? '') || 0;
+    const listed = s.agents.filter((a) => !a.startedAt || Date.parse(a.startedAt) >= since);
+    const fresh = (justStarted.get(s.id) ?? []).filter((a) => Date.now() - a.seenAt < 30_000 && !listed.some((x) => x.id === a.id));
+    justStarted.set(s.id, fresh);
+    return [...listed, ...fresh];
+  }
+  function shownAgent(s) {
+    const picked = agentPicks[s?.id];
+    return picked ? agentsOf(s).find((a) => a.id === picked) ?? null : null;
+  }
+  // `Claude`, `Codex · gpt-5.5`: the agent (shared/agents.cjs), and its model when one was picked.
+  function agentLabel(agent, model) {
+    const name = window.WoodshedAgents.isAgent(agent) ? window.WoodshedAgents.agent(agent).name : agent;
+    return `${name}${model ? ` · ${model}` : ''}`;
+  }
+  const AGENT_STATE_WORDS = { starting: 'Starting', working: 'Working', 'needs-you': 'Needs you', done: 'Done', 'not-running': 'Exited' };
+  // What Chat shows for the agent picked: the session as Chat reads it, with the agent's id, state and message ids, and
+  // its routes (chat.js apiBase).
+  function chatView(s) {
+    const a = shownAgent(s);
+    if (!a) return s;
+    return {
+      // Its start in the key too: a new agent in a stopped one's place gets none of its drafts, bubbles or folds.
+      ...s, id: `${s.id}~${a.id}~${Date.parse(a.startedAt ?? '') || 0}`, options: { ...s.options, agent: a.agent, model: a.model },
+      state: a.state, boxText: false, heldIds: a.heldIds, deliveredIds: a.deliveredIds, refusedIds: a.refusedIds, unknownIds: [],
+      leftInBox: a.leftInBox, apiBase: `/api/sessions/${s.id}/agents/${a.id}`, uploadBase: `/api/sessions/${s.id}`,
+    };
+  }
+  function pickAgent(s, agentId) {
+    keepAgentPick(s.id, agentId);
+    render();
+  }
+
+  const canStartAgent = (s, list = agentsOf(s)) => !s.taintedAt && canRunAgents(s) && list.length < 3;
+
+  function startAgentItem(s, list) {
+    if (!canStartAgent(s, list)) return null;
+    return { group: 'Start', label: '+ Another agent', note: 'Claude or Codex, with the model you pick, in this checkout', run: () => newAgentDialog(s) };
+  }
+
+  // The switch on the pane bar, while Chat or TUI shows: the agent shown, a menu of every agent in the session with its
+  // state, + Another agent, and Stop for the one shown when it is not the session's own.
+  function agentSwitch(s) {
+    if (!canRunAgents(s)) return null;
+    const list = agentsOf(s);
+    const shown = shownAgent(s);
+    const own = { id: null, agent: W.agentOf(s), model: s.options?.model || null, state: s.state };
+    const waiting = [own, ...list].filter((a) => a.state === 'needs-you' && a.id !== (shown?.id ?? null)).length;
+    const label = [
+      h('span', null, agentLabel((shown ?? own).agent, (shown ?? own).model)),
+      list.length > 0 && h('span', { class: 'pagent-count' }, `${list.length + 1} agents`),
+      waiting > 0 && h('span', { class: 'pagent-needs' }, `${waiting} needs you`),
+      ' ▾',
+    ];
+    const row = (a) => ({
+      group: 'Agents',
+      label: `${(shown?.id ?? null) === a.id ? '✓ ' : ''}${agentLabel(a.agent, a.model)}${a.id ? '' : ' (the session\'s own)'}`,
+      note: [AGENT_STATE_WORDS[a.state] ?? 'Starting', a.id && a.permissionMode && `${a.permissionMode} mode`, a.effort && `${a.effort} effort`].filter(Boolean).join(' · '),
+      run: () => pickAgent(s, a.id),
+    });
+    return barMenuButton(s, {
+      key: 'agents', className: `pagent${waiting > 0 ? ' is-needs' : ''}`,
+      title: 'Which agent Chat and TUI show: start another beside this one, with the agent and model you pick',
+      label,
+      open: () => ({
+        items: [
+          ...[own, ...list].map(row),
+          startAgentItem(s, list),
+          shown && { group: 'Start', end: true, danger: true, label: `Stop ${agentLabel(shown.agent, shown.model)}`, note: 'Ends this agent: its conversation stays in the session\'s home', run: () => stopAgent(s, shown) },
+        ].filter(Boolean),
+      }),
+    });
+  }
+
+  async function stopAgent(s, a) {
+    try {
+      await W.postJson(`/api/sessions/${s.id}/agents/${a.id}/stop`, {});
+      keepAgentPick(s.id, null);
+      W.shell.toast(`${agentLabel(a.agent, a.model)} stopped`);
+    } catch (err) {
+      W.shell.toast(`Not stopped: ${err.message}`, { ms: 6000 });
+    }
+    refresh();
+  }
+
+  // + Another agent: the agent, model, effort and permissions, as New session picks them, and a first message.
+  function newAgentDialog(s) {
+    const C = W.agentChoices;
+    const select = (options) => h('select', { class: 'field' }, options.map(([value, label, title]) => h('option', { value, title }, label)));
+    const fill = (el, options) => el.replaceChildren(...options.map(([value, label, title]) => h('option', { value, title }, label)));
+    // Claude Code or Codex alone beside a session's own (session/agents.mjs): Grok Build and OpenCode run only as a
+    // session's own agent, on their owner's own sign-in.
+    const agent = select(C.AGENTS.filter(([value]) => window.WoodshedAgents.isAgent(value) && window.WoodshedAgents.agent(value).teamCredential));
+    const model = select(C.MODELS);
+    const effort = select(C.EFFORTS);
+    const mode = select(C.MODES);
+    const prompt = h('textarea', { class: 'field', rows: '3', placeholder: 'Optional: what it should do first. Leave it empty to write to it on the Chat tab.' });
+    const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    const go = h('button', { type: 'submit', class: 'btn btn-open' }, 'Start agent');
+    const cancel = h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel');
+    let catalog = null;
+    const codexModels = () => [['', 'default', 'Codex\u2019s own default'], ...(catalog?.models ?? []).map((m) => [m.slug, m.slug, m.description || m.name])];
+    const codexEfforts = () => {
+      const picked = catalog?.models.find((m) => m.slug === model.value);
+      const efforts = picked ? picked.efforts : [...new Set((catalog?.models ?? []).flatMap((m) => m.efforts))];
+      return [['', picked?.defaultEffort ? `default (${picked.defaultEffort})` : 'default'], ...efforts.map((e) => [e, e])];
+    };
+    function showAgent() {
+      const codex = agent.value === 'codex';
+      fill(model, codex ? codexModels() : C.MODELS);
+      fill(effort, codex ? codexEfforts() : C.EFFORTS);
+      fill(mode, codex ? C.CODEX_MODES : C.MODES);
+      if (codex && !catalog) {
+        W.getJson('/api/my/codex-models').then((answer) => {
+          catalog = answer;
+          if (agent.value === 'codex') {
+            const was = model.value;
+            fill(model, codexModels());
+            model.value = was;
+            fill(effort, codexEfforts());
+          }
+        }, () => {});
+      }
+    }
+    agent.addEventListener('change', showAgent);
+    model.addEventListener('change', () => { if (agent.value === 'codex') fill(effort, codexEfforts()); });
+    // The other agent first: a second opinion is the usual reason to start one.
+    agent.value = W.agentOf(s) === 'codex' ? 'claude' : 'codex';
+    showAgent();
+    const field = (label, control) => h('label', { class: 'field-label' }, h('span', null, label), control);
+    const form = h('form', { method: 'dialog', class: 'agent-form' },
+      h('p', { class: 'sub' }, 'It works in this session\'s checkout, beside the agents already in it. Use the agent switch in Chat or TUI to choose which agent you see.'),
+      h('div', { class: 'agent-grid' }, field('Agent', agent), field('Model', model), field('Effort', effort), field('Permissions', mode)),
+      field('First message', prompt),
+      error,
+      h('div', { class: 'dialog-actions' }, cancel, go));
+    const dialog = h('dialog', { class: 'confirm agent-dialog', 'aria-labelledby': 'agent-title' }, h('h2', { id: 'agent-title' }, 'Start another agent'), form);
+    let busy = false;
+    dialog.addEventListener('cancel', (e) => { if (busy) e.preventDefault(); });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      busy = true;
+      go.disabled = true;
+      cancel.disabled = true;
+      go.textContent = 'Starting…';
+      error.hidden = true;
+      try {
+        const answer = await W.postJson(`/api/sessions/${s.id}/agents`, {
+          agent: agent.value, model: model.value, effort: effort.value, permissionMode: mode.value, prompt: prompt.value.trim(),
+        });
+        busy = false;
+        dialog.close();
+        const started = answer?.agent;
+        if (started?.id) {
+          // Shown as soon as it is in the session's list: until the console reads it, the page adds it itself.
+          justStarted.set(s.id, [...(justStarted.get(s.id) ?? []), { ...started, seenAt: Date.now() }]);
+          keepAgentPick(s.id, started.id);
+        }
+        W.shell.toast(`${agentLabel(agent.value, model.value)} is starting: it shows on ${tab === 'tui' ? 'TUI' : 'Chat'} as it opens`);
+        if (tab === 'chat' || tab === 'tui') render();
+        else setTab('chat');
+        refresh();
+      } catch (err) {
+        busy = false;
+        error.textContent = `Not started: ${err.message}`;
+        error.hidden = false;
+        go.disabled = false;
+        cancel.disabled = false;
+        go.textContent = 'Start agent';
+      }
+    });
+    dialog.addEventListener('close', () => dialog.remove());
+    document.body.append(dialog);
+    dialog.showModal();
+    agent.focus();
+  }
   // Made the first time /all shows, which may be after a move from another of these pages.
   let sharedHome = null;
 
@@ -184,6 +391,8 @@
     if (onMy) launcher.applyQuery();
     render();
     refresh();
+    // For what follows the page's address without drawing it (notificationBell.js).
+    window.dispatchEvent(new Event('woodshed:route'));
   }
   window.addEventListener('popstate', moved);
   // Going away altogether (My settings, another page of the console, a reload, closing the browser tab) puts the tab
@@ -331,10 +540,12 @@
     agent.value = AGENTS.find(([v]) => v !== from)?.[0] ?? from;
     const model = h('select', { id: 'handoff-model', class: 'field' });
     let codexModels = null;
+    // Claude's own list and Codex's catalog; Grok Build and OpenCode start on their own default model, which a session's
+    // agent can change itself.
     const fillModels = () => {
       const list = agent.value === 'codex'
         ? [['', 'default', 'Codex\u2019s own default'], ...(codexModels ?? []).map((m) => [m.slug, m.slug, m.description || m.name])]
-        : MODELS;
+        : agent.value === 'claude' ? MODELS : [['', 'default', `${window.WoodshedAgents.agent(agent.value).product}\u2019s own default`]];
       const was = model.value;
       model.replaceChildren(...options(list));
       if (list.some(([v]) => v === was)) model.value = was;
@@ -409,9 +620,9 @@
     if (!(await resumePrivate(s))) row.classList.remove('is-busy');
   }
 
-  // What Resume does for a private session: claude picks its conversation up again; codex keeps none between runs.
+  // What Resume does for a private session: claude picks its conversation up again; the other agents keep none between runs.
   function resumeNote(s) {
-    return W.agentOf(s) === 'codex' ? 'Start it again on its branch, in a new Codex conversation' : 'Start it again on its branch, with claude\'s conversation';
+    return W.agentOf(s) !== 'claude' ? `Start it again on its branch, in a new ${W.agentTitle(s)} conversation` : 'Start it again on its branch, with claude\'s conversation';
   }
 
   // Resume, as the shed has it: a stopped private session again, on its branch, with claude's conversation.
@@ -489,6 +700,8 @@
     const title = slots.head.querySelector('.ptitle');
     const anchor = title?.getClientRects().length ? title : slots.head;
     const r = anchor.getBoundingClientRect();
+    // Measured from the left edge, where nothing squeezes it, then placed under the title.
+    offer.el.style.left = '8px';
     const width = offer.el.offsetWidth;
     offer.el.style.top = `${Math.round(r.bottom + 6)}px`;
     offer.el.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - width - 8)))}px`;
@@ -504,6 +717,7 @@
     if (was === s.namedAt) {
       if (offer) {
         if (!offer.editing) offer.name.textContent = s.title;
+        offer.ttl?.sync(s);
         placeRenameOffer();
       }
       return;
@@ -525,6 +739,8 @@
       keep();
       if (offer.editing) return;
       offer.editing = true;
+      // The name's field needs the row: the pickers go under it, at any width.
+      el.classList.add('is-editing');
       const input = h('input', { class: 'field', value: currentSession?.title ?? s.title, maxlength: '120', 'aria-label': 'Session name', autocomplete: 'off' });
       const save = h('button', { type: 'submit', class: 'btn btn-plain btn-sm' }, 'Save');
       const form = h('form', { class: 'rename-offer-form' }, input, save,
@@ -553,8 +769,10 @@
     const body = h('div', { class: 'rename-offer-body', onclick: (e) => { if (!e.target.closest('form')) edit(); } },
       h('span', { class: 'rename-offer-line' }, 'Named ', name),
       h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: edit }, 'Rename'));
+    const ttl = limitPicks(s);
     const el = h('div', { class: 'rename-offer', role: 'dialog', 'aria-label': 'Rename this session' },
       body,
+      ttl?.el,
       h('button', { type: 'button', class: 'rename-offer-close', 'aria-label': 'Close', title: 'Keep this name', onclick: (e) => { e.stopPropagation(); closeRenameOffer(); } }, '\u00d7'),
       h('span', { class: 'rename-offer-timer', 'aria-hidden': 'true', style: `animation-duration: ${RENAME_OFFER_MS}ms` }));
     el.addEventListener('pointerdown', keep);
@@ -565,8 +783,108 @@
       closeRenameOffer();
     });
     document.body.append(el);
-    offer = { id: s.id, el, name, kept: false, editing: false, timer: setTimeout(closeRenameOffer, RENAME_OFFER_MS) };
+    offer = { id: s.id, el, name, ttl, kept: false, editing: false, timer: setTimeout(closeRenameOffer, RENAME_OFFER_MS) };
     placeRenameOffer();
+  }
+
+  // The offer's other questions, while the session is new: how long it waits for input before it pauses, and how long
+  // it runs before it stops by itself (its own `idleHours` and `lifetimeHours`, as Pause and stop… sets them). Offered
+  // to whoever may change them (W.ownsLimits); each one's first option is what it runs on otherwise, and a pick is saved
+  // at once, with the other kept as it is. Each refresh draws them again from the latest copy of the session and the
+  // latest settings, while the offer stays open: a change made in Pause and stop… or My settings meanwhile shows here.
+  const LIMIT_PICKS = {
+    idleHours: [0.25, 0.5, 1, 2, 4],
+    lifetimeHours: [1, 2, 4, 8, 12, 24],
+  };
+  // How far along a clock is as the console counts it (sessions.mjs pauseAt): from its start, whatever claude is doing,
+  // and nothing while an Extend from this run still holds the session.
+  const clockPast = (x, from) => {
+    if (x.status !== 'running' || !from) return 0;
+    const held = Date.parse(x.extendedAt) >= Date.parse(x.startedAt) ? Date.parse(x.extendedUntil) : NaN;
+    if (Number.isFinite(held) && held > Date.now()) return 0;
+    return (Date.now() - Date.parse(from)) / 3_600_000;
+  };
+  const limitText = (n) => (n < 1 ? `${Math.round(n * 60)} min` : `${n} h`);
+  const limitWords = (n) => (n < 1 ? `${Math.round(n * 60)} minutes` : W.hoursText(n));
+  function limitPicks(s) {
+    if (s.kind === 'ask' || !data || !W.ownsLimits(s, data)) return null;
+    let latest = s;
+    let pending = false;
+    // How far the session already is along each clock: a pick at or under it would pause or stop it within seconds, so
+    // those are not offered (Pause and stop… still can).
+    const KINDS = {
+      idleHours: {
+        label: 'Pauses after', aria: 'Pause it after waiting for input for', cls: 'rename-offer-idle-pick',
+        fallback: () => (s.owner && data.myIdleHours) || data.idleHours,
+        past: (x) => clockPast(x, x.lastActiveAt),
+        saved: (n) => `Pauses after ${limitWords(n)} waiting for input`,
+        refused: (n) => `it has already waited for input for more than ${limitWords(n)}`,
+        title: 'How long it waits for input before it pauses. Resume picks it up where it was.',
+      },
+      lifetimeHours: {
+        label: 'Stops after', aria: 'Stop it after', cls: 'rename-offer-ttl-pick',
+        fallback: () => (s.owner && data.myLifetimeHours) || data.lifetimeHours,
+        past: (x) => clockPast(x, x.startedAt),
+        saved: (n) => `Stops after ${limitWords(n)} of running`,
+        refused: (n) => `it has already run past ${limitWords(n)}`,
+        title: 'How long it runs before it stops by itself. It tries to push its work first, and Resume picks it up.',
+      },
+    };
+    const selects = {};
+    const draw = (key) => {
+      const kind = KINDS[key];
+      const select = selects[key];
+      const own = latest.limits?.[key] ?? null;
+      const past = kind.past(latest);
+      const fallback = kind.fallback();
+      const picks = [...new Set([...LIMIT_PICKS[key], ...(own ? [own] : [])])].sort((a, b) => a - b);
+      const option = (value, text, hours) => h('option', { value, disabled: hours <= past && value !== String(own ?? '') }, text);
+      select.replaceChildren(
+        option('', fallback ? `${limitText(fallback)} (usual)` : 'Usual', fallback || Infinity),
+        ...picks.map((n) => option(String(n), limitText(n), n)));
+      select.value = own ? String(own) : '';
+    };
+    const drawAll = () => { for (const key of Object.keys(KINDS)) if (document.activeElement !== selects[key]) draw(key); };
+    const labels = Object.entries(KINDS).map(([key, kind]) => {
+      const select = selects[key] = h('select', { class: `field ${kind.cls}`, 'aria-label': kind.aria });
+      draw(key);
+      select.addEventListener('change', async () => {
+        const value = select.value ? Number(select.value) : null;
+        const effective = value ?? kind.fallback();
+        // Checked again now: the offer may have been open long enough for the session to get past the pick.
+        if (effective <= kind.past(latest)) {
+          W.shell.toast(`Not saved: ${kind.refused(effective)}. Pause and stop… can do it now.`, { ms: 6000 });
+          draw(key);
+          return;
+        }
+        for (const other of Object.values(selects)) other.disabled = true;
+        pending = true;
+        try {
+          // The other limit stays as it is now (a key left out would go back to the usual): read from the latest copy
+          // of this session, never the offer's first, which may hold one changed since.
+          const limits = { idleHours: latest.limits?.idleHours ?? null, lifetimeHours: latest.limits?.lifetimeHours ?? null, [key]: value };
+          await W.postJson(`/api/sessions/${s.id}/limits`, limits);
+          latest = { ...latest, limits };
+          W.shell.toast(kind.saved(effective));
+          refresh();
+        } catch (err) {
+          W.shell.toast(`Not saved: ${err.message}`, { ms: 6000 });
+        }
+        pending = false;
+        for (const other of Object.values(selects)) other.disabled = false;
+        draw(key);
+      });
+      return h('label', { class: 'rename-offer-limit', title: kind.title }, h('span', null, kind.label), select);
+    });
+    const el = h('div', { class: 'rename-offer-limits' }, ...labels);
+    // The latest copy is kept on every refresh; a picker's options are drawn again only when no save is on its way and
+    // its list cannot be open.
+    const sync = (next) => {
+      if (pending) return;
+      latest = next;
+      drawAll();
+    };
+    return { el, sync };
   }
 
   const STAR = 'M5 1.1 L5.99 3.94 L8.99 4 L6.6 5.82 L7.47 8.7 L5 6.98 L2.53 8.7 L3.4 5.82 L1.01 4 L4.01 3.94 Z';
@@ -590,10 +908,13 @@
   function assignActions(s) {
     if (!data.assignable || W.isPrivate(s) || s.kind === 'ask' || W.isPullCheck(s)) return [];
     const mine = W.sameLogin(s.assignee, data.login);
+    const others = data.assignables.filter((l) => !W.sameLogin(l, data.login) && !W.sameLogin(l, s.assignee));
     return [
       !mine && { label: 'Assign to me', note: s.assignee ? `Take it from ${W.personText(s.assignee)}` : 'Nobody has it: take it', run: () => assignTo(s, data.login) },
-      ...data.assignables.filter((l) => !W.sameLogin(l, data.login) && !W.sameLogin(l, s.assignee))
-        .map((l) => ({ label: `Hand over to ${W.personText(l)}`, note: `@${l}`, run: () => assignTo(s, l) })),
+      others.length && {
+        label: 'Hand over…', note: others.length === 1 ? `Give it to ${W.personText(others[0])}` : `Give it to someone else who can be assigned (${others.length})`,
+        run: () => handOver(s, others),
+      },
       s.assignee && { label: 'Unassign', note: 'Nobody has it; anyone who can be assigned can take it', run: () => assignTo(s, null) },
     ].filter(Boolean);
   }
@@ -683,7 +1004,10 @@
   // `opened` counts each opening, so a row that ends after its menu was closed and opened again leaves the new one be.
   const cardMenu = { el: h('div', { class: 'card-menu', role: 'menu', tabindex: '-1', hidden: true }), id: null, key: null, state: null, busy: false, opened: 0 };
   document.body.append(cardMenu.el);
-  const menuState = (s) => `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.appName ?? ''}:${s.branch}:${s.assignee ?? ''}`;
+  function menuState(s, key) {
+    const canStart = key === `${s.id}:phone` && narrow.matches && canStartAgent(s);
+    return `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.appName ?? ''}:${s.branch}:${s.assignee ?? ''}:${canStart}`;
+  }
   // The card's ⋯, or on a phone's session page the top bar's: whichever of the two shows.
   const menuAnchor = () => (cardMenu.key
     ? [...document.querySelectorAll(`[data-menu-for="${cardMenu.key}"]`)].find((b) => b.offsetParent) ?? null : null);
@@ -729,7 +1053,7 @@
     placeCardMenu(button);
     cardMenu.id = s.id;
     cardMenu.key = key;
-    cardMenu.state = menuState(s);
+    cardMenu.state = menuState(s, key);
     button.setAttribute('aria-expanded', 'true');
     // Details with no branch has no item, so the menu itself takes the focus. The menu is one element, so a sheet
     // scrolled the last time it was open opens at its top again, and the focus does not scroll it.
@@ -742,7 +1066,7 @@
     if (!cardMenu.id || cardMenu.busy) return;
     const s = data.sessions.find((x) => x.id === cardMenu.id);
     const button = menuAnchor();
-    if (!s || !button || menuState(s) !== cardMenu.state) return closeCardMenu();
+    if (!s || !button || menuState(s, cardMenu.key) !== cardMenu.state) return closeCardMenu();
     button.setAttribute('aria-expanded', 'true');
     placeCardMenu(button);
   }
@@ -771,9 +1095,11 @@
     if (!cardMenu.el.hidden && (e.target === document || slots.rail?.contains(e.target))) closeCardMenu();
   }, true);
 
-  function menuButton(s) {
+  // `key`: the menu's own, the session's id, or another for a second card of it (the Needs you copy), so each menu stays
+  // on the card it opened from.
+  function menuButton(s, key = s.id) {
     return h('button', {
-      type: 'button', class: 'rmenu', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === s.id), 'data-session': s.id, 'data-menu-for': s.id,
+      type: 'button', class: 'rmenu', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === key), 'data-session': s.id, 'data-menu-for': key,
       'aria-label': `Actions for ${s.title}`, title: 'Actions',
       onclick: (e) => { e.preventDefault(); e.stopPropagation(); openCardMenu(e.currentTarget, s); },
     }, '⋯');
@@ -801,6 +1127,14 @@
       W.shell.toast(`Not assigned: ${err.message}`);
     }
     refresh();
+  }
+
+  // Everyone who can be assigned, in one dropdown, rather than a row each in the ⋯ menu, which a team makes long.
+  async function handOver(s, logins) {
+    const options = logins.map((l) => ({ value: l, label: W.personText(l) === `@${l}` ? `@${l}` : `${W.personText(l)} (@${l})` }))
+      .sort((a, b) => a.label.replace(/^@/, '').localeCompare(b.label.replace(/^@/, ''), undefined, { sensitivity: 'base' }));
+    const to = await W.askChoice({ title: 'Hand over this session', label: 'To', options, goLabel: 'Hand over' });
+    if (to) await assignTo(s, to);
   }
 
   // Shown in a session's last 15 minutes before it pauses or stops by itself: an hour more, each press.
@@ -842,9 +1176,10 @@
   // After the shed's rail: a card per session, its issue or PR on the right, a status line, and the app's button.
   // The card is not one link, since it holds a button: the title is the link, and a click anywhere else on the card
   // follows it too.
-  function railCard(s) {
+  // `group`: the sessions started as pieces of this one's work, counted on its card with the toggle that folds them
+  // (railGroup). `inGroup`: the session whose group this card also sits in, said on the copy Needs you shows.
+  function railCard(s, { group = null, inGroup = null } = {}) {
     const st = W.displayStatus(s);
-    const pr = W.prNumber(s.prUrl);
     const live = W.isLive(s);
     const word = h('b', null, st.word.charAt(0).toUpperCase() + st.word.slice(1));
     const pauses = W.pausesIn(s, data);
@@ -863,25 +1198,200 @@
           : [word, who && [' · ', who]];
     const href = sessionHref(s);
     return h('div', {
-      class: `rcard is-${st.key}${live ? '' : ' is-stopped'}${project ? ` has-project${project.color ? ` proj-${project.color}` : ''}` : ''}`,
+      class: `rcard is-${st.key}${live ? '' : ' is-stopped'}${project ? ` has-project${project.color ? ` proj-${project.color}` : ''}` : ''}${inGroup ? ' is-copy' : ''}`,
       'aria-current': s.id === id ? 'true' : null,
-      title: project ? `Project ${project.name}` : null,
+      'data-session': s.id,
+      // Where the pointer can rest, the hover card says the project and the whole title (railPeek); a tooltip too would
+      // show both.
+      title: project && !peekable() ? `Project ${project.name}` : null,
       onclick: (e) => { if (!e.target.closest('a, button')) navigate(href); },
     },
       h('div', { class: 'rtop' },
         live ? h('span', { class: `status is-${st.key}` }, h('span', { class: 'dot', 'aria-hidden': 'true' })) : h('span', { class: `dot ring is-${st.key}`, 'aria-hidden': 'true' }),
-        h('a', { class: 'rname', href, title: project ? `${s.title} · project ${project.name}` : s.title, 'aria-label': project ? `${s.title}, project ${project.name}` : null }, s.title),
+        h('a', { class: 'rname', href, title: peekable() ? null : project ? `${s.title} · project ${project.name}` : s.title, 'aria-label': project ? `${s.title}, project ${project.name}` : null }, s.title),
         // The word Assigned on Mine means yours; a session you started that someone else has names them, as on Everyone.
         showOwnerTag(s) && W.ownerTag(s, { named: !railMine() || !W.sameLogin(s.assignee, data.login) }),
-        h('span', { class: 'rmarks' }, starButton(s), menuButton(s))),
+        h('span', { class: 'rmarks' }, starButton(s), menuButton(s, inGroup ? `${s.id}:copy` : s.id))),
       h('div', { class: 'rsub' },
         h('span', { class: 'rsub-text' }, sub),
-        pr ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
+        W.hasPrs(s) ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
         W.isUnassigned(s) && data.assignable && takeButton(s),
         live && W.canExtend(s, data) && extendButton(s),
         !live && W.canResumePrivate(s) && resumeButton(s, true),
-        W.isResumable(s) && W.group(s) !== 'merged' && W.resumeSharedButton(s, { small: true, onDone: refresh })));
+        W.isResumable(s) && W.group(s) !== 'merged' && W.resumeSharedButton(s, { small: true, onDone: refresh })),
+      inGroup && h('div', { class: 'rin' }, 'In ', h('a', { href: sessionHref(inGroup) }, inGroup.title)),
+      group && group.count > 0 && groupToggle(s, group));
   }
+
+  // ---- groups: the sessions a session started as pieces of its work (W.railGroups) ----
+  // Each viewer folds a group in their own browser; a group is open until folded.
+  const GROUPS_KEY = 'woodshed-rail-groups';
+  const foldedGroups = (() => {
+    try {
+      return new Set(JSON.parse(window.localStorage.getItem(GROUPS_KEY) || '[]'));
+    } catch {
+      return new Set();
+    }
+  })();
+  function toggleGroup(sessionId) {
+    if (foldedGroups.has(sessionId)) foldedGroups.delete(sessionId);
+    else foldedGroups.add(sessionId);
+    try {
+      window.localStorage.setItem(GROUPS_KEY, JSON.stringify([...foldedGroups]));
+    } catch {
+      // A private window keeps the choice for this page only.
+    }
+    render();
+  }
+
+  // On the card: how many it started and how many of those need the person, which is also what a folded group shows.
+  function groupToggle(s, { count, needs }) {
+    const open = !foldedGroups.has(s.id);
+    return h('button', {
+      type: 'button', class: 'rkids', 'aria-expanded': String(open), 'aria-controls': open ? `group-${s.id}` : null,
+      title: open ? 'Fold the sessions it started' : 'Show the sessions it started',
+      onclick: () => toggleGroup(s.id),
+    },
+      h('span', { class: 'caret', 'aria-hidden': 'true' }, open ? '▾' : '▸'),
+      `${count} ${count === 1 ? 'session' : 'sessions'}`,
+      needs > 0 && h('span', { class: 'rkids-needs' }, ` · ${needs} ${needs === 1 ? 'needs' : 'need'} you`));
+  }
+
+  // A card, and under it the sessions of its group, each with its own group, while the group is open.
+  function railCardAndGroup(s, groups) {
+    if (!groups) return railCard(s);
+    const counts = W.groupCounts(s.id, groups.kids);
+    const card = railCard(s, { group: counts });
+    const kids = groups.kids.get(s.id);
+    if (!kids?.length || foldedGroups.has(s.id)) return card;
+    return [card, h('div', { class: 'rgroup', id: `group-${s.id}`, role: 'group', 'aria-label': `Started from ${s.title}` },
+      kids.map((k) => railCardAndGroup(k, groups)))];
+  }
+
+  // ---- the rail's hover card ----
+  // Resting the pointer on a card for a moment, or bringing the keyboard's focus to its name, shows what the card has
+  // no room for beside it (W.peekView): the status and when it next pauses or stops, the agent's last line, the pull
+  // requests and their checks, the branch, the agent, the last activity and who has it. A phone has no hover and its
+  // rail is a page of its own, so it gets none. The chips, star, ⋯ and buttons on a card keep their own tooltips: the
+  // card hides while the pointer is on one.
+  const PEEK_DELAY_MS = 500;
+  const hoverable = window.matchMedia('(hover: hover)');
+  function peekable() {
+    return hoverable.matches && !narrow.matches;
+  }
+  // `by` is what opened it, the pointer or the keyboard's focus: focus moving elsewhere hides only a card focus opened.
+  // `copy`: the card it is beside is the copy Needs you shows of a session in a group, which has the same id.
+  const peek = { el: h('div', { class: 'rail-peek', id: 'rail-peek', role: 'tooltip', hidden: true }), id: null, copy: false, timer: null, shown: false, by: null };
+  document.body.append(peek.el);
+
+  function peekBody(s) {
+    const project = projectsShown() && s.project ? s.project : null;
+    const v = W.peekView(s, data, { project });
+    return [
+      h('div', { class: 'peek-title' }, v.title),
+      h('div', { class: `peek-status is-${v.key}` }, h('b', null, v.word), v.next && ` · ${v.next}`),
+      v.last && h('p', { class: `peek-last${v.last.error ? ' is-error' : ''}` }, v.last.who && h('span', { class: 'peek-who' }, `${v.last.who}: `), v.last.text),
+      v.prs.length > 0 && h('div', { class: 'peek-prs' }, v.prs.map((p) => h('div', { class: 'peek-pr' },
+        h('div', { class: 'peek-pr-head' }, h('span', { class: 'peek-num' }, p.number), p.title && h('span', { class: 'peek-pr-title' }, p.title)),
+        (p.state || p.checks || p.review || p.running) && h('div', { class: 'peek-pr-sub' },
+          [p.state, p.checks && h('span', { class: `peek-checks is-${p.level}` }, p.checks), p.review, p.running && h('span', { class: 'peek-checks is-pending' }, p.running)]
+            .filter(Boolean).flatMap((part, i) => (i ? [' · ', part] : [part])))))),
+      v.rows.length > 0 && h('dl', { class: 'peek-rows' }, v.rows.flatMap(([term, value]) => [h('dt', null, term), h('dd', { class: term === 'Branch' ? 'is-mono' : null }, value)])),
+    ].filter(Boolean);
+  }
+
+  function placePeek(card) {
+    const box = card.getBoundingClientRect();
+    // Past the rail's edge, not over its border.
+    const edge = Math.max(box.right, slots.rail?.getBoundingClientRect().right ?? 0);
+    const w = peek.el.offsetWidth;
+    const ht = peek.el.offsetHeight;
+    // Beside the card, on the pane's side; under it when the window has no room there.
+    const right = edge + 8 + w <= window.innerWidth - 8;
+    const left = right ? edge + 8 : Math.min(Math.max(8, box.left), window.innerWidth - w - 8);
+    const top = right ? Math.min(Math.max(8, box.top), window.innerHeight - ht - 8)
+      : (box.bottom + 6 + ht <= window.innerHeight - 8 ? box.bottom + 6 : Math.max(8, box.top - 6 - ht));
+    peek.el.style.left = `${left}px`;
+    peek.el.style.top = `${top}px`;
+  }
+
+  function cardOf(sessionId, copy = false) {
+    return slots.railBody?.querySelector(`.rcard[data-session="${CSS.escape(sessionId)}"]${copy ? '.is-copy' : ':not(.is-copy)'}`) ?? null;
+  }
+
+  function showPeek() {
+    const s = data?.sessions.find((x) => x.id === peek.id);
+    const card = peek.id && cardOf(peek.id, peek.copy);
+    if (!peekable() || !s || !card || !card.getClientRects().length) return hidePeek();
+    peek.el.replaceChildren(...peekBody(s));
+    peek.el.hidden = false;
+    peek.shown = true;
+    card.querySelector('.rname')?.setAttribute('aria-describedby', 'rail-peek');
+    placePeek(card);
+  }
+
+  function hidePeek() {
+    clearTimeout(peek.timer);
+    if (peek.id) cardOf(peek.id, peek.copy)?.querySelector('.rname')?.removeAttribute('aria-describedby');
+    peek.id = null;
+    peek.copy = false;
+    peek.by = null;
+    peek.shown = false;
+    peek.el.hidden = true;
+  }
+
+  function peekSoon(sessionId, by, copy = false) {
+    if (sessionId === peek.id && copy === peek.copy) return;
+    hidePeek();
+    peek.id = sessionId;
+    peek.copy = copy;
+    peek.by = by;
+    peek.timer = setTimeout(showPeek, PEEK_DELAY_MS);
+  }
+
+  // The rail is drawn again on each refresh, so the card under the pointer is a new element: the open card follows it,
+  // with the new data, or goes when the session left the list.
+  function syncPeek() {
+    if (peek.shown) showPeek();
+  }
+
+  // On each move, not only on entering a card: a scroll of the rail hides the card, and the next move over it brings it
+  // back.
+  document.addEventListener('mousemove', (e) => {
+    if (!peekable()) return;
+    const card = e.target.closest?.('.rail .rcard');
+    // A chip, the star, ⋯ or a button on the card has its own tooltip.
+    const control = card && e.target.closest('a:not(.rname), button, .prchip');
+    if (card && !control) peekSoon(card.dataset.session, 'pointer', card.classList.contains('is-copy'));
+    else if (peek.id) hidePeek();
+  });
+  // A pointer that leaves a card straight into the terminal, the review or another iframe sends this page no further
+  // move, so leaving the card is what hides it there.
+  document.addEventListener('mouseout', (e) => {
+    if (peek.by !== 'pointer' || !e.target.closest?.('.rail .rcard')) return;
+    if (!e.relatedTarget?.closest?.('.rail .rcard')) hidePeek();
+  });
+  document.addEventListener('focusin', (e) => {
+    const name = peekable() && e.target.closest?.('.rail .rcard .rname');
+    if (name && name.matches(':focus-visible')) peekSoon(name.closest('.rcard').dataset.session, 'focus', name.closest('.rcard').classList.contains('is-copy'));
+    // The redraw giving a project chip its focus back is not the person moving on from the card the pointer rests on.
+    else if (peek.by === 'focus') hidePeek();
+  });
+  // A window made phone-wide, or a pointer that can no longer hover, takes the card away.
+  narrow.addEventListener('change', hidePeek);
+  hoverable.addEventListener('change', hidePeek);
+  document.documentElement.addEventListener('mouseleave', hidePeek);
+  document.addEventListener('mousedown', hidePeek, true);
+  document.addEventListener('keydown', (e) => { if (e.key !== 'Tab' && e.key !== 'Shift') hidePeek(); }, true);
+  // The rail's scroll or the page's moves the card; the App log's own scroll to its end does not.
+  document.addEventListener('scroll', (e) => {
+    if (e.target.dataset?.restored) {
+      delete e.target.dataset.restored;
+      return;
+    }
+    if (peek.id && (e.target === document || slots.rail?.contains(e.target))) hidePeek();
+  }, true);
+  window.addEventListener('blur', hidePeek);
 
   // Which zones are folded is this viewer's own choice, kept in their browser when it lets us.
   const ZONES_KEY = 'woodshed-rail-zones';
@@ -958,7 +1468,8 @@
     paused: 'dot ring is-paused', needs: 'dot zone-dot is-waiting', unassigned: 'dot zone-dot is-waiting',
   };
 
-  function zone(key, title, sessions) {
+  // `card` draws each session: with its group under it on Mine, and as the copy of a nested one on Needs you.
+  function zone(key, title, sessions, card = (s) => railCard(s)) {
     if (!sessions.length) return null;
     const open = !folded[key];
     return h('section', { class: `zone is-${key}-zone${open ? '' : ' is-folded'}` },
@@ -967,7 +1478,7 @@
         h('span', null, title),
         h('span', { class: 'caret', 'aria-hidden': 'true' }, open ? '▾' : '▸'),
         h('span', { class: 'count' }, sessions.length)),
-      open && h('div', { class: 'zone-cards' }, pinnedFirst(sessions).map((s) => railCard(s))));
+      open && h('div', { class: 'zone-cards' }, pinnedFirst(sessions).map(card)));
   }
 
   // One head for both views of the rail: Mine | Everyone, the people filter while Everyone shows, and New session, all
@@ -1027,7 +1538,8 @@
   // each refresh replaces, so the menu keeps its focus through a refresh.
   let railUser = null;
   function railUserFoot() {
-    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot(), railToggle('rail-hide', 'Hide the rail'));
+    // In the desktop app, its notifications under a bell beside the menu (notificationBell.js); nothing in a browser.
+    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot(), W.notificationBell?.({ navigate }) ?? null, railToggle('rail-hide', 'Hide the rail'));
     return railUser;
   }
 
@@ -1172,12 +1684,18 @@
     const checks = listed.filter(W.isPullCheck);
     const work = listed.filter((s) => !W.isPullCheck(s));
     const unassigned = railMine() ? [] : work.filter(W.isUnassigned);
-    const rest = railMine() ? work : work.filter((s) => !W.isUnassigned(s));
+    // On Mine, a session started as a piece of another's work sits under it while that one is live (W.railGroups); one
+    // that asks the person something (W.asksPerson) shows on Needs you too, so a folded group never hides it.
+    const groups = railMine() ? W.railGroups(work) : null;
+    const rest = railMine() ? groups.top : work.filter((s) => !W.isUnassigned(s));
+    const inGroups = groups ? [...groups.parentOf.keys()].map((sid) => work.find((s) => s.id === sid)).filter(W.asksPerson) : [];
+    const grouped = (s) => railCardAndGroup(s, groups);
+    const needsCard = (s) => (groups?.parentOf.has(s.id) ? railCard(s, { inGroup: groups.parentOf.get(s.id) }) : grouped(s));
     const zones = railMine()
-      ? [zone('needs', 'Needs you', rest.filter((s) => !W.isLive(s) && W.needsYou(s)).sort((a, b) => Date.parse(b.stoppedAt ?? b.createdAt) - Date.parse(a.stoppedAt ?? a.createdAt))),
-        zone('active', 'Active', rest.filter(W.isLive).sort((a, b) => Number(W.needsYou(b)) - Number(W.needsYou(a)))),
-        zone('finished', 'Finished', rest.filter((s) => W.group(s) === 'finished')),
-        zone('stopped', 'Stopped', rest.filter((s) => !W.isLive(s) && !W.needsYou(s) && W.group(s) !== 'finished'))]
+      ? [zone('needs', 'Needs you', [...inGroups, ...rest.filter((s) => !W.isLive(s) && W.needsYou(s)).sort((a, b) => Date.parse(b.stoppedAt ?? b.createdAt) - Date.parse(a.stoppedAt ?? a.createdAt))], needsCard),
+        zone('active', 'Active', rest.filter(W.isLive).sort((a, b) => Number(W.needsYou(b)) - Number(W.needsYou(a))), grouped),
+        zone('finished', 'Finished', rest.filter((s) => W.group(s) === 'finished'), grouped),
+        zone('stopped', 'Stopped', rest.filter((s) => !W.isLive(s) && !W.needsYou(s) && W.group(s) !== 'finished'), grouped)]
       : [zone('unassigned', 'Unassigned', unassigned),
         ...W.GROUPS.filter((g) => status === 'all' || g.key === status).map((g) => zone(g.key, g.title, rest.filter((s) => W.group(s) === g.key)))];
     return [
@@ -1278,6 +1796,7 @@
     const choices = data.appDomain && !busy && !none && W.appChoices(s) ? W.appChoiceItems(s, refresh, render).map((a) => ({ ...a, group: 'App', label: `Start ${a.label}` })) : [];
     const running = W.runningAppLabel(s);
     return [
+      narrow.matches && startAgentItem(s),
       s.hasShell && W.isPrivate(s) && !s.taintedAt && W.agentOf(s) === 'claude' && {
         group: 'Claude', label: 'Sign in for Remote Control', note: 'Asks claude for /woodshed:remote-control: open the link it shows and paste the code in the chat', run: () => claudeLogin(s),
       },
@@ -1367,7 +1886,8 @@
     const trigger = s.trigger === 'label' ? `with the ${label} label` : s.trigger === 'comment' ? 'with a /woodshed comment'
       : s.trigger === 'my-woodshed' ? 'from My Woodshed' : s.trigger === 'slack' ? 'with a question in Slack'
         : s.trigger === 'qa' ? 'with the QA label, to test the pull request' : 'from the console';
-    const claude = W.agentOf(s) === 'codex' ? 'Your Codex sign-in, or the team\'s OpenAI key without one' : W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
+    const own = window.WoodshedAgents.agent(W.agentOf(s));
+    const claude = own.signIn ? `Your own ${own.product} sign-in` : W.agentOf(s) === 'codex' ? 'Your Codex sign-in, or the team\'s OpenAI key without one' : W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
     const row = (term, value) => value && [h('dt', null, term), h('dd', null, value)];
     return h('dl', { class: 'card-menu-dl' },
       row('Branch', s.branch),
@@ -1381,7 +1901,11 @@
       row('Visible to', W.isPrivate(s) ? 'Only you' : 'Everyone on the console'),
       W.isPrivate(s) && s.kind !== 'ask' && s.branch && !['pr', 'branch'].includes(inviteTargetOf(s).state)
         && row('Invite', 'Invite shows in the bar once GitHub has the branch: the session pushes when it commits and when it stops'),
-      s.taintedAt && row('Production data', `Since ${W.ago(s.taintedAt)}: it reaches only the console, its databases and your organization's private repos, and all it kept is deleted when it is removed`));
+      s.taintedAt && row('Production data', `Since ${W.ago(s.taintedAt)}: it reaches only the console, its databases and your organization's private repos, and all it kept is deleted when it is removed`),
+      // Each a link: the session it came from, and those it started, which are the same person's own.
+      ...W.startedLinks(s, data.sessions).map(([term, list]) => row(term, list.flatMap((x, i) => [
+        i ? ', ' : null, x.id ? h('a', { href: sessionHref(x) }, x.title) : x.title,
+      ]).filter(Boolean))));
   }
 
   // When it pauses and stops by itself, and whether those are its own, with the next one while it runs.
@@ -1506,7 +2030,7 @@
     const planText = !plan ? null : out ? 'Plan out' : fullest ? `Plan ${Math.round(fullest.usedPercent)}%` : 'Plan —';
     const level = planLevel === 'out' || planLevel === 'hot' || usage?.level === 'hot' ? 'hot' : planLevel || usage?.level || '';
     const tip = [
-      plan && `Your ${plan.agent === 'codex' ? 'Codex' : 'Claude'} plan: ${used.map((w) => `${w.short} ${Math.round(w.usedPercent)}%`).join(', ') || 'not reported yet'}${out?.resetsAt ? ', out until its reset' : ''}${plan.stale && plan.asOf ? `, read ${W.ago(plan.asOf)}` : ''}`,
+      plan && `Your ${window.WoodshedAgents.agent(plan.agent).name} plan: ${used.map((w) => `${w.short} ${Math.round(w.usedPercent)}%`).join(', ') || 'not reported yet'}${out?.resetsAt ? ', out until its reset' : ''}${plan.stale && plan.asOf ? `, read ${W.ago(plan.asOf)}` : ''}`,
       usage?.tip,
       'Click for each window, the machine\'s limits and when they reset',
     ].filter(Boolean).join('\n');
@@ -1566,7 +2090,6 @@
   }
 
   function paneBar(s, view) {
-    const pr = W.prNumber(s.prUrl);
     const typing = s.status === 'running' && !PAGE_TABS.has(view);
     // A question from Slack reads the default branch: it has no branch, app or databases of its own.
     const tools = s.status === 'running' && s.kind !== 'ask';
@@ -1614,7 +2137,7 @@
       // A phone's two rows: the name over one line of its state, its PR and its usage, with ⋯ for the rest.
       h('div', { class: 'pphone' },
         h('b', { class: 'pphone-title', title: s.title }, s.title),
-        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), W.pausesIn(s, data) && h('span', { class: 'ptimer' }, W.pausesIn(s, data)), phoneAppState(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
+        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), W.pausesIn(s, data) && h('span', { class: 'ptimer' }, W.pausesIn(s, data)), phoneAppState(s), W.hasPrs(s) && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
       h('button', {
         type: 'button', class: 'pmore', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === `${s.id}:phone`), 'data-menu-for': `${s.id}:phone`,
         'aria-label': `Actions for ${s.title}`, title: 'Actions',
@@ -1633,12 +2156,13 @@
         tabButton('terminal', 'Terminal'),
         tabButton('review', 'Review')),
       subTabs,
+      (view === 'chat' || view === 'tui') && agentSwitch(s),
       h('button', { type: 'button', class: 'ptitle', title: `${s.title}\nClick to rename it`, 'aria-label': `Rename ${s.title}`, onclick: () => rename(s) },
         h('span', { class: 'ptitle-text' }, s.title), h('span', { class: 'prename', 'aria-hidden': 'true' }, '✎')),
       W.statusBadge(s),
       s.taintedAt && W.productionTag(s, { long: true }),
       s.number && h('a', { class: 'pref', href: W.issueUrl(s.repo ?? data.repo, s), target: '_blank', rel: 'noopener', title: s.kind === 'pr' ? 'Open the pull request' : 'Open the issue' }, W.ref(s)),
-      pr && s.kind !== 'pr' && W.prChips(s, { asLink: true }),
+      W.hasPrs(s) && s.kind !== 'pr' && W.prChips(s, { asLink: true }),
       barMenuButton(s, {
         key: 'details', label: 'Details ▾', className: 'pdetails', title: 'Its branch, who started it, how long it has run, whose Claude it runs on and who can see it',
         // What the narrowing rules took off the bar comes here: the meter's readings and Invite.
@@ -1762,12 +2286,21 @@
   // never hidden to warm it: with no box to measure, xterm makes ttyd attach tmux at 80x24 and tmux shrinks the
   // window for every other client of the session.
   const MAX_TERMINALS = 8;
+  // The console's own terminal page (terminalPage.js), named by hash so the browser keeps it, and a frame loads only its
+  // websocket. Unversioned for a page made without the meta, which the browser then asks for again each time.
+  const TERMINAL_PAGE = document.querySelector('meta[name="woodshed-terminal-page"]')?.content || '/static/term.html';
+  // `arg` names an agent beside the session's own (agent-2 …), which ttyd hands to woodshed-attach from its websocket's
+  // query: the page carries it in its fragment and puts it there.
+  function terminalSrc(path, id, arg = null) {
+    const query = arg ? `?${new URLSearchParams({ arg })}` : '';
+    return `${TERMINAL_PAGE}#${path}/${id}${query}`;
+  }
 
   /**
    * @param {{pane: 'agent'|'terminal', root: () => HTMLElement, path: string, label: string, keyOf: (s: object) => string|null}} args
    *   `path` is the ttyd route (`term` or `shell`); `keyOf` is null for a session with nothing to show in this pane
    */
-  function createTerminalPool({ pane, root, path, label, keyOf }) {
+  function createTerminalPool({ pane, root, path, label, keyOf, agentOf = () => null }) {
     const cache = W.createTerminalCache({ max: MAX_TERMINALS });
     const frames = new Map();
     let shown = null;
@@ -1781,7 +2314,10 @@
     }
 
     function mount(s, key) {
-      const frame = h('iframe', { class: 'term', src: `/${path}/${s.id}/`, title: `${label} for ${s.title}`, onload: (e) => bindTerminal(e.target, s.id, pane) });
+      // An agent beside the session's own: ttyd hands `arg` to woodshed-attach, which attaches to its tmux session.
+      const agent = agentOf(s);
+      const src = terminalSrc(path, s.id, agent?.id);
+      const frame = h('iframe', { class: 'term', src, title: `${label} for ${s.title}${agent ? `: ${agentLabel(agent.agent, agent.model)}` : ''}`, onload: (e) => bindTerminal(e.target, s.id, agent ? agent.id : pane) });
       frames.set(key, frame);
       root().append(frame);
     }
@@ -1829,7 +2365,16 @@
     return s?.hasShell ? termKey(s) : null;
   }
 
-  const agentPool = createTerminalPool({ pane: 'agent', root: () => slots.body, path: 'term', label: 'Terminal', keyOf: termKey });
+  // The TUI tab's frames, one for each agent of a session that was shown: the session's own, or one beside it.
+  // `pickedAgent` names a frame's agent where the pick does not (retain's list of every agent's frame): null the own.
+  const frameAgent = (s) => (s?.pickedAgent !== undefined ? s.pickedAgent : shownAgent(s));
+  function agentTermKey(s) {
+    const key = termKey(s);
+    const agent = frameAgent(s);
+    // Its start too: a new agent in a stopped one's place gets a frame of its own.
+    return key && `${key}:${agent ? `${agent.id}:${agent.startedAt ?? ''}` : 'own'}`;
+  }
+  const agentPool = createTerminalPool({ pane: 'agent', root: () => slots.body, path: 'term', label: 'Terminal', keyOf: agentTermKey, agentOf: frameAgent });
   const shellPool = createTerminalPool({ pane: 'terminal', root: () => slots.plain, path: 'shell', label: 'Shell', keyOf: shellKey });
 
   function showBody(s, tabPage) {
@@ -1874,8 +2419,8 @@
     return h('div', { class: 'ended' },
       h('h2', null, stoppedHeading(s, paused)),
       W.isPrivate(s)
-        ? [h('p', null, W.agentOf(s) === 'codex'
-          ? 'Work in progress is committed and pushed to the branch before a stop. Resume starts codex again on the same branch, in a new conversation: Codex keeps none between runs.'
+        ? [h('p', null, W.agentOf(s) !== 'claude'
+          ? `Work in progress is committed and pushed to the branch before a stop. Resume starts ${W.agentOf(s)} again on the same branch, in a new conversation: ${W.agentTitle(s)} keeps none between runs.`
           : 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
           h('div', { class: 'row' }, W.canResumePrivate(s) && resumeButton(s, false), removeButton(s))]
         : s.kind === 'ask' ? h('p', null, 'Its conversation is deleted. Mention the bot in a Slack thread to ask again.')
@@ -2261,7 +2806,7 @@
     if (s.status === 'starting') return `${s.id}:starting:${Date.now()}`;
     // A wait with steps counts its seconds, as a start does.
     if (W.waitsForRetry(s) && s.waitProgress) return `${s.id}:waiting:${Date.now()}`;
-    return s.status === 'running' ? `${termKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.stoppedBy}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
+    return s.status === 'running' ? `${agentTermKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.stoppedBy}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
   }
 
   let currentSession = null;
@@ -2306,7 +2851,15 @@
     slots.shell.classList.toggle('is-new', onNew);
     slots.shell.classList.toggle('is-railless', railHidden);
     const railList = slots.railBody.querySelector('.rail-list');
-    if (railList && slots.railListTop) railList.scrollTop = slots.railListTop;
+    if (railList && slots.railListTop) {
+      // The page putting the list back where it was is not someone scrolling: the hover card stays (railPeek).
+      railList.dataset.restored = 'true';
+      railList.scrollTop = slots.railListTop;
+      // A list already at its end moves nothing and gets no scroll event: a later scroll is someone's.
+      requestAnimationFrame(() => requestAnimationFrame(() => delete railList.dataset.restored));
+    }
+    // Measured once the list is back at its place, or the card would sit beside the card that was there at the top.
+    syncPeek();
     slots.launch.hidden = !onMy;
     if (onMy) launcher.update(me);
     else launcher.stopDictating();
@@ -2323,7 +2876,8 @@
       // Someone else's private session gets the same words as an id that never existed.
       showBody(s, tabPage);
     }
-    agentPool.retain(data.sessions);
+    // Every agent's frame a running session has, kept as its own TUI was: a frame of an agent that stopped is dropped.
+    agentPool.retain(data.sessions.flatMap((x) => [{ ...x, pickedAgent: null }, ...agentsOf(x).map((a) => ({ ...x, pickedAgent: a }))]));
     shellPool.retain(data.sessions);
     // The shell's terminal, made the first time its tab opens and dropped once the session stops.
     const hasShell = Boolean(shellKey(s));
@@ -2367,8 +2921,9 @@
     offerRenameOnce(s);
     renderKeyBar(s);
     // A phone's message box, for claude on the TUI tab; the Terminal tab's shell takes the keyboard straight in.
-    messageBox.show(narrow.matches && s.status === 'running' && view === 'tui' ? s : null);
-    chat.show(view === 'chat' ? s : null);
+    // It types into the session's own agent: with another one shown, the phone writes to it on the Chat tab.
+    messageBox.show(narrow.matches && s.status === 'running' && view === 'tui' && !shownAgent(s) ? s : null);
+    chat.show(view === 'chat' ? chatView(s) : null);
     slots.body.hidden = view !== 'tui';
     slots.plain.hidden = tab !== 'terminal';
     slots.review.hidden = tab !== 'review';

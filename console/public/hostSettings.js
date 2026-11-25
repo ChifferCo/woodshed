@@ -26,5 +26,7 @@
       ? W.h('div', null, W.h('h1', { class: 'title' }, heading), ownTabs())
       : W.h('div', null, W.h('h1', { class: 'title' }, 'Settings'), W.settingsTabs(current));
     app.replaceChildren(W.h('div', { class: 'page' }, life.nav(current), W.h('header', { class: 'page-head' }, head), body));
+    // Its rows open in place, and a link to one opens it (settingsMarkup.mjs, hostRows.js).
+    window.WoodshedHostRows?.wire(body);
   });
 })();

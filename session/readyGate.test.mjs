@@ -38,8 +38,9 @@ test('an app change is refused when the app never started, and the reason says h
   const reason = refusal({ payload: bash('gh pr create -t x'), changedFiles: APP, appStarted: false, app });
   assert.match(reason, /^Not opened: this branch changes the app \(`web\/models\/branches\.ts`, `web\/tests\/x\.spec\.ts`\)/);
   assert.match(reason, /Run `make serve` and check the page\. Put what you saw under `## Proof`/, 'the project\'s own advice');
-  assert.match(reason, /`gh pr create --draft`/);
-  assert.match(reason, /`Needs a human:`, tags the person on the PR body's `Started by @…` line/);
+  assert.match(reason, /write what you tried and why it failed under `## Proof` and run this again: it opens ready/);
+  assert.match(reason, /Only when it cannot start at all, with nothing in its logs, open the pull request as a draft \(`gh pr create --draft`\)/);
+  assert.doesNotMatch(reason, /Needs a human/);
 });
 
 test('it lets the call through when the app ran, the change is outside the app, or git could not say', () => {

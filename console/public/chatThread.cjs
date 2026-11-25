@@ -155,15 +155,17 @@
   // (session/sessionTranscript.mjs).
   const INTERRUPTED = /^\[Request interrupted by user[^\]]*\]$/;
 
-  // Each tool, by what it did, for the work log's line. claude's names and codex's.
+  // Each tool, by what it did, for the work log's line. claude's names and codex's; Grok Build's ACP kinds (execute, edit,
+  // read, search, fetch, delete, move); OpenCode's tools (bash, edit, write, patch, read, glob, grep, list, webfetch, task,
+  // todowrite).
   const KINDS = [
-    ['command', /^(Bash|BashOutput|KillShell|shell|exec_command|local_shell|unified_exec|write_stdin)$/i],
-    ['edit', /^(Edit|MultiEdit|Write|NotebookEdit|apply_patch)$/i],
+    ['command', /^(Bash|BashOutput|KillShell|shell|exec_command|local_shell|unified_exec|write_stdin|execute)$/i],
+    ['edit', /^(Edit|MultiEdit|Write|NotebookEdit|apply_patch|patch|multiedit|delete|move)$/i],
     ['read', /^(Read|view_image|NotebookRead)$/i],
-    ['search', /^(Grep|Glob|LS|ToolSearch)$/i],
-    ['web', /^(WebFetch|WebSearch|web_search)$/i],
+    ['search', /^(Grep|Glob|LS|ToolSearch|list|search)$/i],
+    ['web', /^(WebFetch|WebSearch|web_search|fetch|websearch)$/i],
     ['agent', /^(Task|Agent)$/i],
-    ['plan', /^(TodoWrite|update_plan|ExitPlanMode)$/i],
+    ['plan', /^(TodoWrite|update_plan|ExitPlanMode|todoread|plan)$/i],
   ];
   const PHRASES = {
     command: (n) => `ran ${n} command${n === 1 ? '' : 's'}`,
@@ -434,6 +436,26 @@
   }
 
   /**
+   * The conversations a Chat tab keeps as last read, so coming back to one draws it at once: at most `max`, and the one
+   * shown longest ago goes first.
+   * @param {number} max
+   * @returns {{get: (key: string) => object|undefined, keep: (key: string, record: object) => void, keys: () => string[]}}
+   *   `keep` also makes it the one shown last
+   */
+  function keptRecords(max) {
+    const kept = new Map();
+    return {
+      get: (key) => kept.get(key),
+      keep(key, record) {
+        kept.delete(key);
+        kept.set(key, record);
+        while (kept.size > max) kept.delete(kept.keys().next().value);
+      },
+      keys: () => [...kept.keys()],
+    };
+  }
+
+  /**
    * One run at a time: a call while one runs is kept, and run once that one ends, whatever it was about. The Chat tab's
    * reads go through it: a read asked for session B while A's is on its way runs when A's ends, rather than being
    * dropped with A's answer, which left B on "Reading the conversation…".
@@ -606,5 +628,5 @@
     return { clear: true, toast: 'Sent' };
   }
 
-  return { boxSendOutcome, consoleRefused, reconcile, typeable, lastUserAt, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
+  return { boxSendOutcome, consoleRefused, reconcile, typeable, lastUserAt, sendTimeoutMs, pendingLabel, notReady, keptRecords, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
 });

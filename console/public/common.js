@@ -328,7 +328,7 @@
       others && h('p', { class: 'sub' }, 'Pick another repo above to start a session now.'));
   }
 
-  /** The setup card: what is left, with Claude or Codex taking you to that sign-in's box on My settings, and Open My settings for databases that did not start. */
+  /** The setup card: what is left, with each agent taking you to its sign-in's box on My settings, and Open My settings for databases that did not start. */
   function setupCard(me, { compact = false, steps = setupSteps(me) } = {}) {
     const after = steps.every((step) => step.optional);
     const rows = steps.map((step) => h('div', { class: `setup-step${step.done ? ' is-done' : ''}` },
@@ -337,10 +337,9 @@
       step.key === 'repo' ? (isAdmin() ? h('a', { class: 'btn btn-primary btn-sm', href: '/console-settings#card-projects' }, 'Add a repo') : null)
         : step.key === 'github' ? h('a', { class: `btn ${step.optional ? 'btn-plain' : 'btn-primary'} btn-sm`, href: '/setup/github' }, 'Set up')
         : step.key === 'reviewer' ? h('a', { class: 'btn btn-plain btn-sm', href: '/setup/github#reviewer' }, 'Set up')
-        // Two equal choices, each to its own box on My settings: neither agent is the default.
+        // Equal choices, each to its own box on My settings: no agent is the default.
         : step.key === 'token' && !step.done ? h('span', { class: 'setup-choices' },
-          h('a', { class: 'btn btn-plain btn-sm', href: '/settings#claude' }, 'Claude'),
-          h('a', { class: 'btn btn-plain btn-sm', href: '/settings#codex' }, 'Codex'))
+          window.WoodshedAgents.AGENT_IDS.map((id) => h('a', { class: 'btn btn-plain btn-sm', href: `/settings#${id}` }, window.WoodshedAgents.agent(id).name)))
         : step.todo ? h('a', { class: 'btn btn-plain btn-sm', href: '/settings' }, 'Open My settings') : null));
     return h('section', { class: `setup-card${compact ? ' is-compact' : ''}` },
       h('h3', null, after ? 'Finish setting up your Woodshed' : 'Set up your Woodshed'),
@@ -614,7 +613,7 @@
     const at = s.startSteps || {};
     const last = START_STEPS.reduce((found, [key], i) => (at[key] ? i : found), -1);
     let from = Date.parse(s.startedAt);
-    // The last step opens the session's own agent: claude, or codex.
+    // The last step opens the session's own agent, as its id names it: claude, codex, grok or opencode.
     const agent = agentOf(s);
     const steps = START_STEPS.map(([key, l, sh], i) => {
       const [label, short] = key === 'claude' ? [`Opening ${agent}`, `opening ${agent}`] : [l, sh];
@@ -661,14 +660,19 @@
     return s.kind === 'pr' ? `PR #${s.number}` : `#${s.number}`;
   }
 
-  /** @returns {'claude'|'codex'}  the agent the session runs, as its command is named: claude unless it was started on Codex */
+  /** @returns {string}  the agent the session runs, its id in shared/agents.cjs: claude unless it was started on another */
   function agentOf(s) {
-    return s?.options?.agent === 'codex' ? 'codex' : 'claude';
+    return window.WoodshedAgents.agentOfSession(s);
   }
 
-  /** @returns {'Claude'|'Codex'}  the agent's name, as a product */
+  /** @returns {string}  the agent's short name: Claude, Codex, Grok or OpenCode */
   function agentTitle(s) {
-    return agentOf(s) === 'codex' ? 'Codex' : 'Claude';
+    return window.WoodshedAgents.agent(agentOf(s)).name;
+  }
+
+  /** @returns {boolean}  whether the person has saved anything an agent runs on: a Claude token, or a sign-in of any agent */
+  function anyAgentSignIn(me) {
+    return Boolean(me?.claudeToken?.set || me?.codexAuth?.set || Object.values(me?.agentAuth ?? {}).some((a) => a?.set));
   }
 
   /** @returns {boolean}  a session started from My Woodshed, which only its owner can see */
@@ -685,8 +689,16 @@
     return `https://github.com/${repo}/${s.kind === 'pr' ? 'pull' : 'issues'}/${s.number}`;
   }
 
-  function prNumber(prUrl) {
-    return prUrl ? `#${prUrl.split('/').pop()}` : null;
+  /**
+   * `#151`, or `woodshed-cloud #151` for one on another repo than the session's `repo` (a pull request claude opened
+   * from another clone: session/openedPulls.mjs).
+   */
+  function prNumber(prUrl, repo = null) {
+    if (!prUrl) return null;
+    const number = `#${prUrl.split('/').pop()}`;
+    const on = /^https:\/\/github\.com\/[^/]+\/([^/]+)\/pull\//.exec(prUrl);
+    const own = !repo || prUrl.toLowerCase().startsWith(`https://github.com/${repo.toLowerCase()}/pull/`);
+    return own || !on ? number : `${on[1]} ${number}`;
   }
 
   // The line under a card's title: claude's last message, or what the console knows.
@@ -1054,10 +1066,21 @@
     return `all ${checks.total} checks passing`;
   }
 
-  function prMarkLevel(pr) {
+  // Woodshed's own review and QA of a pull request, at work on it now (sessions.mjs woodshedRunsOn): the chip's word,
+  // and what its tooltip and the hover card say.
+  const RUNS_WORD = { review: 'review', qa: 'QA' };
+
+  /** @returns {{word: string, tip: string}|null}  `review`, `QA` or `review, QA`, and the sentence for it */
+  function runsWord(runs) {
+    const words = (runs ?? []).map((kind) => RUNS_WORD[kind]).filter(Boolean);
+    return words.length ? { word: words.join(', '), tip: `Woodshed ${words.join(' and ')} running` } : null;
+  }
+
+  /** `running`: Woodshed's review or QA is at work on it, so passing checks are not the last word yet. */
+  function prMarkLevel(pr, running = false) {
     if (pr.checks?.fail) return 'fail';
     if (pr.review === 'changes') return 'changes';
-    if (pr.checks?.pending) return 'pending';
+    if (pr.checks?.pending || running) return 'pending';
     if (pr.checks || pr.review === 'approved') return 'pass';
     return null;
   }
@@ -1067,30 +1090,44 @@
    * @returns {HTMLElement|null}
    */
   function prChip(s, { asLink = false } = {}) {
-    const number = prNumber(s.prUrl);
+    const number = prNumber(s.prUrl, s.repo);
     if (!number) return null;
+    // Another repo's names its repo, which is label enough: `woodshed-cloud #151`.
+    const label = number.startsWith('#') ? `PR ${number}` : number;
     const pr = s.pr;
-    if (!pr) return h(asLink ? 'a' : 'span', { class: 'prchip', href: asLink ? s.prUrl : null, target: asLink ? '_blank' : null, rel: asLink ? 'noopener' : null }, `PR ${number}`);
+    const running = runsWord(s.runs);
+    const link = { href: asLink ? s.prUrl : null, target: asLink ? '_blank' : null, rel: asLink ? 'noopener' : null };
+    const runningParts = (ring) => running && [h('span', { class: 'prchip-word' }, running.word), ring && h('span', { class: 'prchip-mark is-pending', 'aria-hidden': 'true' })];
+    // One the console has not read yet still says Woodshed is at work on it.
+    if (!pr) return h(asLink ? 'a' : 'span', { class: 'prchip', title: running?.tip ?? null, ...link }, label, runningParts(true));
     const queued = pr.state === 'queued';
-    const level = queued ? null : prMarkLevel(pr);
+    const level = queued ? null : prMarkLevel(pr, Boolean(running));
     const glyph = { fail: '✗', changes: '✗', pending: '', pass: '✓' }[level];
     const stateWord = queued && pr.queuePosition ? `${PR_STATE_WORD.queued}, position ${pr.queuePosition}` : PR_STATE_WORD[pr.state];
-    const tip = [`${number} ${pr.title}`, [stateWord, checksWord(pr.checks), REVIEW_WORD[pr.review]].filter(Boolean).join(' · '), s.branch].filter(Boolean).join('\n');
-    return h(asLink ? 'a' : 'span', {
-      class: `prchip is-${pr.state}`, title: tip, href: asLink ? s.prUrl : null, target: asLink ? '_blank' : null, rel: asLink ? 'noopener' : null,
-    }, `PR ${number}`, queued && h('span', { class: 'prchip-word' }, 'queued'),
-    level && h('span', { class: `prchip-mark is-${level}`, 'aria-hidden': 'true' }, glyph));
+    const tip = [`${number} ${pr.title}`, [stateWord, checksWord(pr.checks), REVIEW_WORD[pr.review], running?.tip].filter(Boolean).join(' · '), s.branch].filter(Boolean).join('\n');
+    // A failing check or changes requested keeps its ✗, which needs the look first: the word still says who is at work.
+    return h(asLink ? 'a' : 'span', { class: `prchip is-${pr.state}`, title: tip, ...link },
+      label, queued && h('span', { class: 'prchip-word' }, 'queued'), runningParts(false),
+      level && h('span', { class: `prchip-mark is-${level}`, 'aria-hidden': 'true' }, glyph));
+  }
+
+  /** Whether the session has a pull request to show: its own repo's, or only one claude opened on another. */
+  function hasPrs(s) {
+    return shownPrs(s).length > 0;
   }
 
   /**
    * The pull requests a session's card shows, oldest first: each one, but a merged or closed one only while no newer
-   * one came after it. The newest always shows, so a session whose last pull request merged keeps its chip. A console
-   * from before the list sends only `prUrl` and `pr`.
+   * one came after it. The newest always shows, so a session whose last pull request merged keeps its chip. One the
+   * console will read and has not yet (`reading`, as just after it starts) waits for it, so a merged one never shows as
+   * open and then goes; unless Woodshed's review or QA is at work on it, which its chip says. A console from before the
+   * list sends only `prUrl` and `pr`.
    * @returns {{url: string, pr: object|null}[]}
    */
   function shownPrs(s) {
     const all = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
-    return all.filter(({ pr }, i) => i === all.length - 1 || !(pr?.state === 'merged' || pr?.state === 'closed'));
+    return all.filter(({ pr, reading, runs }, i) => (i === all.length - 1 || !(pr?.state === 'merged' || pr?.state === 'closed'))
+      && !(reading && !pr && !runsWord(runs)));
   }
 
   /**
@@ -1101,12 +1138,12 @@
   function prChips(s, { max = 2, ...opts } = {}) {
     const shown = shownPrs(s);
     const folded = shown.slice(0, Math.max(0, shown.length - max));
-    const chips = shown.slice(folded.length).map(({ url, pr }) => prChip({ prUrl: url, pr, branch: s.branch }, opts));
+    const chips = shown.slice(folded.length).map(({ url, pr, runs }) => prChip({ prUrl: url, pr, runs, branch: s.branch, repo: s.repo }, opts));
     if (!folded.length) return chips;
-    const tip = folded.map(({ url, pr }) => [prNumber(url), pr?.title, pr && PR_STATE_WORD[pr.state]].filter(Boolean).join(' · ')).join('\n');
+    const tip = folded.map(({ url, pr }) => [prNumber(url, s.repo), pr?.title, pr && PR_STATE_WORD[pr.state]].filter(Boolean).join(' · ')).join('\n');
     return [h('span', {
       class: 'prchip is-more', title: `${folded.length} more pull request${folded.length === 1 ? '' : 's'}:\n${tip}`,
-      'aria-label': `${folded.length} more pull request${folded.length === 1 ? '' : 's'}: ${folded.map(({ url }) => prNumber(url)).join(', ')}`,
+      'aria-label': `${folded.length} more pull request${folded.length === 1 ? '' : 's'}: ${folded.map(({ url }) => prNumber(url, s.repo)).join(', ')}`,
     }, `+${folded.length}`), ...chips];
   }
 
@@ -1117,8 +1154,160 @@
   function prLines(s) {
     const all = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
     return all.map(({ url, pr }, i) => [i ? h('br') : null,
-      h('a', { href: url, target: '_blank', rel: 'noopener' }, prNumber(url)),
+      h('a', { href: url, target: '_blank', rel: 'noopener' }, prNumber(url, s.repo)),
       pr && ` · ${PR_STATE_WORD[pr.state]}${pr.title ? ` · ${pr.title}` : ''}`]);
+  }
+
+  /**
+   * What the rail's hover card says about a session (session.js railPeek), as words for the page to draw: the status
+   * word with what comes next on its own (when it pauses or stops, or since when it is stopped), the agent's last line,
+   * then a row each for its pull requests and their checks, branch, agent, last activity and who has it. Nothing here
+   * is new: it is what the card, its chips' tooltips and Details already say, in one place the pointer reaches.
+   * @param {object} s  the session, as /api/sessions gives it
+   * @param {object} data  the page's data: the console's idle numbers and the viewer's login
+   * @param {{project?: string|null, nowMs?: number}} [opts]  the project's name when the rail shows more than one
+   * @returns {{title: string, key: string, word: string, next: string|null, last: {who: string|null, text: string, error: boolean}|null,
+   *   prs: {number: string, title: string|null, state: string|null, checks: string|null, level: string|null, review: string|null}[],
+   *   rows: [string, string][]}}
+   */
+  /**
+   * The sessions of the same person's that started this one, and that this one started (console/sessionStarts.mjs),
+   * as the hover card and Details name them. One no longer on the list is named so, never left out.
+   * @returns {[string, {id: string|null, title: string}[]][]}  'Started from' and 'Started here', each when it has any
+   */
+  function startedLinks(s, sessions) {
+    const out = [];
+    if (s.startedFrom) {
+      const from = sessions.find((x) => x.id === s.startedFrom);
+      out.push(['Started from', [from ? { id: from.id, title: from.title } : { id: null, title: 'a session no longer on the list' }]]);
+    }
+    const here = sessions.filter((x) => x.startedFrom === s.id).map((x) => ({ id: x.id, title: x.title }));
+    if (here.length) out.push(['Started here', here]);
+    return out;
+  }
+
+  /**
+   * Whether a session in a group asks its person for something: a question or an approval on its screen, or paused
+   * waiting for Resume. Narrower than needsYou, which counts a live session that is done (waiting for the next message)
+   * too: a finished piece of a group's work is not a call for the person.
+   * @returns {boolean}
+   */
+  function asksPerson(s) {
+    return isLive(s) ? displayStatus(s).key === 'needs-you' : needsYou(s);
+  }
+
+  /**
+   * The rail's groups (session.js): a session started as a piece of another's work (`startedFrom`, not `startedApart`)
+   * nests under it while that one is live and on the same list, the same person's. Once it stops, they are each on their
+   * own again, so a live session never hides in a folded Stopped zone.
+   * @param {object[]} listed  the sessions the rail shows
+   * @returns {{top: object[], kids: Map<string, object[]>, parentOf: Map<string, object>}}  `top` the sessions in no
+   *   group, `kids` each group's sessions by its session's id (those asking their person first, asksPerson, then the
+   *   live, then the newest), `parentOf` the group each nested one is in
+   */
+  function railGroups(listed) {
+    const byId = new Map(listed.map((s) => [s.id, s]));
+    const parentOf = new Map();
+    for (const s of listed) {
+      const parent = s.startedFrom && !s.startedApart ? byId.get(s.startedFrom) : null;
+      if (parent && parent.id !== s.id && parent.owner && parent.owner === s.owner && isLive(parent)) parentOf.set(s.id, parent);
+    }
+    // A loop (two sessions each started from the other, which the console never makes) nests none of its sessions:
+    // all of them are found before any is taken out, so the last one is not left nested under the first.
+    const inLoop = [];
+    for (const id of parentOf.keys()) {
+      const seen = new Set([id]);
+      for (let p = parentOf.get(id); p; p = parentOf.get(p.id)) {
+        if (p.id === id) {
+          inLoop.push(id);
+          break;
+        }
+        if (seen.has(p.id)) break;
+        seen.add(p.id);
+      }
+    }
+    for (const id of inLoop) parentOf.delete(id);
+    const kids = new Map();
+    for (const s of listed) {
+      const parent = parentOf.get(s.id);
+      if (parent) kids.set(parent.id, [...(kids.get(parent.id) ?? []), s]);
+    }
+    const order = (s) => [asksPerson(s) ? 0 : 1, isLive(s) ? 0 : 1];
+    for (const list of kids.values()) {
+      list.sort((a, b) => {
+        const [x, y] = [order(a), order(b)];
+        return x[0] - y[0] || x[1] - y[1] || String(b.createdAt).localeCompare(String(a.createdAt));
+      });
+    }
+    return { top: listed.filter((s) => !parentOf.has(s.id)), kids, parentOf };
+  }
+
+  /** @returns {{count: number, needs: number}}  how many sessions are in a group, all the way down, and how many need their person */
+  function groupCounts(id, kids) {
+    let count = 0;
+    let needs = 0;
+    for (const s of kids.get(id) ?? []) {
+      const below = groupCounts(s.id, kids);
+      count += 1 + below.count;
+      needs += (asksPerson(s) ? 1 : 0) + below.needs;
+    }
+    return { count, needs };
+  }
+
+  function peekView(s, data, { project = null, nowMs = Date.now() } = {}) {
+    const st = displayStatus(s);
+    const live = isLive(s);
+    const at = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    let next = null;
+    if (s.status === 'running') {
+      const end = pauseLeft(s, data);
+      if (end) next = end.left > 0 ? `${end.why === 'lifetime' ? 'stops' : 'pauses'} at ${at(nowMs + end.left)}, in ${span(end.left)}` : `${end.why === 'lifetime' ? 'stops' : 'pauses'} any moment`;
+      else if (BUSY_STATES.has(s.state) && s.kind !== 'ask') next = 'never pauses while it works';
+    } else if (s.status === 'starting' && s.startedAt) {
+      next = startProgress(s).current?.short ?? null;
+    } else if (isResumable(s)) {
+      next = [keptLine(s), st.key !== 'merged' && deletedIn(s)].filter(Boolean).join(' · ');
+    } else if (isPrivate(s) && !live) {
+      next = privateStopLine(s, data.login) || null;
+    } else if (!live && s.stoppedAt) {
+      next = ago(s.stoppedAt);
+    }
+    const line = lastLine(s);
+    const MAX = 280;
+    const last = line && {
+      who: line.who === 'assistant' ? agentTitle(s) : line.who === 'user' ? 'Asked' : null,
+      text: line.text.length > MAX ? `${line.text.slice(0, MAX - 1).trimEnd()}…` : line.text,
+      error: Boolean(line.error),
+    };
+    // Every pull request it opened, a merged or closed one the chips no longer show too, as Details lists them.
+    const allPrs = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
+    const prs = allPrs.map(({ url, pr, runs }) => ({
+      number: prNumber(url, s.repo), title: pr?.title ?? null,
+      state: pr ? (pr.state === 'queued' && pr.queuePosition ? `${PR_STATE_WORD.queued}, position ${pr.queuePosition}` : PR_STATE_WORD[pr.state]) : null,
+      checks: pr ? checksWord(pr.checks) : null,
+      level: pr?.checks ? (pr.checks.fail ? 'fail' : pr.checks.pending ? 'pending' : 'pass') : null,
+      review: pr ? REVIEW_WORD[pr.review] ?? null : null,
+      // Woodshed's review or QA at work on it now, said whether or not the console has read the pull request.
+      running: runsWord(runs)?.tip ?? null,
+    }));
+    const model = [s.options?.model, s.options?.effort && `${s.options.effort} effort`].filter(Boolean).join(', ');
+    const activity = !live ? null
+      : s.status === 'running' && s.state === 'working' ? 'Working now'
+        : s.lastActiveAt ? ago(s.lastActiveAt) : null;
+    const startedBy = isPrivate(s) || s.kind === 'ask' ? null : personText(s.startedBy);
+    const rows = [
+      ['Project', project],
+      // A session started on an issue, or on a pull request it did not open, says which.
+      ['Works on', s.number && !(s.kind === 'pr' && prs.some((p) => p.number === `#${s.number}`)) ? ref(s) : null],
+      ['Branch', s.branch],
+      ['Agent', `${agentTitle(s)}${model ? ` · ${model}` : ''}`],
+      ['Last activity', activity],
+      ['Started', s.startedAt ? [startedBy, ago(s.startedAt)].filter(Boolean).join(', ') : null],
+      ['Assigned to', !isPrivate(s) && s.kind !== 'ask' && !['review', 'qa'].includes(s.trigger) ? (s.assignee ? personText(s.assignee) : 'Nobody') : null],
+      ['Production data', s.taintedAt ? `Since ${ago(s.taintedAt)}` : null],
+      ...startedLinks(s, data.sessions ?? []).map(([term, list]) => [term, list.map((x) => x.title).join(', ')]),
+    ].filter(([, value]) => value);
+    return { title: s.title, key: st.key, word: capitalised(st.word), next, last, prs, rows };
   }
 
   // What the container uses, against what it may: amber past 70% of its memory or 150% CPU, red past 90% or 190%.
@@ -1242,8 +1431,9 @@
 
   /**
    * @returns {{asOf: string|null, stale: boolean, running: number,
-   *            windows: {key: string, short: string, label: string, usedPercent: number|null, resetsAt: string|null, pace: number|null, level: string}[]}|null}
-   *   `pace` is how much of the window has gone by, from 0 to 1; a window whose reset has passed reads 0% however old the reading
+   *            windows: {key: string, short: string, label: string, usedPercent: number|null, resetsAt: string|null, rolled: boolean, pace: number|null, level: string}[]}|null}
+   *   `pace` is how much of the window has gone by, from 0 to 1; a window whose reset has passed reads 0% however old the reading.
+   *   `rolled` is that case: a reset the reading named is already past. A window that named no end is not rolled.
    */
   function planUsageOf(s, sessions) {
     if (!isPrivate(s)) return null;
@@ -1253,13 +1443,28 @@
       .sort((a, b) => (b.asOf ?? '').localeCompare(a.asOf ?? ''))[0];
     if (!newest) return null;
     const now = Date.now();
-    const windows = PLAN_WINDOWS.map(({ key, short, label, ms }) => {
+    const windows = PLAN_WINDOWS.flatMap(({ key, short, label, ms }) => {
       const w = newest[key];
       const reset = w?.resetsAt ? Date.parse(w.resetsAt) : null;
       const rolled = reset !== null && reset <= now;
       const usedPercent = !w ? null : rolled ? 0 : w.usedPercent;
-      const pace = reset !== null && !rolled ? Math.min(1, Math.max(0, 1 - (reset - now) / ms)) : null;
-      return { key, short, label: agent === 'codex' && key === 'sevenDay' ? 'Week' : label, usedPercent, resetsAt: rolled ? null : w?.resetsAt ?? null, pace, level: planLevel(usedPercent) };
+      // Grok Build reports one allowance. A window it did not report is not a limit it has.
+      if (agent === 'grok' && usedPercent === null) return [];
+      const reportedSpan = typeof w?.spanMs === 'number' && Number.isFinite(w.spanMs) && w.spanMs > 0 ? w.spanMs : null;
+      // Grok's tick is the period it named. A seven-day fallback marks a month with no start as empty, then nearly over in its last week.
+      const span = reportedSpan ?? ms;
+      const pace = reset !== null && !rolled && (agent !== 'grok' || reportedSpan !== null)
+        ? Math.min(1, Math.max(0, 1 - (reset - now) / span)) : null;
+      return [{
+        key,
+        short: w?.short || short,
+        label: w?.label || (agent !== 'claude' && key === 'sevenDay' ? 'Week' : label),
+        usedPercent,
+        resetsAt: rolled ? null : w?.resetsAt ?? null,
+        rolled,
+        pace,
+        level: planLevel(usedPercent),
+      }];
     });
     return {
       agent,
@@ -1279,24 +1484,29 @@
 
   // What the pane bar's meter opens: each window with when it resets, how old the reading is, and that it is shared.
   function planUsageDetails(u) {
-    const meter = (w) => h('div', { class: `plan-meter${w.level ? ` is-${w.level === 'out' ? 'hot' : w.level}` : ''}` },
-      h('div', { class: 'plan-row' }, h('span', null, w.label), h('b', null, w.usedPercent === null ? '—' : `${Math.round(w.usedPercent)}%`)),
-      h('div', { class: 'plan-bar', role: 'img', 'aria-label': w.usedPercent === null ? `${w.label}: not reported` : `${w.label}: ${Math.round(w.usedPercent)}% used` },
-        h('i', { style: `width:${w.usedPercent ?? 0}%` }),
-        w.pace !== null && h('span', { class: 'plan-pace', style: `left:${(w.pace * 100).toFixed(1)}%`, title: 'How much of the window has gone by' })),
-      h('div', { class: 'plan-sub' }, w.usedPercent === null ? `${u.agent === 'codex' ? 'Codex' : 'Claude Code'} has not reported it yet`
-        : w.resetsAt ? `Resets ${resetText(w.resetsAt)} · in ${span(Date.parse(w.resetsAt) - Date.now())}` : 'Reset since the reading'));
+    const meter = (w) => {
+      const caption = w.usedPercent === null ? `${window.WoodshedAgents.agent(u.agent).product} has not reported it yet`
+        : w.resetsAt ? `Resets ${resetText(w.resetsAt)} · in ${span(Date.parse(w.resetsAt) - Date.now())}`
+        : w.rolled ? 'Reset since the reading' : null;
+      return h('div', { class: `plan-meter${w.level ? ` is-${w.level === 'out' ? 'hot' : w.level}` : ''}` },
+        h('div', { class: 'plan-row' }, h('span', null, w.label), h('b', null, w.usedPercent === null ? '—' : `${Math.round(w.usedPercent)}%`)),
+        h('div', { class: 'plan-bar', role: 'img', 'aria-label': w.usedPercent === null ? `${w.label}: not reported` : `${w.label}: ${Math.round(w.usedPercent)}% used` },
+          h('i', { style: `width:${w.usedPercent ?? 0}%` }),
+          w.pace !== null && h('span', { class: 'plan-pace', style: `left:${(w.pace * 100).toFixed(1)}%`, title: 'How much of the window has gone by' })),
+        caption && h('div', { class: 'plan-sub' }, caption));
+    };
     const others = u.running - 1;
-    const codex = u.agent === 'codex';
-    const name = codex ? 'Codex' : 'Claude';
+    const a = window.WoodshedAgents.agent(u.agent);
+    const name = a.name;
+    const tickNote = u.windows.some((w) => w.pace !== null) ? 'The tick marks how much of each window has gone by. ' : '';
     return h('div', { class: 'plan-detail' },
       h('div', { class: 'card-menu-group' }, `Your ${name} plan`),
       ...u.windows.map(meter),
       h('p', { class: 'plan-foot' },
-        `${codex ? 'Last reported by Codex' : 'Read from Claude Code after its last answer'}${u.asOf ? `, ${ago(u.asOf)}` : ''}. `,
+        `${a.id === 'claude' ? 'Read from Claude Code after its last answer' : `Last reported by ${a.product}`}${u.asOf ? `, ${ago(u.asOf)}` : ''}. `,
         others > 0 ? `Shared with your ${others} other running private ${name} session${others === 1 ? '' : 's'}. ` : '',
-        'The tick marks how much of each window has gone by. ',
-        h('a', { href: codex ? 'https://chatgpt.com/codex/settings/usage' : 'https://claude.ai/settings/usage', target: '_blank', rel: 'noopener' }, codex ? 'Codex usage ↗' : 'claude.ai usage ↗')));
+        tickNote,
+        a.usageUrl && h('a', { href: a.usageUrl, target: '_blank', rel: 'noopener' }, a.id === 'claude' ? 'claude.ai usage ↗' : `${name} usage ↗`)));
   }
 
   // Under the avatar, as most apps keep them, and on the settings pages' list: your own settings, and the console's own,
@@ -1308,7 +1518,6 @@
   // events is a log, reached from Secrets & webhooks, not an entry: Settings stays current on it too.
   const CONSOLE_LINKS = [
     { href: '/console-settings', label: 'Settings', also: ['/secrets', '/events'] },
-    { href: '/people', label: 'People' },
   ];
   const isCurrent = (link, current) => link.href === current || Boolean(link.also?.includes(current));
   // The tabs under Settings' title: the page's own cards, and the secrets. Links, as the rail's Mine | Everyone are.
@@ -1316,10 +1525,10 @@
     { href: '/console-settings', label: 'General' },
     { href: '/secrets', label: 'Secrets & webhooks' },
   ];
-  // Behind a hosting proxy whose program hands over its list of who is in (server.mjs, `people`), People is one of
-  // Settings' own tabs rather than a page of its own: who is in is the program's, beside its own tabs.
+  // People is one of Settings' own tabs, on a console of its own and behind a hosting proxy alike, whenever the console
+  // has a list of who is in (server.mjs, `people` in /api/me): behind a proxy only when the program hands over its own.
   const PEOPLE_TAB = { href: '/people', label: 'People' };
-  const peopleTab = (me) => Boolean(me?.hosted && me.people);
+  const peopleTab = (me) => Boolean(me?.people);
   const ownTabs = (me) => (peopleTab(me) ? [...SETTINGS_TABS, PEOPLE_TAB] : SETTINGS_TABS);
   // Then the tabs of a program embedding the console (server.mjs, settingsTabsOf), its own pages: those are for whoever
   // it gives them to, so someone who is not an admin sees them alone. Until /api/me answers, the console's own.
@@ -1344,7 +1553,7 @@
   // opening Settings first. The one open is the page shown (a repo's own settings are General's); Settings itself is then
   // `true`, the set the page is in, not the page.
   function subItems(me, current, cls, extra = {}) {
-    return tabsOf(me).map((tab) => h('a', { class: cls, href: tab.href, ...extra, 'aria-current': tab.href === current ? 'page' : null }, tab.label));
+    return tabsOf(me).map((tab) => h('a', { class: cls, href: tab.href, ...extra, 'aria-current': tab.href === current ? 'page' : null }, tab.label, tab.href === PEOPLE_TAB.href ? waitingOn(tab, me) : null));
   }
   const settingsMark = (link, current) => (!isCurrent(link, current) ? null : link.label === 'Settings' ? 'true' : 'page');
   // A program embedding the console's own entries (server.mjs, menuOf): the person's pages after My settings (`menuYou`),
@@ -1353,8 +1562,7 @@
   const hostEntries = (me) => [...(me?.menuYou ?? []), ...(me?.menuSections ?? []).flatMap((section) => section.items)];
   const entryOpen = (entry, current) => entry.href === current || Boolean(entry.items?.some((sub) => sub.href === current));
   const entryMark = (entry, current) => (entry.items?.some((sub) => sub.href === current) ? 'true' : entry.href === current ? 'page' : null);
-  // Behind a hosting proxy the host keeps who is in (and signs people in and out): People is no entry of its own, only
-  // Settings' tab when the program hands over its list. Settings also stays current on that tab and on a host's, and
+  // People is no entry of its own, only Settings' tab. Settings also stays current on that tab and on a host's, and
   // someone who is not an admin, given tabs, has Settings alone, opening the first.
   function consoleLinks(me) {
     const host = me?.settingsTabs ?? [];
@@ -1362,7 +1570,7 @@
     const also = [...CONSOLE_LINKS[0].also, ...(peopleTab(me) && me.admin ? [PEOPLE_TAB.href] : []), ...host.map((tab) => tab.href)];
     const settings = { ...CONSOLE_LINKS[0], icon: CONSOLE_LINKS[0].href, also };
     if (!me?.admin) return host.length ? [{ ...settings, href: host[0].href }] : [];
-    return [settings, ...CONSOLE_LINKS.slice(1)].filter((link) => !(me.hosted && link.href === '/people'));
+    return [settings];
   }
 
   // The workflows that build the images and apply the infrastructure, in the installation's repo, as its project file's
@@ -1376,7 +1584,13 @@
   // than the console runs (woodshedUpdate.mjs).
   function waitingOn(link, me) {
     if (link.href === '/people' && me?.asking > 0) return h('span', { class: 'menu-count', title: `${me.asking} asking to join` }, me.asking);
-    if (link.href === '/console-settings' && me?.updates > 0) return h('span', { class: 'menu-count', title: `Woodshed has ${me.updates} newer ${me.updates === 1 ? 'commit' : 'commits'}` }, me.updates);
+    // Settings holds People's tab, so its count is both: those asking to join and the Woodshed update.
+    const asking = peopleTab(me) && me.asking > 0 ? me.asking : 0;
+    const updates = me?.updates > 0 ? me.updates : 0;
+    if (link.href === '/console-settings' && asking + updates > 0) {
+      const title = [asking && `${asking} asking to join`, updates && `Woodshed has ${updates} newer ${updates === 1 ? 'commit' : 'commits'}`].filter(Boolean).join(', ');
+      return h('span', { class: 'menu-count', title }, asking + updates);
+    }
     return null;
   }
 
@@ -1776,6 +1990,37 @@
     });
   }
 
+  /**
+   * One pick from a list, in the console's own dialog, as askText is for a line of text: a dropdown under its label,
+   * Cancel, then the one action.
+   * @param {{title: string, label: string, options: {value: string, label: string}[], goLabel: string}} opts
+   * @returns {Promise<string|null>}  the value picked, or null on Cancel or Escape
+   */
+  function askChoice({ title, label, options, goLabel }) {
+    return new Promise((resolve) => {
+      let answer = null;
+      const select = h('select', { class: 'field' }, options.map((o) => h('option', { value: o.value }, o.label)));
+      const form = h('form', { method: 'dialog' },
+        h('label', { class: 'field-label' }, h('span', null, label), select),
+        h('div', { class: 'dialog-actions' },
+          h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel'),
+          h('button', { type: 'submit', class: 'btn btn-open' }, goLabel)));
+      const dialog = h('dialog', { class: 'confirm', 'aria-labelledby': 'choice-title' }, h('h2', { id: 'choice-title' }, title), form);
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        answer = select.value || null;
+        dialog.close();
+      });
+      dialog.addEventListener('close', () => {
+        dialog.remove();
+        resolve(answer);
+      });
+      document.body.append(dialog);
+      dialog.showModal();
+      select.focus();
+    });
+  }
+
   // `?by=` holds the logins picked, comma-separated; none is everyone.
   function pickedLogins(search) {
     return (new URLSearchParams(search).get('by') || '').split(',').map((l) => l.trim()).filter(Boolean);
@@ -1856,6 +2101,13 @@
     } catch {
       // Nothing kept.
     }
+    // The browser's notifications (browserNotifications.js), kept for every tab of this browser: the session names in
+    // them are the person's, so a Sign out takes them too.
+    try {
+      for (const key of Object.keys(window.localStorage)) if (key.startsWith('woodshed-notifications:')) window.localStorage.removeItem(key);
+    } catch {
+      // Nothing kept.
+    }
   }
   // What another login kept in this browser tab goes, unread: a sign-in lost to another browser tab's Sign out and
   // replaced by someone else's runs no Sign out here. Every page that knows who is signed in (its woodshed-login meta)
@@ -1891,8 +2143,8 @@
   window.Woodshed = {
     invite, sessionTab, forgetSignedIn, forgetOtherLogins, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
+    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, askChoice, pickedLogins, byQuery, peoplePicker,
+    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, anyAgentSignIn, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, hoursText, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    startProgress, waitProgress, clock, prChip, prChips, hasPrs, shownPrs, prLines, peekView, startedLinks, railGroups, groupCounts, asksPerson, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();

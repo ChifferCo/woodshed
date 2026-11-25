@@ -38,7 +38,10 @@ const REVIEWS_DIR =
 // session route in server.mjs pins the same way. Everything here builds a
 // filesystem path out of one, so it is checked before it is joined rather than
 // trusted because the caller "obviously" passed a real one.
-const SESSION_RE = /^claude-[0-9a-f]{8}$/;
+//
+// A Woodshed session has one review per pull request it opened besides the one of its own checkout:
+// `claude-<8hex>-pr<n>` (session/reviewShed/host.mjs), each with its own state here.
+const SESSION_RE = /^claude-[0-9a-f]{8}(?:-pr[1-9][0-9]{0,8})?$/;
 
 export function isSessionName(name) {
   return typeof name === 'string' && SESSION_RE.test(name);

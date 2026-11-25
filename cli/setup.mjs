@@ -1,11 +1,14 @@
 // The guided path uses the installed CLI's commands, so each step follows the same checks as running it directly.
 
 import { execFile } from 'node:child_process';
+import os from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { CONFIG_KEYS, CONFIG_UNAVAILABLE } from './config.mjs';
 import { ORIGIN_RE } from './credentials.mjs';
 import { sessionHere } from './hc.mjs';
+import { aOr, readSignInFile, shownFile } from './agentSignIns.mjs';
+import agents from '../shared/agents.cjs';
 
 // With --yes, setup reviews this many of the person's open pull requests, the ones updated last: enough to see reviews
 // work on their own code, without spending their plan on a long tail of old branches.
@@ -24,10 +27,16 @@ export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--
   --repo <owner/name>    choose a repository (repeatable, first is used for the session)
   --agent <name>         claude or codex, when you use only one: else setup asks for both, and your pull requests
                          get reviews from both
-  --reviews <choice>     personal reviewer choice: none, claude, codex, both, default
+  --reviews <choice>     personal reviewer choice: none, claude, codex, both, default, or reviewers joined with +
+                         (claude+grok, grok+opencode)
   --review-prs <which>   the open pull requests of yours to review now: all, none, or numbers separated by commas
                          (with several repos, each as owner/name#12)
                          (with --yes and no --review-prs: the ${REVIEW_PRS_DEFAULT} updated last)
+  --grok-sign-in[=replace], --opencode-sign-in[=replace]
+                         optional: save the Grok Build or OpenCode sign-in this computer's grok login or opencode
+                         auth login made (~/.grok/auth.json, ~/.local/share/opencode/auth.json) as yours on My
+                         settings, without asking. =replace also replaces one saved already. On a terminal setup
+                         asks instead, and without either it sends nothing
   --skip-reviews         skip the review check, your reviewer choice and reviews of your pull requests
   --terminal <name>      optional: agent terminal for new private sessions, herdr or tmux. With herdr, setup also
                          starts woodshed session watch --herdr --add in Herdr, which adds each of your sessions to
@@ -35,13 +44,22 @@ export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--
   --no-herdr-add         with herdr: start that watch without --add, so sessions are added only by session herdr
   --prompt <text>        optional: start a first coding session on this
   --no-session           finish without starting a session
-  --wait[=<N>m]          when Claude Code or Codex is not connected yet, print the steps and wait until it is,
-                         checking every ${WAIT_POLL_SECONDS} s, then go on: ${WAIT_DEFAULT_MINUTES} minutes, or N from 1 to ${WAIT_MAX_MINUTES}. It never asks for Enter
+  --wait[=<N>m]          wait for the CLI sign-in's approval in the browser, and when Claude Code or Codex is not
+                         connected yet, print the steps and wait until it is, checking every ${WAIT_POLL_SECONDS} s, then go on:
+                         ${WAIT_DEFAULT_MINUTES} minutes, or N from 1 to ${WAIT_MAX_MINUTES}. It never asks for Enter
 
-When you need to do something, setup prints what is needed and exits 2. Run it again with the same options after that.`;
+Setup has 8 steps: sign in, repos, Claude Code and Codex, optionally Grok Build and OpenCode, review on your repos,
+reviews of your open pull requests, then optionally the agent terminal and a first coding session. It names each step as it comes to it and ends with
+"Setup is finished." On a terminal it waits for the sign-in's approval and asks each choice, Enter taking what is in
+brackets or named first (the repos added already, the saved choice). When you need to do something it cannot wait for,
+it prints what is needed, says it is not finished and what is left, and exits 2: run it again after that.`;
 
 const REPO = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\/(?!\.{1,2}$)[\w.-]+$/i;
 const REVIEW_CHOICES = ['none', 'claude', 'codex', 'both', 'default'];
+// Any reviewers joined with + are a choice too (claude+grok), as My settings saves one and the console checks it.
+const isReviewChoice = (value) => REVIEW_CHOICES.includes(value) || agents.reviewersOf(value) !== null;
+const REVIEW_CHOICES_TEXT = `${REVIEW_CHOICES.join(', ')}, or reviewers joined with + (claude+grok)`;
+const OWN_SIGN_IN_FLAGS = agents.OWN_SIGN_IN_AGENTS.map((id) => `--${id}-sign-in`);
 const TERMINAL_CHOICES = CONFIG_KEYS.terminal.values;
 const AGENT_NAMES = { claude: 'Claude Code', codex: 'Codex' };
 // How to connect each, as My settings' own rows say it (console/public/mySettings.js): what to run in a terminal of the
@@ -64,6 +82,19 @@ export function agentSteps(name, url, platform) {
     `On My settings (${url}), paste it in the Codex row's box and press Save. An OpenAI API key (sk-…) works there too.`,
   ];
 }
+// Setup's steps, in order, as a person sees them: each entry's `step` (and the keys that report under it) belongs to one.
+// The last two are optional. Setup says which one it is on, what is left, and at its end whether it finished.
+export const SETUP_STEPS = [
+  { key: 'login', title: 'Sign in' },
+  { key: 'repos', title: 'Repos' },
+  { key: 'agent', title: 'Claude Code and Codex' },
+  { key: 'own-agents', title: `${agents.OWN_SIGN_IN_AGENTS.map((id) => agents.agent(id).product).join(' and ')} (optional)` },
+  { key: 'repo-review', title: 'Review on your repos', also: ['review-choice', 'reviews'] },
+  { key: 'pr-reviews', title: 'Reviews of your open pull requests' },
+  { key: 'terminal', title: 'Agent terminal (optional)', also: ['herdr-watch'] },
+  { key: 'session', title: 'A first coding session (optional)', also: ['herdr'] },
+];
+const stepIndex = (step) => SETUP_STEPS.findIndex(({ key, also = [] }) => key === step || also.includes(step));
 const numbered = (steps) => steps.map((step, i) => `  ${i + 1}. ${step}`).join('\n');
 // A pull request in --review-prs or the terminal's answer: 12, #12, or owner/name#12 for one repo of several.
 const PICK = '(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?/[\\w.-]+)?#?[1-9][0-9]{0,8}';
@@ -96,6 +127,12 @@ function options(args, fail) {
       out[name] = true;
       continue;
     }
+    // --grok-sign-in and --opencode-sign-in: send this computer's file; =replace also when one is saved already.
+    if (OWN_SIGN_IN_FLAGS.includes(name)) {
+      if (inline !== undefined && inline !== 'replace') throw fail(`${name} takes no value, or =replace.`);
+      out[name] = inline ?? true;
+      continue;
+    }
     // Only --wait and --wait=<N>m: a bare --wait never takes the next argument as its time.
     if (name === '--wait') {
       const minutes = inline === undefined ? WAIT_DEFAULT_MINUTES : Number(/^([1-9][0-9]?)m$/.exec(inline)?.[1]);
@@ -111,7 +148,7 @@ function options(args, fail) {
       out.repos.push(value);
     } else out[name] = value;
   }
-  if (out['--reviews'] && !REVIEW_CHOICES.includes(out['--reviews'])) throw fail(`--reviews must be one of ${REVIEW_CHOICES.join(', ')}.`);
+  if (out['--reviews'] && !isReviewChoice(out['--reviews'])) throw fail(`--reviews must be one of ${REVIEW_CHOICES_TEXT}.`);
   if (out['--agent'] && !['claude', 'codex'].includes(out['--agent'])) throw fail('--agent must be claude or codex.');
   if (out['--terminal'] && !TERMINAL_CHOICES.includes(out['--terminal'])) throw fail('--terminal must be herdr or tmux.');
   if (out['--skip-reviews'] && out['--reviews']) throw fail('Choose either --reviews or --skip-reviews.');
@@ -175,13 +212,33 @@ export async function setupCommand(args, ctx) {
   // The clock and the pause of --wait, which the tests replace. `sleep` rejects once its `signal` aborts.
   const now = ctx.now ?? Date.now;
   const sleep = ctx.sleep ?? ((ms, { signal } = {}) => delay(ms, undefined, { signal }));
+  // What a person reads between the entries: with --json, on stderr and only on a terminal, never among the entries.
+  const tell = (line) => {
+    if (!args.json) say(line);
+    else if (choose) ctx.stderr.write(`${line}\n`);
+  };
+  // The step setup is on, by its place in SETUP_STEPS: each is named once, as setup comes to it.
+  let current = -1;
+  function begin(step) {
+    const at = stepIndex(step);
+    if (at <= current) return;
+    current = at;
+    tell(`\nStep ${at + 1} of ${SETUP_STEPS.length}: ${SETUP_STEPS[at].title}`);
+  }
+  const after = (at) => SETUP_STEPS.slice(at + 1).map(({ title }, i) => `${at + i + 2}. ${title}`);
   function report(step, status, message, fields = {}) {
+    begin(step);
     if (args.json) emit({ event: 'setup', step, status, message, ...fields });
     else say(`[${status.replace('-', ' ')}] ${message}${fields.url ? ` ${fields.url}` : ''}`);
   }
+  // Every stop says setup is not finished, where it stopped and what is left, so a person never takes it for the end.
   function stop(step, code, message, fields) {
     const status = code === EXIT.waiting ? 'needs-you' : code === EXIT.refused ? 'refused' : 'failed';
-    report(step, status, message, fields);
+    begin(step);
+    const at = current;
+    const left = after(at);
+    report(step, status, message, { ...fields, finished: false, stepNumber: at + 1, stepTotal: SETUP_STEPS.length, left: SETUP_STEPS.slice(at + 1).map(({ key }) => key) });
+    tell(`\nSetup is not finished: it stopped at step ${at + 1} of ${SETUP_STEPS.length}, ${SETUP_STEPS[at].title}.${left.length ? ` Still to do after it: ${left.join(', ')}.` : ''} Run woodshed setup again to go on from here: it checks the steps done already and does not do them again.`);
     return [EXIT.waiting, EXIT.refused].includes(code) ? code : EXIT.failed;
   }
   const globals = ['--console', origin, '--json', ...(!args.browser ? ['--no-browser'] : [])];
@@ -214,13 +271,45 @@ export async function setupCommand(args, ctx) {
   const consoleArg = ORIGIN_RE.test(origin) ? `"${origin}"` : '"YOUR_CONSOLE_URL"';
   const command = (...words) => `woodshed ${words.join(' ')} --console ${consoleArg}`;
 
+  tell(`Setup has ${SETUP_STEPS.length} steps: ${after(-1).join(', ')}.`);
+  begin('login');
   const status = await call('status', 'status');
   if (status.code === EXIT.waiting && status.last?.signedIn === false) {
-    const login = await call('login', 'login', '--no-wait');
-    const code = login.events.find((event) => event.event === 'code');
-    const url = linkTo(code?.verificationUrlComplete, origin);
-    if (login.code === EXIT.waiting && url && /^[A-Z]{4}-[A-Z]{4}$/.test(code.userCode)) {
-      return stop('login', EXIT.waiting, `Match the code ${code.userCode} in your browser and approve the CLI sign-in, then run setup again.`, { url, userCode: code.userCode });
+    let login = await call('login', 'login', '--no-wait');
+    const codeOf = (result) => {
+      const code = result.events.find((event) => event.event === 'code');
+      const url = linkTo(code?.verificationUrlComplete, origin);
+      return result.code === EXIT.waiting && url && /^[A-Z]{4}-[A-Z]{4}$/.test(code.userCode) ? { url, userCode: code.userCode, expiresAt: Date.parse(code.expiresAt) } : null;
+    };
+    const code = codeOf(login);
+    // On a terminal, or with --wait, setup waits for the approval and goes on in the same run; else it hands it off.
+    if (code && !(choose || opts['--wait'])) {
+      return stop('login', EXIT.waiting, `Match the code ${code.userCode} in your browser and approve the CLI sign-in, then run setup again.`, { url: code.url, userCode: code.userCode });
+    }
+    if (code) {
+      const { userCode, url } = code;
+      // Until the code expires (10 minutes), and no later than --wait's own time: a poll after it would start a new code.
+      const lasts = Number.isFinite(code.expiresAt) ? code.expiresAt : now() + 10 * 60_000;
+      const deadline = Math.min(lasts, opts['--wait'] && !choose ? now() + opts['--wait'] * 60_000 : Infinity);
+      report('login', 'waiting', `Your code is ${userCode}. On the sign-in page${args.browser ? ' (open in your browser)' : ''}, check it shows the same code, then press Sign in the CLI. Setup waits here and goes on once you have${choose ? ' (Ctrl-C stops it)' : ''}.`, { url, userCode });
+      let unread = false;
+      for (;;) {
+        if (deadline - now() <= WAIT_MIN_CALL_MS) return stop('login', EXIT.waiting, `The code ${userCode} was not approved in time. Run setup again for a new one.`, { url, userCode });
+        await sleep(Math.min(WAIT_POLL_SECONDS * 1000, deadline - now() - WAIT_MIN_CALL_MS));
+        if (deadline - now() <= WAIT_MIN_CALL_MS) continue;
+        const polled = await callWithin(deadline - now(), 'login', 'login', '--no-wait');
+        if (polled.code === EXIT.waiting && codeOf(polled)?.userCode === userCode) continue;
+        // A poll that failed (the console restarting, Wi-Fi dropping) is said once, and the next one may well answer.
+        if (polled.code === EXIT.failed) {
+          if (!unread) report('login', 'waiting', `Could not ask the console whether it is approved${printable(polled.error?.error) ? ` (${printable(polled.error.error)})` : ''}. Still asking.`);
+          unread = true;
+          continue;
+        }
+        // Another code means this one expired at the console: approving the old page no longer works.
+        if (polled.code === EXIT.waiting) return stop('login', EXIT.waiting, `The code ${userCode} expired before it was approved. Run setup again for a new one.`, { url, userCode });
+        login = polled;
+        break;
+      }
     }
     if (login.code !== EXIT.done) return childError('login', login, 'Sign in with woodshed login, then run setup again.');
   } else if (status.code !== EXIT.done || status.last?.signedIn !== true) {
@@ -240,6 +329,7 @@ export async function setupCommand(args, ctx) {
     const flags = [...selected.map((name) => `--repo ${name}`), ...more].join(' ');
     return flags ? `rerun setup with ${flags}` : 'run setup again';
   };
+  begin('repos');
   if (!has('repo')) {
     report('repos', 'skipped', 'This CLI has no repo command yet. Choose repos in the console or use a CLI with repo list and repo add.', { url: `${origin}/console-settings` });
   } else {
@@ -252,14 +342,22 @@ export async function setupCommand(args, ctx) {
     const added = new Set(connected.map(({ repo }) => key(repo)));
     const named = [...connected, ...(available ?? []).filter(valid)].map(({ repo }) => ({ repo, added: added.has(key(repo)) }));
     const show = named.map((entry) => `${entry.repo}${entry.added === true ? ' (added)' : ''}`).join(', ') || 'none listed';
+    // The repos added to the console already: Enter at the question takes them, so a person who added them is not asked
+    // to type them again.
+    const already = connected.map(({ repo }) => repo);
     // In agent mode the list accompanies the instruction when a choice has yet to be made.
-    if (choose && !selected.length) {
-      if (args.json) ctx.stderr.write(`Repos on ${origin}: ${show}.\n`);
-      else say(`Repos on ${origin}: ${show}.`);
+    if (choose && !selected.length) tell(`Repos on ${origin}: ${show}.`);
+    if (!selected.length && choose) {
+      const question = already.length
+        ? `Which repos should Woodshed use? Press Enter for ${already.length === 1 ? 'the one' : `the ${already.length}`} added already (${already.join(', ')}), or enter owner/name, separated by commas. `
+        : 'Which repos should Woodshed use? Enter owner/name, separated by commas. ';
+      const answer = await choose(question);
+      selected = answer === '' ? already : (answer ?? '').split(/[\s,]+/).filter(Boolean);
     }
-    if (!selected.length && choose) selected = (await choose('Which repos should Woodshed use? Enter owner/name, separated by commas. ') ?? '').split(/[\s,]+/).filter(Boolean);
     if (!selected.length || selected.some((repo) => !REPO.test(repo))) {
-      return stop('repos', EXIT.waiting, `Choose a repo with --repo owner/name. Repos: ${show}.`, { repos: named.map(({ repo, added }) => ({ repo, added: added === true })) });
+      const notAdded = named.filter(({ added }) => !added).map(({ repo }) => repo);
+      const lists = [already.length ? `Added already: ${already.join(', ')}.` : 'None added yet.', notAdded.length ? `Not added yet, and added when you choose it: ${notAdded.join(', ')}.` : ''].filter(Boolean).join(' ');
+      return stop('repos', EXIT.waiting, `Choose the repos setup uses with --repo owner/name, once for each. ${lists}`, { repos: named.map(({ repo, added }) => ({ repo, added: added === true })) });
     }
     selected = [...new Map(selected.map((repo) => [key(repo), repo])).values()];
     for (const repo of selected) {
@@ -274,12 +372,14 @@ export async function setupCommand(args, ctx) {
         return childError('repos', addedRepo, `Could not add ${repo}.`, { repo });
       }
     }
-    report('repos', 'done', `Selected ${selected.join(', ')}. Repos: ${show}.`, { selected });
+    const addedNow = selected.filter((repo) => !added.has(key(repo)));
+    report('repos', 'done', `Woodshed uses ${selected.join(', ')}.${addedNow.length ? ` Added just now: ${addedNow.join(', ')}.` : ''}`, { selected });
   }
 
   // Reviews from Claude Code and Codex are what setup gives first: on a console with no team keys they run on the pull
   // request's author's own Claude token and Codex sign-in (console/reviewAgents.mjs), so setup asks for both, unless the
   // person says they use only one.
+  begin('agent');
   let signIns = me.sessionSignIns;
   let wanted = opts['--agent'] ? [opts['--agent']] : ['claude', 'codex'];
   if (!signIns) {
@@ -291,8 +391,7 @@ export async function setupCommand(args, ctx) {
     if (missing.length && !opts['--agent'] && choose && !wait) {
       const have = wanted.filter((name) => signIns[name] === true).map((name) => AGENT_NAMES[name]);
       const intro = `Connect Claude Code and Codex: with both connected, your pull requests get reviews from both.${have.length ? ` ${have[0]} is connected.` : ''}`;
-      if (args.json) ctx.stderr.write(`${intro}\n`);
-      else say(intro);
+      tell(intro);
       const answer = (await choose('Use both? Press Enter for both, or type claude or codex if you use only one. ') ?? '').toLowerCase();
       if (answer === 'claude' || answer === 'codex') wanted = [answer];
       else if (answer && answer !== 'both') return stop('agent', EXIT.waiting, 'Answer both, claude or codex, or rerun setup with --agent claude or --agent codex.');
@@ -302,7 +401,6 @@ export async function setupCommand(args, ctx) {
     const rowUrl = (name) => `${origin}/settings#${name}`;
     const stepsOf = (name) => agentSteps(name, rowUrl(name), ctx.platform);
     // On a terminal, setup walks through each one and waits while the person does it, then checks with the console.
-    const tell = (line) => (args.json ? ctx.stderr.write(`${line}\n`) : say(line));
     let walked = false;
     if (missing.length && choose && !wait) {
       walked = true;
@@ -379,10 +477,85 @@ export async function setupCommand(args, ctx) {
   // The session's agent: the one they use when they said only one, else Claude Code unless only Codex is connected.
   const agent = wanted.length === 1 ? wanted[0] : (signIns?.codex && !signIns?.claude ? 'codex' : 'claude');
 
+  // Grok Build and OpenCode, optional: each runs on the person's own sign-in alone (shared/agents.cjs). When this
+  // computer has the file the agent's own login saved, setup offers to save it on My settings through woodshed sign-in
+  // push, which checks it and sends it over the command line's sign-in (agentSignIns.mjs). It is never printed: setup
+  // reads it here only to check it, says which file goes to which console, and asks first, and asks again before
+  // replacing one saved already. Without a terminal it sends only with --<agent>-sign-in.
+  begin('own-agents');
+  const ownAgents = agents.OWN_SIGN_IN_AGENTS.filter((id) => typeof signIns?.[id] === 'boolean' || opts[`--${id}-sign-in`]);
+  if (!ownAgents.length) {
+    report('own-agents', 'skipped', `This console does not run ${agents.OWN_SIGN_IN_AGENTS.map((id) => agents.agent(id).product).join(' or ')} sessions.`);
+  }
+  for (const id of ownAgents) {
+    const { product, signIn } = agents.agent(id);
+    const flag = opts[`--${id}-sign-in`];
+    const savedNow = signIns?.[id];
+    if (typeof savedNow !== 'boolean') {
+      if (flag) return stop('own-agents', EXIT.refused, `${origin} does not run ${product} sessions, so nothing was sent. Rerun setup without --${id}-sign-in.`, { agent: id });
+      report('own-agents', 'skipped', `This console does not run ${product} sessions.`, { agent: id });
+      continue;
+    }
+    const home = ctx.home ?? os.homedir();
+    const read = readSignInFile(id, { env: env ?? {}, home });
+    const shown = shownFile(read.file, home);
+    const fields = { agent: id, file: read.file, saved: savedNow, url: `${origin}/settings#${id}` };
+    if (!read.found) {
+      if (flag) return stop('own-agents', EXIT.waiting, `There is no ${product} sign-in on this computer: ${shown} is not there. Run ${signIn.steps[0].command}, then setup again.`, fields);
+      const key = signIn.steps.find((step) => !step.command && /key/i.test(step.text));
+      const or = key ? ` ${key.text.replace(/\.$/, '')} on My settings.` : '';
+      report('own-agents', savedNow ? 'done' : 'skipped', savedNow
+        ? `${product}: a sign-in of yours is saved on My settings.`
+        : `Optional, for ${product}: this computer has no ${shown}. To use it, run ${signIn.steps[0].command}, then setup again.${or}`, fields);
+      continue;
+    }
+    if (read.problem) {
+      const message = `${shown} is not ${aOr(product)} sign-in (${read.problem}), so it was not sent. Run ${signIn.steps[0].command} again, then setup again.`;
+      if (flag) return stop('own-agents', EXIT.refused, message, fields);
+      report('own-agents', 'skipped', message, fields);
+      continue;
+    }
+    // A flag is the answer where it says enough: one saved already is replaced only with =replace.
+    let send = flag === 'replace' || (flag === true && !savedNow);
+    if (!send && choose) {
+      const question = savedNow
+        ? `${origin} has ${aOr(product)} sign-in of yours saved already. Replace it with ${shown} from this computer? It is sent over this command line's sign-in and never printed. [y/N] `
+        : `Send ${shown} to ${origin} as your ${product} sign-in? It is sent over this command line's sign-in and never printed. [y/N] `;
+      send = /^y(es)?$/i.test((await choose(question)) ?? '');
+      if (!send) {
+        report('own-agents', 'skipped', `${product}: ${shown} was not sent${savedNow ? ', and the saved sign-in is kept' : ''}.`, fields);
+        continue;
+      }
+    }
+    if (!send) {
+      const rerun = `rerun setup with --${id}-sign-in${savedNow ? '=replace' : ''}`;
+      report('own-agents', savedNow ? 'done' : 'skipped', savedNow
+        ? `${product}: a sign-in of yours is saved on My settings. To replace it with ${shown} from this computer, ${rerun}.`
+        : `Optional, for ${product}: this computer has ${shown}. To save it as your ${product} sign-in on ${origin}, ${rerun}, or run ${command('sign-in', 'push', id)}.`, fields);
+      continue;
+    }
+    // --replace when one was saved at the status read, or when =replace allows it: one saved since then is replaced too.
+    const replace = savedNow || flag === 'replace';
+    const pushWords = ['sign-in', 'push', id, ...(replace ? ['--replace'] : [])];
+    const pushed = await call('sign-in push', ...pushWords);
+    if (pushed.code !== EXIT.done) {
+      const why = `Could not save your ${product} sign-in`;
+      if (flag) return childError('own-agents', pushed, `${why}. Run ${command(...pushWords)} for details.`, fields);
+      // Asked on the terminal, with no flag: an optional step, as a file that is not there or not a sign-in is. Setup
+      // says why and goes on, and the sign-in can be saved later.
+      const reason = printable(pushed.error?.error);
+      report('own-agents', 'skipped', `${why}${reason ? `: ${reason.replace(/\.$/, '')}` : ''}. Setup goes on: save it later with ${command(...pushWords)}, or on My settings.`, { ...fields, saveFailed: true });
+      continue;
+    }
+    signIns = { ...signIns, [id]: true };
+    report('own-agents', 'done', `${savedNow ? 'Replaced' : 'Saved'} your ${product} sign-in on ${origin}, from ${shown}. Your next ${product} session uses it.`, { ...fields, saved: true });
+  }
+
   const canConfig = has('config');
 
   // The reviewer choice saved by the step below, when it ran: `none` means no review of their pull requests starts.
   let reviewChoice = null;
+  begin('repo-review');
   if (opts['--skip-reviews']) {
     report('reviews', 'skipped', 'You chose to skip review setup.');
   } else {
@@ -428,14 +601,14 @@ export async function setupCommand(args, ctx) {
       report('review-choice', 'skipped', `This CLI has no config command yet. Set your reviewer choice on My settings, or use: ${command('config', 'set', 'reviews', opts['--reviews'] ?? '<choice>')}.`, { url: `${origin}/settings` });
     } else {
       const current = await call('config list', 'config', 'list');
-      if (current.code !== EXIT.done || !REVIEW_CHOICES.includes(current.last?.config?.reviews)) return childError('review-choice', current, 'Could not read your reviewer choice.');
+      if (current.code !== EXIT.done || !isReviewChoice(current.last?.config?.reviews)) return childError('review-choice', current, 'Could not read your reviewer choice.');
       const prior = current.last.config.reviews;
       let value = opts['--reviews'];
       if (!value && choose) {
-        const answer = await choose(`Who should review your pull requests (${REVIEW_CHOICES.join(', ')})? Enter keeps ${prior}. `);
+        const answer = await choose(`Who should review your pull requests (${REVIEW_CHOICES_TEXT})? Enter keeps ${prior}. `);
         if (answer !== null) value = answer || prior;
       }
-      if (!REVIEW_CHOICES.includes(value)) return stop('review-choice', EXIT.waiting, `Choose who reviews your pull requests with --reviews ${REVIEW_CHOICES.join('|')}, or use --skip-reviews. Current choice: ${prior}.`);
+      if (!isReviewChoice(value)) return stop('review-choice', EXIT.waiting, `Choose who reviews your pull requests with --reviews ${REVIEW_CHOICES.join('|')} or reviewers joined with + (claude+grok), or use --skip-reviews. Current choice: ${prior}.`);
       if (value !== prior) {
         const set = await call('config set reviews', 'config', 'set', 'reviews', value);
         if (set.code !== EXIT.done) return childError('review-choice', set, 'Could not save your reviewer choice.');
@@ -448,6 +621,7 @@ export async function setupCommand(args, ctx) {
   // The console's review of the person's open pull requests on each repo, now: what setup is for. The terminal and a
   // first coding session after it are optional.
   const reviewLinks = [];
+  begin('pr-reviews');
   if (opts['--skip-reviews'] || opts['--review-prs']?.trim().toLowerCase() === 'none') {
     report('pr-reviews', 'skipped', opts['--skip-reviews'] ? 'You chose to skip reviews.' : 'You chose to review none of your pull requests now.');
   } else if (reviewChoice === 'none') {
@@ -489,8 +663,7 @@ export async function setupCommand(args, ctx) {
       let why = '';
       if (!which && choose) {
         const lines = [`Your open pull requests on ${repo}:`, ...pulls.map((p) => `  #${p.number}${p.draft ? ' (draft: reviewed once it is ready)' : ''}  ${printable(p.title)}`)];
-        if (args.json) ctx.stderr.write(`${lines.join('\n')}\n`);
-        else lines.forEach((line) => say(line));
+        lines.forEach((line) => tell(line));
         const answer = await choose('Review which now? Press Enter for all of them, or give numbers separated by commas, or none. ');
         // Closing the input (Ctrl-D) starts nothing: reviews spend the person's plan and post on GitHub.
         if (answer === null) {
@@ -533,6 +706,7 @@ export async function setupCommand(args, ctx) {
 
   // Inside a Woodshed session hc is that session's own Herdr, which the person's computer never shows: nothing is added
   // to it from here (sessions.mjs says the same to session herdr and --herdr).
+  begin('terminal');
   const insideSession = sessionHere(env ?? {});
   const canAttach = me.hc?.ok === true && ctx.platform !== 'win32' && !insideSession;
   let terminal = opts['--terminal'];
@@ -557,6 +731,8 @@ export async function setupCommand(args, ctx) {
       if (set.code !== EXIT.done) return childError('terminal', set, 'Could not save your agent terminal preference.');
     }
     report('terminal', 'done', `New private sessions will run their agents in ${terminal === 'herdr' ? 'Herdr' : 'tmux'}.`, { terminal });
+  } else {
+    report('terminal', 'skipped', 'Optional: your agent terminal is left as it is. Choose Herdr or tmux for new private sessions with --terminal, or on My settings.', { url: `${origin}/settings` });
   }
 
   // With Herdr, each of the person's sessions shows in Herdr's sidebar by default: a watch in Herdr adds each as it starts
@@ -581,14 +757,18 @@ export async function setupCommand(args, ctx) {
   }
 
   const code = await firstSession();
+  if (code !== EXIT.done) return code;
   // Setup ends with the reviews it started, the main thing it set up, when a session's lines came after them.
-  if (code === EXIT.done && reviewLinks.length) {
+  if (reviewLinks.length) {
     report('reviews', 'done', `Your reviews: ${reviewLinks.map((link) => `${link.repo}#${link.number} ${link.url ?? link.pullUrl}`).join(', ')}.`, { reviews: reviewLinks });
   }
+  tell('');
+  report('finished', 'done', 'Setup is finished. Run woodshed setup again any time to change a choice.', { finished: true });
   return code;
 
   // Optional: a first coding session, only when asked for (--prompt, or a prompt typed in).
   async function firstSession() {
+    begin('session');
     if (opts['--no-session']) {
       report('session', 'skipped', 'You chose to finish without starting a session.');
       return EXIT.done;

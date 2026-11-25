@@ -525,6 +525,21 @@ ${DARK_PALETTE}
       border: 1px solid var(--rule-strong); border-radius: 3px;
       padding: 0 0.3rem; color: var(--warn);
     }
+    /* Which of the session's pull requests this review is of, and a link to each other one's. Quiet, above the title:
+       it is a way to another page, not a fact about this change. */
+    .reviewswitch {
+      display: flex; align-items: center; gap: 0.3rem 0.5rem; flex-wrap: wrap;
+      font: 12px/1.6 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--faint); margin-bottom: 0.6rem;
+    }
+    .reviewswitch .lead { color: var(--muted); margin-right: 0.2rem; }
+    .reviewswitch a, .reviewswitch .on {
+      border: 1px solid var(--rule); border-radius: 999px; padding: 0 0.5rem;
+      color: var(--slate); text-decoration: none; background: var(--sunk);
+    }
+    /* Slate, the page's link colour, not the orange accent: 12px orange on the wash is under 3:1 in the light theme. */
+    .reviewswitch a:hover { border-color: var(--slate); }
+    .reviewswitch .on { color: var(--ink); border-color: var(--rule-strong); background: transparent; font-weight: 600; }
     .prmeta .openedpr {
       font: 600 11.5px/1.6 ui-monospace, monospace; color: var(--accent);
       text-decoration: none; border-bottom: 1px solid transparent;
@@ -596,13 +611,57 @@ ${DARK_PALETTE}
     }
     .verdictword.good { color: var(--add); border-color: var(--add); }
     .verdictword.bad { color: var(--del); border-color: var(--del); }
+    .verdictword.warn { color: var(--warn); border-color: var(--warn); }
     .saidbody {
       padding: 0.6rem 0.7rem; font-size: 13.5px; line-height: 1.55; color: var(--ink);
       max-width: var(--prose-measure);
     }
     .saidhead.toggles { cursor: pointer; user-select: none; }
+    .saidhead.toggles:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
     .saidhead .caret { font-size: 9px; width: 0.6rem; color: var(--faint); }
     .saidbox.folded .saidhead { border-bottom: 0; }
+
+    /* The AI reviews tab: one box per review Claude Code or Codex posted, its
+       parts and its findings, each with the follow-ups asked about it. */
+    .aiintro { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 0 0 0.9rem; max-width: var(--prose-measure); }
+    .aitag {
+      font: 600 9.5px/1.6 ui-monospace, monospace; letter-spacing: 0.04em; color: var(--muted);
+      border: 1px solid var(--rule); border-radius: 3px; padding: 0 0.3rem; background: var(--panel);
+    }
+    .aitag.old { color: var(--warn); border-color: var(--warn); }
+    .aipart { padding: 0.6rem 0.7rem 0.2rem; max-width: var(--prose-measure); }
+    .aipart + .aipart { border-top: 1px dashed var(--rule); }
+    .aipart .aiwho { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.3rem; font: 600 12px/1.6 "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--ink); }
+    .aipart .prose { font-size: 13.5px; line-height: 1.55; }
+    .aifindings { border-top: 1px solid var(--rule); padding: 0.5rem 0.7rem 0.7rem; }
+    .aifindings > h4 { margin: 0.2rem 0 0.5rem; font: 600 12px/1.6 "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--muted); }
+    .aifinding { border: 1px solid var(--rule); border-radius: 5px; padding: 0.5rem 0.65rem; margin: 0 0 0.6rem; max-width: var(--prose-measure); }
+    /* Resolved or outdated: a dashed border and the state's own label, never a
+       fade, which would take muted text under 4.5:1 on white. */
+    .aifinding.done { border-style: dashed; }
+    .aifinding .aiat { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-bottom: 0.3rem; font-size: 12px; color: var(--muted); }
+    .aifinding .aiat .grow { flex: 1; }
+    .aifinding .aiat code { font-size: 12px; }
+    .aifinding .prose { font-size: 13.5px; line-height: 1.55; }
+    .aireply { margin: 0.4rem 0 0 0.8rem; padding-left: 0.6rem; border-left: 2px solid var(--rule); font-size: 13px; color: var(--muted); }
+    .aireply b { color: var(--ink); font-weight: 600; }
+    .aifollow { margin: 0.5rem 0 0; }
+    .aifollow .msg.user { margin-left: 0; }
+    .aifollow > .msg.bot { border-left: 2px solid var(--accent); padding-left: 0.6rem; }
+    .aiwhole { padding: 0 0.7rem 0.6rem; }
+    /* The merge risk and QA over the reviews: two boxes side by side, one
+       under the other on a narrow screen, each its check's word and title,
+       and what the check says under Details. */
+    .aichecks { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 0.9rem; }
+    .aicheck.warn { border-left-color: var(--warn); }
+    .aicheck .saidhead { flex-wrap: wrap; row-gap: 0.2rem; }
+    .aicheck .saidhead > * { white-space: nowrap; }
+    .aicheck .aititle { padding: 0.5rem 0.7rem; font-size: 13.5px; line-height: 1.55; color: var(--ink); }
+    .aicheck .aititle.none { color: var(--muted); }
+    .aicheck details { border-top: 1px solid var(--rule); padding: 0.35rem 0.7rem 0.5rem; }
+    .aicheck summary { cursor: pointer; font: 600 12px/1.6 "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--muted); }
+    .aicheck details .prose { font-size: 13px; line-height: 1.55; margin-top: 0.3rem; max-height: 28rem; overflow: auto; }
+    .msg.user .about { display: block; margin-bottom: 0.2rem; font-size: 11.5px; color: var(--muted); white-space: normal; }
 
     /* Always out, not revealed on hover. Hover-to-reveal was tried and it
        hides the control from anyone who does not already know it is there,
@@ -1671,7 +1730,7 @@ ${DARK_PALETTE}
     // Not a note this page keeps, for the same reason the Viewed tick is not:
     // a comment written here shows up in GitHub's review UI at once, and one
     // written there shows up here, because there is only ever one draft.
-    var draft = { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [] };
+    var draft = { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [], aiReviews: [] };
     // True until the first read from GitHub settles, either way. The
     // Discussion tab is empty until then, and empty has to look like waiting
     // rather than like a pull request nobody has said anything on.
@@ -1732,7 +1791,7 @@ ${DARK_PALETTE}
     document.addEventListener('visibilitychange', function onBack() {
       if (document.hidden || !state.session || !state.livePr) return;
       loadViewed().then(render).catch(function ignore() {});
-      loadDraft().then(render).catch(function ignore() {});
+      loadDraft().then(function drawn() { render(); followPullRequest(); }).catch(function ignore() {});
     });
 
     // The Q&A can be emptied from another tab (Discard, Re-review), and a
@@ -1756,9 +1815,69 @@ ${DARK_PALETTE}
       clearPick();
     });
 
+    // --- keeping up with the pull request -------------------------------------
+    //
+    // A push to the pull request moves its head on GitHub, and the review read the commit before it. The page notices
+    // (the draft's headSha, read on load, on coming back to the tab and every WATCH_MS while it is shown) and takes the
+    // review again itself, as Re-review would: a reader should not have to spot the sentence and press the button.
+    // Once per head: a take that did not reach it (GitHub behind the session, a pull refused) is not tried again
+    // until GitHub moves once more, so the page never loops on a paid analysis. A refused pull is not a reason to stop
+    // following: the next head GitHub has, once the session sorted the branch out, gets its try.
+    var WATCH_MS = 60000;
+    var watchTimer = null;
+    var followedSha = null;
+    // The note's Re-review, set each time the note is drawn: takeAgain(auto).
+    var reReviewNow = null;
+    // GitHub's comments changed while the reader was busy: drawn at the first tick they are not.
+    var draftUndrawn = false;
+
+    function headMovedOnGitHub() {
+      return !!(draft.headSha && state.headSha && draft.headSha !== state.headSha);
+    }
+
+    function followPullRequest() {
+      if (!headMovedOnGitHub() || followedSha === draft.headSha || !reReviewNow) return;
+      followedSha = draft.headSha;
+      reReviewNow(true);
+    }
+
+    // Someone mid-sentence or mid-question loses it to a redraw, so what GitHub said is kept and drawn later.
+    function readerBusy() {
+      var tag = document.activeElement && document.activeElement.tagName;
+      if (tag === 'TEXTAREA' || tag === 'INPUT') return true;
+      if (picked || ask.openAnchor()) return true;
+      var open = document.querySelector('dialog[open]');
+      return !!open;
+    }
+
+    function watchPullRequest() {
+      clearTimeout(watchTimer);
+      watchTimer = setTimeout(async function tick() {
+        watchPullRequest();
+        if (document.hidden || !state.session || !state.livePr) return;
+        var before = JSON.stringify(draft);
+        try {
+          await loadDraft();
+        } catch (e) {
+          return;
+        }
+        if (headMovedOnGitHub() && followedSha !== draft.headSha) {
+          render();
+          followPullRequest();
+        } else if (JSON.stringify(draft) !== before || draftUndrawn) {
+          draftUndrawn = readerBusy();
+          if (!draftUndrawn) render();
+        }
+      }, WATCH_MS);
+    }
+
     async function loadDraft() {
-      draft = { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [] };
-      if (!state.session || !state.livePr) return;
+      if (!state.session || !state.livePr) {
+        draft = { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [], aiReviews: [] };
+        return;
+      }
+      // The draft on screen stays until GitHub's answer replaces it: the minute's check would otherwise leave a redraw
+      // in that second with no comments drawn.
       var got = await api('GET', '/reviews/' + state.session + '/comments');
       draft = {
         prId: got.prId || null,
@@ -1769,6 +1888,8 @@ ${DARK_PALETTE}
         threads: got.threads || [],
         outdated: got.outdated || 0,
         said: got.said || [],
+        aiReviews: got.aiReviews || [],
+        checks: got.checks || null,
         truncated: !!got.truncated,
       };
       // Better said than drawn: part of a conversation shown as the whole one
@@ -1953,6 +2074,9 @@ ${DARK_PALETTE}
       box.hidden = !msg;
     }
 
+    // A session's review: claude-<id>, of its checkout, or claude-<id>-pr<n>, of another pull request it opened.
+    var REVIEW_NAME_RE = /^claude-[0-9a-f]{8}(?:-pr[1-9][0-9]{0,8})?$/;
+
     async function api(method, url, body) {
       var opts = { method: method };
       if (body) {
@@ -1970,6 +2094,10 @@ ${DARK_PALETTE}
         var err = new Error(data.error || 'HTTP ' + res.status);
         // The merge sheet keys its wording on why a merge was refused.
         err.code = data.code || null;
+        // A review that could not be opened still names the session's others, to switch to.
+        err.reviews = Array.isArray(data.reviews) ? data.reviews : null;
+        // The review asked for is another's to show (a pull request that is the branch checked out): its name.
+        err.review = typeof data.review === 'string' ? data.review : null;
         throw err;
       }
       return data;
@@ -2025,6 +2153,11 @@ ${DARK_PALETTE}
         && document.activeElement.dataset.qaAsk !== undefined
         ? { key: document.activeElement.dataset.qaAsk, from: document.activeElement.selectionStart, to: document.activeElement.selectionEnd }
         : null;
+      // And an AI review's follow-up box.
+      var focusedAiAsk = document.activeElement && document.activeElement.dataset
+        && document.activeElement.dataset.aiAsk !== undefined
+        ? { key: document.activeElement.dataset.aiAsk, from: document.activeElement.selectionStart, to: document.activeElement.selectionEnd }
+        : null;
       content.replaceChildren();
       if (!state.meta) return;
 
@@ -2052,6 +2185,20 @@ ${DARK_PALETTE}
       content.appendChild(renderTabs(fileCount));
       if (state.tab === 'discussion' && state.livePr) {
         renderDiscussion(content);
+        keepScroll();
+        return;
+      }
+      if (state.tab === 'ai' && state.livePr) {
+        renderAiReviews(content);
+        if (focusedAiAsk) {
+          var aiBoxes = content.querySelectorAll('input[data-ai-ask]');
+          for (var a = 0; a < aiBoxes.length; a++) {
+            if (aiBoxes[a].dataset.aiAsk !== focusedAiAsk.key || aiBoxes[a].disabled) continue;
+            aiBoxes[a].focus({ preventScroll: true });
+            try { aiBoxes[a].setSelectionRange(focusedAiAsk.from, focusedAiAsk.to); } catch (e) { /* not a text box */ }
+            break;
+          }
+        }
         keepScroll();
         return;
       }
@@ -2105,6 +2252,7 @@ ${DARK_PALETTE}
       // with none has no tab rather than an empty one.
       if (state.livePr) {
         bar.appendChild(tabButton('discussion', 'Discussion', draftLoading ? 'loading' : (draft.said.length || null)));
+        bar.appendChild(tabButton('ai', 'AI reviews', draftLoading ? 'loading' : (draft.aiReviews.length || null)));
       }
       bar.appendChild(tabButton('files', 'Files changed', fileCount));
       var right = el('div', 'right');
@@ -2173,7 +2321,7 @@ ${DARK_PALETTE}
     // the page's default changes, and a bare ?session= that means "whichever
     // half is default" is not a link to anything in particular.
     function tabFromUrl(value) {
-      return value === 'files' || value === 'analysis' || value === 'discussion' || value === 'qa' ? value : null;
+      return value === 'files' || value === 'analysis' || value === 'discussion' || value === 'qa' || value === 'ai' ? value : null;
     }
 
     function stampTab(push) {
@@ -3609,8 +3757,48 @@ ${DARK_PALETTE}
       return form;
     }
 
+    // A session with more than one pull request has a review of each: its checkout's, and one of every other pull
+    // request it opened, taken from GitHub's head of it. A link to each other review, in this frame, so the tab stays.
+    function reviewHref(name) {
+      var url = new URL(window.location.href);
+      url.searchParams.set('session', name);
+      url.searchParams.delete('chat');
+      return url.pathname + url.search;
+    }
+
+    function renderReviewSwitch(reviews, current) {
+      if (!reviews || reviews.length < 2) return null;
+      var row = el('nav', 'reviewswitch');
+      row.setAttribute('aria-label', 'This session\u2019s pull requests');
+      row.appendChild(el('span', 'lead', 'Pull requests'));
+      for (var i = 0; i < reviews.length; i++) {
+        var one = reviews[i];
+        if (!one || typeof one.review !== 'string' || !REVIEW_NAME_RE.test(one.review)) continue;
+        var words = one.checkout
+          ? (one.number ? '#' + one.number + ' \u00b7 checked out' : 'Checked out')
+          : '#' + one.number;
+        var tip = one.checkout
+          ? 'The branch checked out in the session now, as it is in the worktree'
+          : 'Pull request #' + one.number + ' as GitHub has it, reviewed apart from the checkout';
+        var item;
+        if (one.review === current) {
+          item = el('span', 'on', words);
+          item.setAttribute('aria-current', 'page');
+        } else {
+          item = document.createElement('a');
+          item.href = reviewHref(one.review);
+          item.textContent = words;
+        }
+        item.dataset.tip = tip;
+        row.appendChild(item);
+      }
+      return row;
+    }
+
     function renderHeader() {
       var wrap = document.createElement('div');
+      var others = renderReviewSwitch(state.reviews, state.session);
+      if (others) wrap.appendChild(others);
       if (renaming) {
         wrap.appendChild(renderTitleEditor());
         wrap.appendChild(renderMeta());
@@ -3742,6 +3930,273 @@ ${DARK_PALETTE}
       }
     }
 
+    // --- AI reviews -------------------------------------------------------------
+    //
+    // What Woodshed's review (Claude Code, Codex or both) posted on the pull
+    // request, read by the shed into a verdict, each reviewer's part and each
+    // finding on its line (aiReviews.mjs). A follow-up on a finding, or on the
+    // review as a whole, is a turn of the conversation that names the point it
+    // is about: the shed reads that point from GitHub and has the session's
+    // agent check it against the code. Its answer is drawn under the point, and
+    // in the conversation too, where it belongs to the same transcript.
+
+    var aiView = { drafts: {}, error: null, chatError: null, checkOpen: {} };
+
+    var AI_WORD = {
+      APPROVE: { word: 'approves', tone: 'good' },
+      REQUEST_CHANGES: { word: 'requests changes', tone: 'bad' },
+      COMMENT: { word: 'comments', tone: '' },
+    };
+
+    function renderAiReviews(content) {
+      if (draftLoading) {
+        content.appendChild(loadingNote('Loading the AI reviews from GitHub\u2026'));
+        return;
+      }
+      // The follow-ups are the conversation's turns, so it is read once here.
+      // Once: a read that failed says so here and waits for Try again, rather
+      // than reading again on every render while the endpoint keeps failing.
+      if (!chat.loaded && !chat.loading && !aiView.chatError) {
+        chat.loading = true;
+        loadChat()
+          .catch(function failed(e) { aiView.chatError = e.message; })
+          .then(function done() { chat.loading = false; if (state.tab === 'ai') render(); });
+      }
+      if (aiView.chatError) {
+        var failed = el('p', 'askerr', 'Could not read the follow-ups asked so far: ' + aiView.chatError + '. ');
+        var again = el('button', 'quiet', 'Try again');
+        again.type = 'button';
+        again.addEventListener('click', function onAgain() { aiView.chatError = null; render(); });
+        failed.appendChild(again);
+        content.appendChild(failed);
+      }
+      var list = draft.aiReviews || [];
+      var checks = renderAiChecks(draft.checks);
+      if (checks) content.appendChild(checks);
+      if (!list.length) {
+        content.appendChild(el('div', 'tabnote', 'No AI review has been posted on this pull request yet. Claude Code and Codex review a commit whose message carries the review\u2019s tag, [woodshed-review] by default, and what they say shows here.'));
+        return;
+      }
+      content.appendChild(el('p', 'aiintro', 'What Claude Code and Codex said about this pull request, newest first. Ask a follow-up on any finding, or on a review as a whole: the session\u2019s agent checks the point against the code and answers here.'));
+      for (var i = 0; i < list.length; i++) content.appendChild(renderAiReview(list[i], i === 0));
+    }
+
+    // The merge risk the review rated and the QA run's verdict, as GitHub has
+    // them on the pull request's head commit (prChecks.mjs). Either is left out
+    // when there is none and the project file asks for none.
+    var RISK_TONE = { Low: 'good', Medium: 'warn', High: 'bad' };
+    var QA_WORD = {
+      success: { word: 'passed', tone: 'good' },
+      failure: { word: 'failed', tone: 'bad' },
+      timed_out: { word: 'timed out', tone: 'bad' },
+      cancelled: { word: 'cancelled', tone: '' },
+      skipped: { word: 'skipped', tone: '' },
+      neutral: { word: 'not tested', tone: '' },
+      action_required: { word: 'needs you', tone: 'warn' },
+    };
+
+    function renderAiChecks(checks) {
+      if (!checks || (!checks.mergeRisk && !checks.qa)) return null;
+      var row = el('div', 'aichecks');
+      if (checks.mergeRisk) {
+        var r = checks.mergeRisk;
+        var tone = r.missing ? '' : RISK_TONE[r.tier] || '';
+        row.appendChild(aiCheckBox(r, 'Merge risk', r.missing ? null : { word: r.tier ? r.tier.toLowerCase() : 'not rated', tone: tone },
+          r.missing ? 'No ' + r.name + ' check on the latest commit yet: the review rates it when it reviews a commit.'
+            : r.fromLabel ? 'From the pull request\u2019s label: the review rated an earlier commit, and has not reviewed the latest one.'
+            : sentence(r.reason || r.title)));
+      }
+      if (checks.qa) {
+        var q = checks.qa;
+        var word = q.missing ? null
+          : q.status !== 'completed' ? { word: 'running', tone: 'warn' }
+          : QA_WORD[q.conclusion] || { word: q.conclusion || 'done', tone: '' };
+        row.appendChild(aiCheckBox(q, 'QA', word,
+          q.missing ? 'No ' + q.name + ' check on the latest commit yet: QA has not run on it.' : q.title));
+      }
+      return row;
+    }
+
+    // A check's reason after its tier (High: touches billing) starts lower case.
+    function sentence(text) {
+      text = String(text || '');
+      return text.charAt(0).toUpperCase() + text.slice(1);
+    }
+
+    function aiCheckBox(check, label, word, title) {
+      var box = el('div', 'saidbox aicheck' + (word && word.tone ? ' ' + word.tone : ''));
+      var head = el('div', 'saidhead');
+      head.appendChild(el('span', 'who', label));
+      if (word) head.appendChild(el('span', 'verdictword ' + word.tone, word.word));
+      if (check.missing) head.appendChild(el('span', 'aitag', 'not run'));
+      else if (check.fromLabel) head.appendChild(el('span', 'aitag old', 'older commit'));
+      else if (check.current) head.appendChild(el('span', 'aitag', 'latest commit'));
+      if (check.at) head.appendChild(el('span', 'when', fmtWhen(check.at)));
+      head.appendChild(el('span', 'grow'));
+      if (check.url) head.appendChild(openOnGitHub(check.url, 'Open on GitHub'));
+      box.appendChild(head);
+      if (title) box.appendChild(el('div', 'aititle' + (check.missing || check.fromLabel ? ' none' : ''), title));
+      if (check.summary) {
+        // Kept open across a redraw, which an answer arriving below causes.
+        var more = document.createElement('details');
+        more.open = !!aiView.checkOpen[label];
+        more.addEventListener('toggle', function onToggle() { aiView.checkOpen[label] = more.open; });
+        more.appendChild(el('summary', null, 'Details'));
+        var prose = el('div', 'prose');
+        renderMarkdown(prose, check.summary);
+        more.appendChild(prose);
+        box.appendChild(more);
+      }
+      return box;
+    }
+
+    function renderAiReview(review, newest) {
+      var open = review.id in saidOpen ? saidOpen[review.id] : newest;
+      var verdict = AI_WORD[review.conclusion] || AI_WORD.COMMENT;
+      var box = el('div', 'saidbox aibox' + (verdict.tone ? ' ' + verdict.tone : '') + (open ? '' : ' folded'));
+      var head = el('div', 'saidhead');
+      head.appendChild(el('span', 'who', review.agents.length ? review.agents.join(' and ') : review.heading));
+      head.appendChild(el('span', 'verdictword ' + verdict.tone, verdict.word));
+      // A maintainer dismissed it on GitHub: what it said stays, and so does that.
+      if (review.state === 'dismissed') head.appendChild(el('span', 'aitag', 'dismissed'));
+      if (review.commit) {
+        var at = el('span', 'aitag' + (review.current ? '' : ' old'), review.current ? 'latest commit' : 'older commit ' + review.commit.slice(0, 7));
+        at.dataset.tip = review.current ? 'Reviewed at the pull request\u2019s head' : 'Reviewed at ' + review.commit.slice(0, 7) + '; the pull request has moved on since';
+        head.appendChild(at);
+      }
+      var n = review.findings.length;
+      head.appendChild(el('span', 'aitag', n + (n === 1 ? ' finding' : ' findings')));
+      if (review.at) head.appendChild(el('span', 'when', fmtWhen(review.at)));
+      head.appendChild(el('span', 'grow'));
+      if (review.url) head.appendChild(openOnGitHub(review.url, 'Open on GitHub'));
+      foldable(head, review.id, open);
+      box.appendChild(head);
+      if (!open) return box;
+
+      for (var p = 0; p < review.parts.length; p++) {
+        var part = review.parts[p];
+        var partBox = el('div', 'aipart');
+        if (part.agent && (review.parts.length > 1 || review.agents.length > 1)) {
+          var who = el('div', 'aiwho');
+          who.appendChild(el('span', null, part.agent));
+          var pv = AI_WORD[part.conclusion] || AI_WORD.COMMENT;
+          who.appendChild(el('span', 'verdictword ' + pv.tone, pv.word));
+          partBox.appendChild(who);
+        }
+        var prose = el('div', 'prose');
+        renderMarkdown(prose, part.body || '');
+        partBox.appendChild(prose);
+        box.appendChild(partBox);
+      }
+      var whole = el('div', 'aiwhole');
+      whole.appendChild(aiFollowUps(review, null));
+      box.appendChild(whole);
+
+      if (n) {
+        var findings = el('div', 'aifindings');
+        findings.appendChild(el('h4', null, n === 1 ? 'One finding' : n + ' findings'));
+        for (var f = 0; f < n; f++) findings.appendChild(renderAiFinding(review, review.findings[f]));
+        box.appendChild(findings);
+      }
+      return box;
+    }
+
+    function renderAiFinding(review, finding) {
+      var box = el('div', 'aifinding' + (finding.resolved || finding.outdated ? ' done' : ''));
+      var at = el('div', 'aiat');
+      if (finding.agent) at.appendChild(el('span', 'aitag', finding.agent));
+      var where = finding.line ? finding.path + ':' + finding.line : finding.path;
+      if (fileByPath()[finding.path]) {
+        var go = fileLink(finding.path);
+        go.textContent = where;
+        at.appendChild(go);
+      } else {
+        at.appendChild(el('code', null, where));
+      }
+      if (finding.resolved) at.appendChild(el('span', 'aitag', 'resolved'));
+      if (finding.outdated) at.appendChild(el('span', 'aitag old', 'outdated'));
+      if (finding.folded) {
+        var folded = el('span', 'aitag', 'in the review\u2019s body');
+        folded.dataset.tip = 'GitHub refused this as a line comment, so it went in the review\u2019s text';
+        at.appendChild(folded);
+      }
+      at.appendChild(el('span', 'grow'));
+      if (finding.url && !finding.folded) at.appendChild(openOnGitHub(finding.url));
+      box.appendChild(at);
+      var prose = el('div', 'prose');
+      renderMarkdown(prose, finding.body || '');
+      box.appendChild(prose);
+      for (var r = 0; r < (finding.replies || []).length; r++) {
+        var reply = finding.replies[r];
+        var line = el('div', 'aireply');
+        line.appendChild(el('b', null, reply.author + ': '));
+        var said = el('span', 'prose');
+        inline(said, reply.body);
+        line.appendChild(said);
+        box.appendChild(line);
+      }
+      box.appendChild(aiFollowUps(review, finding));
+      return box;
+    }
+
+    // The turns asked about one point, the one being answered, and the box to
+    // ask the next. One turn of the conversation runs at a time, wherever it
+    // was asked, so every box waits while one is answered.
+    function aiFollowUps(review, finding) {
+      var id = finding ? finding.id : review.id;
+      var wrap = el('div', 'aifollow');
+      for (var i = 0; i < chat.messages.length; i++) {
+        var m = chat.messages[i];
+        if (m.about && m.about.id === id) wrap.appendChild(renderChatMessage(m, true));
+      }
+      if (chat.pending && chat.pendingAbout === id) {
+        wrap.appendChild(renderChatMessage({ role: 'user', text: chat.pending }, true));
+        var busy = el('div', 'msg wait');
+        busy.appendChild(spinner());
+        busy.appendChild(el('span', null, 'checking it against the code\u2026'));
+        wrap.appendChild(busy);
+      }
+      var row = el('div', 'qa-ask askrow');
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.maxLength = 2000;
+      input.placeholder = finding ? 'Ask a follow-up about this finding\u2026' : 'Ask a follow-up about this review\u2026';
+      input.setAttribute('aria-label', finding ? 'Your follow-up about this finding' : 'Your follow-up about this review');
+      input.dataset.aiAsk = id;
+      input.value = aiView.drafts[id] || '';
+      var go = el('button', 'quiet', 'Ask');
+      go.type = 'button';
+      go.disabled = chat.busy;
+      if (chat.busy) go.dataset.tip = 'Once the question being answered is';
+      input.addEventListener('input', function onEdit() { aiView.drafts[id] = input.value; });
+      input.addEventListener('keydown', function onKey(ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); sendAiFollowUp(review, finding); }
+      });
+      go.addEventListener('click', function onAsk() { sendAiFollowUp(review, finding); });
+      row.appendChild(input);
+      row.appendChild(go);
+      if (aiView.error && aiView.error.id === id) row.appendChild(el('p', 'askerr', aiView.error.error));
+      wrap.appendChild(row);
+      return wrap;
+    }
+
+    async function sendAiFollowUp(review, finding) {
+      var id = finding ? finding.id : review.id;
+      var text = (aiView.drafts[id] || '').trim();
+      if (!text || chat.busy) return;
+      chat.pending = text;
+      chat.pendingAbout = id;
+      chat.busy = true;
+      chat.error = null;
+      aiView.error = null;
+      aiView.drafts[id] = '';
+      render();
+      renderChat();
+      await settleChat(
+        api('POST', '/reviews/' + state.session + '/chat', { question: text, about: { review: review.id, finding: finding ? finding.id : null } })
+          .then(function started(res) { return pollAnswer(res.askId); }));
+    }
+
     // Explicit per-entry choices only, keyed by GitHub's id. An entry absent
     // from here follows the default, so the newest bot comment stays open as
     // new ones arrive and the one it replaces folds away.
@@ -3753,13 +4208,29 @@ ${DARK_PALETTE}
 
     // The whole header toggles, except the buttons and links on it, which
     // keep doing their own job.
+    // A disclosure for the keyboard too: it takes the focus, says whether it is
+    // open, and Enter or Space folds it, keeping the focus on it after the render.
     function foldable(head, id, open) {
       head.classList.add('toggles');
       head.insertBefore(el('span', 'caret', open ? '\\u25be' : '\\u25b8'), head.firstChild);
-      head.addEventListener('click', function onFold(ev) {
-        if (ev.target.closest('button, a')) return;
+      head.tabIndex = 0;
+      head.setAttribute('role', 'button');
+      head.setAttribute('aria-expanded', open ? 'true' : 'false');
+      head.dataset.fold = id;
+      function fold() {
         saidOpen[id] = !open;
         render();
+        var again = document.querySelector('[data-fold="' + CSS.escape(id) + '"]');
+        if (again) again.focus({ preventScroll: true });
+      }
+      head.addEventListener('click', function onFold(ev) {
+        if (ev.target.closest('button, a')) return;
+        fold();
+      });
+      head.addEventListener('keydown', function onKey(ev) {
+        if (ev.target !== head || (ev.key !== 'Enter' && ev.key !== ' ')) return;
+        ev.preventDefault();
+        fold();
       });
     }
 
@@ -3843,13 +4314,21 @@ ${DARK_PALETTE}
         live.insertBefore(offer, again);
       }
 
-      again.addEventListener('click', function onAgain() {
+      // auto is the page following the pull request on its own (followPullRequest), not a press: a worktree review
+      // then asks to be taken again only if the commit moved, and an unmoved one says nothing and offers nothing.
+      function takeAgain(auto) {
         again.disabled = true;
-        again.textContent = 'reading\\u2026';
+        again.textContent = auto ? 'new commits, reading\\u2026' : 'reading\\u2026';
         if (note) { note.remove(); note = null; }
         if (offer) { offer.remove(); offer = null; }
-        api('POST', '/reviews/' + state.session + opts.path, {})
+        var follow = auto && !opts.path ? '?follow=1' : '';
+        api('POST', '/reviews/' + state.session + opts.path + follow, {})
           .then(function (data) {
+            if (data && data.unchanged && auto) {
+              again.disabled = false;
+              again.textContent = 'Re-review';
+              return;
+            }
             // No new commits: nothing was rebuilt and no run was paid for, so
             // reloading would redraw the same page and read as a button that
             // did nothing. Say so, and offer the other thing instead.
@@ -3867,7 +4346,9 @@ ${DARK_PALETTE}
           .catch(function (err) {
             say('bad', err && err.message ? err.message : 'failed');
           });
-      });
+      }
+      again.addEventListener('click', function onAgain() { takeAgain(false); });
+      reReviewNow = takeAgain;
       live.appendChild(again);
 
       var discard = el('button', 'quiet', 'Discard');
@@ -4570,6 +5051,12 @@ ${DARK_PALETTE}
       function send(mode, button) {
         var text = area.value.trim();
         if (!text) return close();
+        // The lines are this diff's: on another commit GitHub would put the comment on whatever is there now.
+        if (draft.headSha && state.headSha && draft.headSha !== state.headSha) {
+          problem.textContent = 'The pull request has new commits, and the review is being taken again. '
+            + 'Your comment is kept here: send it once the new diff is on screen.';
+          return;
+        }
         button.disabled = true;
         problem.textContent = '';
         api('POST', '/reviews/' + state.session + '/comments', {
@@ -5136,7 +5623,7 @@ ${DARK_PALETTE}
     // reload mid-answer picks the poll back up from the askId the server
     // reports and shows the question where it was.
 
-    var chat = { messages: [], pending: null, busy: false, error: null, open: false, loaded: false };
+    var chat = { messages: [], pending: null, pendingAbout: null, busy: false, error: null, open: false, loaded: false, loading: false };
 
     function chatEls() {
       return {
@@ -5162,7 +5649,7 @@ ${DARK_PALETTE}
         els.log.appendChild(hint);
       }
       for (var i = 0; i < chat.messages.length; i++) els.log.appendChild(renderChatMessage(chat.messages[i]));
-      if (chat.pending) els.log.appendChild(renderChatMessage({ role: 'user', text: chat.pending }));
+      if (chat.pending) els.log.appendChild(renderChatMessage({ role: 'user', text: chat.pending, about: chat.pendingAbout ? { label: 'an AI review' } : null }));
       if (chat.busy) {
         var busy = el('div', 'msg wait');
         busy.appendChild(spinner());
@@ -5225,8 +5712,15 @@ ${DARK_PALETTE}
       sendChat();
     }
 
-    function renderChatMessage(m) {
-      if (m.role !== 'assistant') return el('div', 'msg user', m.text);
+    // Drawn with here set under the point it is about, on the AI reviews tab, which
+    // says what it is about already.
+    function renderChatMessage(m, here) {
+      if (m.role !== 'assistant') {
+        var mine = el('div', 'msg user');
+        if (m.about && m.about.label && !here) mine.appendChild(el('span', 'about', 'About ' + m.about.label));
+        mine.appendChild(document.createTextNode(m.text));
+        return mine;
+      }
       var box = el('div', 'msg bot');
       var body = el('div', 'prose');
       renderMarkdown(body, m.text || '');
@@ -5260,14 +5754,22 @@ ${DARK_PALETTE}
         var got = await api('GET', '/reviews/' + state.session + '/chat');
         chat.messages = got.messages || [];
       } catch (e) {
-        chat.error = e.message;
-        // The question goes back into the box: a failed turn is not on the
-        // record, and retyping it is the one thing this must not cost.
-        if (chat.pending) chatEls().input.value = chat.pending;
+        // The question goes back into the box it was asked in: a failed turn
+        // is not on the record, and retyping it is the one thing this must not
+        // cost. A follow-up on an AI review was asked on that tab, not here.
+        if (chat.pendingAbout) {
+          if (chat.pending && !aiView.drafts[chat.pendingAbout]) aiView.drafts[chat.pendingAbout] = chat.pending;
+          aiView.error = { id: chat.pendingAbout, error: 'Not answered: ' + e.message };
+        } else {
+          chat.error = e.message;
+          if (chat.pending) chatEls().input.value = chat.pending;
+        }
       }
       chat.busy = false;
       chat.pending = null;
+      chat.pendingAbout = null;
       renderChat();
+      if (state.tab === 'ai') render();
     }
 
     async function sendChat() {
@@ -5695,6 +6197,8 @@ ${DARK_PALETTE}
       // request hours later, from that same session.
       state.livePr = got.livePr || null;
       draftLoading = !!state.livePr;
+      // The session's reviews, its checkout's and one for each other pull request it opened, when its host lists them.
+      state.reviews = Array.isArray(got.reviews) ? got.reviews : null;
       // The commit this review read. Merging is offered only while the pull
       // request is still at it.
       state.headSha = got.headSha || null;
@@ -5729,7 +6233,9 @@ ${DARK_PALETTE}
         .then(function settled() {
           draftLoading = false;
           render();
+          followPullRequest();
         });
+      watchPullRequest();
       if (state.status === 'running' || state.status === 'queued') schedulePoll();
     }
 
@@ -5742,7 +6248,17 @@ ${DARK_PALETTE}
         await loadReview(session);
         initChat();
       } catch (e) {
+        if (e.review && e.review !== session && REVIEW_NAME_RE.test(e.review)) {
+          window.location.replace(reviewHref(e.review));
+          return;
+        }
         showError(e.message);
+        // The checkout may have nothing to review (it went back to the default branch) while the session's pull
+        // requests do: offer them rather than leave the page at the error.
+        var content = document.getElementById('content');
+        content.replaceChildren();
+        var others = renderReviewSwitch(e.reviews, session);
+        if (others) content.appendChild(others);
       }
     }
 
@@ -5819,7 +6335,7 @@ ${DARK_PALETTE}
     state.tab = tabFromUrl(initialUrl.searchParams.get('tab')) || state.tab;
 
     var initialSession = initialUrl.searchParams.get('session');
-    if (initialSession && /^claude-[0-9a-f]{8}$/.test(initialSession)) openSession(initialSession);
+    if (initialSession && REVIEW_NAME_RE.test(initialSession)) openSession(initialSession);
     else renderEmptyState();
   </script>
 </body>

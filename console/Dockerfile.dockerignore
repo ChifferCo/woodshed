@@ -3,6 +3,7 @@
 !woodshed/shared/**
 !woodshed/providers/**/*.mjs
 !woodshed/session/tmux.conf
+!woodshed/desktop/attention.mjs
 woodshed/console/**/*.test.mjs
 woodshed/shared/**/*.test.mjs
 woodshed/shared/**/__fixtures__

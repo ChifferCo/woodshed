@@ -212,7 +212,7 @@ function writeFiles(dir, files) {
  * A bare remote with the default branch, and a checkout on `branch` one commit ahead of it. `remote` names the bare
  * repo's folder: under github.com/<owner>/<name>.git, the shed reads its slug from it as from a GitHub remote.
  */
-function makeCheckout(root, branch, defaultBranch, remote = path.join(root, 'remote.git')) {
+function makeCheckout(root, branch, defaultBranch, remote = path.join(root, 'remote.git'), earlier = null) {
   fs.mkdirSync(path.dirname(remote), { recursive: true });
   const repo = path.join(root, 'repo');
   const git = (...args) => execFileSync('git', [...AUTHOR, '-C', repo, ...args], { stdio: 'pipe' });
@@ -224,15 +224,37 @@ function makeCheckout(root, branch, defaultBranch, remote = path.join(root, 'rem
   git('remote', 'add', 'origin', remote);
   git('push', '-q', 'origin', defaultBranch);
   git('remote', 'set-head', 'origin', defaultBranch);
+  // An earlier pull request of the session's, on a branch of its own off the default branch, pushed with the ref
+  // GitHub publishes for it, and no longer checked out.
+  let earlierSha = null;
+  if (earlier) {
+    git('checkout', '-q', '-b', earlier.branch);
+    writeFiles(repo, EARLIER);
+    git('add', '-A');
+    git('commit', '-q', '-m', earlier.title);
+    git('push', '-q', 'origin', earlier.branch, `${earlier.branch}:refs/pull/${earlier.number}/head`);
+    earlierSha = git('rev-parse', 'HEAD').toString().trim();
+    git('checkout', '-q', defaultBranch);
+  }
   git('checkout', '-q', '-b', branch);
   writeFiles(repo, AFTER);
   git('add', '-A');
   git('commit', '-q', '-m', 'Retry webhook deliveries with backoff');
-  return repo;
+  return { repo, earlierSha };
 }
 
+// What the session's earlier pull request changed: the webhook docs.
+const EARLIER = {
+  'docs/webhooks.md': `# Webhooks
+
+Each event is POSTed once to every subscriber, with its id in \`x-event-id\`. A subscriber that does not answer 2xx misses
+the event, so answer 2xx as soon as the event is stored, and do the work afterwards.
+`,
+};
+
 /**
- * @param {{id: string, branch: string, pr?: {number: number, title: string, login: string, slug: string}|null}} opts
+ * @param {{id: string, branch: string, pr?: {number: number, title: string, login: string, slug: string,
+ *          earlier?: {number: number, branch: string, title: string}|null}|null}} opts
  *   the made-up session's id and branch. With `pr`, the session is its person's own (`login`) and its branch has that
  *   open pull request on `slug`, answered by a stand-in gh (devReviewGh.mjs) put first on this process's PATH, so the
  *   review's comment, verdict, rename and merge run; without it, the review is a shared session's, read-only, as before.
@@ -242,8 +264,10 @@ export async function startDevReview({ id, branch, pr = null }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-review-'));
   // A session's own DEFAULT_BRANCH, when this runs in one, is what the shed diffs against.
   const defaultBranch = process.env.DEFAULT_BRANCH || 'main';
-  const repo = makeCheckout(root, branch, defaultBranch, pr ? path.join(root, 'github.com', `${pr.slug}.git`) : undefined);
-  const gh = pr ? writeDevReviewGh(path.join(root, 'gh'), { repo, branch, base: defaultBranch, ...pr }) : null;
+  const earlier = pr?.earlier ?? null;
+  const { repo, earlierSha } = makeCheckout(root, branch, defaultBranch, pr ? path.join(root, 'github.com', `${pr.slug}.git`) : undefined, earlier);
+  const others = earlier ? [{ ...earlier, sha: earlierSha, body: 'Says what a subscriber should answer, and when.', additions: 2, deletions: 1, changedFiles: 1 }] : [];
+  const gh = pr ? writeDevReviewGh(path.join(root, 'gh'), { repo, branch, base: defaultBranch, ...pr, others }) : null;
   if (gh) process.env.PATH = [gh.dir, process.env.PATH].join(path.delimiter);
   // The shed's store reads this when it loads, so before the host is imported.
   process.env.WOODSHED_REVIEWS = path.join(root, 'reviews');
@@ -252,7 +276,9 @@ export async function startDevReview({ id, branch, pr = null }) {
   // On disk before the first open, which then reads it as the finished analysis (restoreState).
   fs.writeFileSync(path.join(sessionDir, 'review.json'), JSON.stringify(ARTIFACT));
   const { createReviewHost } = await import('../../session/reviewShed/host.mjs');
-  const host = createReviewHost({ repoDir: repo, sessionId: id, sessionKind: pr ? 'private' : 'shared' });
+  const host = createReviewHost({
+    repoDir: repo, sessionId: id, sessionKind: pr ? 'private' : 'shared', pullWorktreesDir: path.join(root, 'review-worktrees'),
+  });
   const server = http.createServer((req, res) => {
     host.handle(req, res).then((done) => {
       if (done) return;

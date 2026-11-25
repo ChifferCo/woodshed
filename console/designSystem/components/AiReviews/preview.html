@@ -1,0 +1,65 @@
+<!-- @dsCard group="Review" height=760 subtitle="The merge risk and QA, Claude Code's and Codex's review of a pull request, its findings, and a follow-up checked against the code" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
+ .intro{max-width:640px;margin:0 0 12px;font-size:13px;line-height:1.55;color:var(--meta)}
+ .box{max-width:640px;border:1px solid var(--line-soft);border-left:3px solid var(--bad);border-radius:5px;background:var(--ground);margin-bottom:12px}
+ .box.folded{border-left-color:var(--line)}
+ .head{display:flex;align-items:center;gap:7px;padding:7px 11px;background:var(--stopped);border-bottom:1px solid var(--line-soft);font:600 11.5px/1.6 "Red Hat Display",system-ui,sans-serif;color:var(--meta)}
+ .box.folded .head{border-bottom:0}
+ .caret{font-size:9px;width:10px}
+ .who{color:var(--ink)}
+ .verdict{font:600 9.5px/1.6 "JetBrains Mono",monospace;letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--line);border-radius:3px;padding:0 5px}
+ .verdict.bad{color:var(--bad);border-color:var(--bad)}.verdict.good{color:var(--green);border-color:var(--green)}
+ .tag{font:600 9.5px/1.6 "JetBrains Mono",monospace;color:var(--meta);border:1px solid var(--line-soft);border-radius:3px;padding:0 5px;background:var(--ground)}
+ .tag.old{color:var(--amber-ink);border-color:var(--amber-ink)}
+ .grow{flex:1}.link{color:var(--slate);font-weight:500}
+ .part{padding:9px 11px 3px;font-size:13.5px;line-height:1.55}
+ .part+.part{border-top:1px dashed var(--line-soft)}
+ .pwho{display:flex;gap:6px;align-items:center;font-weight:600;font-size:12px;margin-bottom:4px}
+ .part p{margin:0 0 6px}
+ code{font:500 .85em "JetBrains Mono",monospace;background:var(--line-soft);border-radius:4px;padding:1px 4px}
+ .finds{border-top:1px solid var(--line-soft);padding:8px 11px 11px}
+ .finds h4{margin:2px 0 8px;font-size:12px;font-weight:600;color:var(--meta)}
+ .card{border:1px solid var(--line-soft);border-radius:5px;padding:8px 10px;margin-bottom:9px;font-size:13.5px;line-height:1.55}
+ .card.done{border-style:dashed}
+ .at{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:4px;font-size:12px;color:var(--meta)}
+ .file{font:500 12px "JetBrains Mono",monospace;color:var(--slate);border:1px solid var(--line);border-radius:4px;padding:2px 7px}
+ .card p{margin:0}
+ .reply{margin:6px 0 0 12px;padding-left:9px;border-left:2px solid var(--line-soft);font-size:13px;color:var(--meta)}
+ .reply b{color:var(--ink)}
+ .you{margin:8px 0 6px;padding:7px 10px;border-radius:8px 8px 2px 8px;background:var(--stopped);border:1px solid var(--line-soft)}
+ .ans{border-left:2px solid var(--amber);padding-left:9px}
+ .ask{display:flex;gap:6px;margin-top:8px}
+ .ask input{flex:1;min-width:0;padding:6px 8px;font:13px "Red Hat Display",system-ui,sans-serif;border:1px solid var(--line);border-radius:4px;background:var(--ground);color:var(--ink)}
+ .checks{max-width:640px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:0 12px}
+ .box.risk{border-left-color:var(--amber-ink)}.box.pass{border-left-color:var(--green)}
+ .verdict.warn{color:var(--amber-ink);border-color:var(--amber-ink)}
+ .title{padding:7px 11px;font-size:13.5px;line-height:1.55}
+ .more{border-top:1px solid var(--line-soft);padding:5px 11px 7px;font-weight:600;font-size:12px;color:var(--meta)}
+ .ask button{font:500 13px "Red Hat Display",system-ui,sans-serif;padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--slate)}
+</style>
+<div class="checks">
+ <div class="box risk"><div class="head"><span class="who">Merge risk</span><span class="verdict warn">medium</span><span class="tag">latest commit</span><span class="grow"></span><span class="link">Open on GitHub</span></div>
+  <div class="title">Retries change how every webhook is delivered</div><div class="more">▸ Details</div></div>
+ <div class="box pass"><div class="head"><span class="who">QA</span><span class="verdict good">passed</span><span class="tag">latest commit</span><span class="grow"></span><span class="link">Open on GitHub</span></div>
+  <div class="title">3 of 3 test cases passed</div><div class="more">▸ Details</div></div>
+</div>
+<p class="intro">What Claude Code and Codex said about this pull request, newest first. Ask a follow-up on any finding, or on a review as a whole: the session’s agent checks the point against the code and answers here.</p>
+<div class="box">
+ <div class="head"><span class="caret">▾</span><span class="who">Claude Code and Codex</span><span class="verdict bad">requests changes</span><span class="tag">latest commit</span><span class="tag">2 findings</span><span class="grow"></span><span class="link">Open on GitHub</span></div>
+ <div class="part"><div class="pwho">Claude Code <span class="verdict good">approves</span></div><p>The retry policy is small and tested.</p></div>
+ <div class="part"><div class="pwho">Codex <span class="verdict bad">requests changes</span></div><p>Nothing caps the total time a delivery can take.</p></div>
+ <div class="finds"><h4>2 findings</h4>
+  <div class="card"><div class="at"><span class="tag">Codex</span><span class="file">src/webhooks/deliver.mjs:14</span><span class="grow"></span><span class="link">Reply on GitHub</span></div>
+   <p>Each attempt waits up to <code>config.timeoutMs</code>: cap the whole delivery.</p>
+   <div class="reply"><b>octocat:</b> The worker has its own deadline, I think?</div>
+   <div class="you">Is this real? Does anything cap the whole delivery?</div>
+   <div class="ans"><p><b>It holds.</b> The only bounds are per step, at <code>deliver.mjs:18</code> and <code>:27</code>.</p></div>
+   <div class="ask"><input placeholder="Ask a follow-up about this finding…"><button>Ask</button></div></div>
+  <div class="card done"><div class="at"><span class="tag">Claude Code</span><span class="file">src/webhooks/retry.mjs:3</span><span class="tag">resolved</span><span class="grow"></span><span class="link">Reply on GitHub</span></div>
+   <p>408 is retried; a subscriber that answers 408 on purpose is called five times.</p>
+   <div class="ask"><input placeholder="Ask a follow-up about this finding…"><button>Ask</button></div></div>
+ </div>
+</div>
+<div class="box folded"><div class="head"><span class="caret">▸</span><span class="who">Claude Code</span><span class="verdict">comments</span><span class="tag">dismissed</span><span class="tag old">older commit 3f2c9a1</span><span class="tag">0 findings</span><span class="grow"></span><span class="link">Open on GitHub</span></div></div>

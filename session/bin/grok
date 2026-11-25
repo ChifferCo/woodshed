@@ -1,0 +1,16 @@
+#!/bin/bash
+# grok (Grok Build), on its owner's own sign-in (configureGrok in entrypoint.sh). A login is in ~/.grok/auth.json
+# already; an xAI key is handed to grok alone, in XAI_API_KEY, from the 0600 file the entrypoint kept: never exported to
+# the session's shell, nor to the Terminal tab. grok's own commands do inherit it, as codex's own key file is readable by
+# what codex runs: it is the owner's own key, in their own private session.
+set -euo pipefail
+
+real=${WOODSHED_REAL_GROK:-/usr/local/bin/grok}
+auth=${WOODSHED_AGENT_AUTH_FILE:-$HOME/.config/woodshed/agent-auth}
+if [ -s "$auth" ] && [[ "$(head -c 4 "$auth")" == xai- ]]; then
+  XAI_API_KEY=$(cat "$auth")
+  export XAI_API_KEY
+fi
+# Never updating itself, and sending nothing to xAI's telemetry (its config.toml says the same).
+export GROK_DISABLE_AUTOUPDATER=1 GROK_TELEMETRY_ENABLED=0
+exec "$real" "$@"

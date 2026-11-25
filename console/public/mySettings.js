@@ -70,57 +70,9 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     render();
   }
 
-  // The page is groups of rows (designSystem/components/SettingsRows): a row says a setting's name, what it is now and
-  // its status word, and opens in place on its form. Several may be open at once; which are is kept for the page's
-  // life, since it is drawn again on each answer. A link or the search that names a row opens it.
-  const open = new Set();
-  if (window.location.hash) open.add(window.location.hash.slice(1));
-
-  function toggle(id) {
-    if (open.has(id)) open.delete(id);
-    else open.add(id);
-    render();
-  }
-
-  /**
-   * One row. With nothing in `body` it is a plain line: there is nothing to open.
-   * `opens` is for a row whose body is drawn only while it is open (a repo's, which is read then).
-   * @param {{id: string, title: string, value?: *, pill?: *, danger?: boolean, opens?: boolean, onOpen?: () => void}} row
-   */
-  function row({ id, title, value, pill, danger = false, opens = false, onOpen }, ...body) {
-    const parts = body.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false);
-    const text = h('span', { class: 'set-fold-text' }, h('span', { class: 'set-name' }, title), value && h('span', { class: 'set-help' }, value));
-    if (!parts.length && !opens) return h('section', { class: 'set-fold is-plain', id }, h('div', { class: 'set-fold-head' }, text, pill));
-    const isOpen = open.has(id);
-    return h('section', { class: `set-fold${isOpen ? ' is-open' : ''}${danger ? ' is-danger' : ''}`, id },
-      // Its id is what gives the button its focus back after the redraw that opens or closes it (render).
-      h('h3', { class: 'set-fold-h' }, h('button', {
-        type: 'button', class: 'set-fold-head', id: `${id}-head`, 'aria-expanded': String(isOpen), 'aria-controls': `${id}-body`,
-        // Told before the draw that opens it, so what it sets (a repo to read again) is drawn.
-        onclick: () => { if (!open.has(id)) onOpen?.(); toggle(id); },
-      }, text, pill, h('span', { class: 'set-fold-chev', 'aria-hidden': 'true' }, '▸'))),
-      isOpen && h('div', { class: 'set-fold-body', id: `${id}-body` }, parts));
-  }
-
-  /** A row whose control is on the row itself: nothing to open. */
-  function line(name, help, control, attrs = {}) {
-    return h('section', { class: 'set-line', ...attrs }, h('div', null, h('div', { class: 'set-name' }, name), h('div', { class: 'set-help' }, help)), h('div', { class: 'set-value' }, control));
-  }
-
-  /** A group of rows under its label. Rows that are not drawn (null) are left out, and a group with none is too. */
-  function group({ id, label, note }, ...rows) {
-    const drawn = rows.flat(Infinity).filter(Boolean);
-    if (!drawn.length) return null;
-    return h('div', { class: 'set-group', id },
-      label && h('h2', { class: 'set-group-label' }, label),
-      note && h('div', { class: 'set-group-note' }, note),
-      h('div', { class: 'set-rows-box' }, drawn));
-  }
-
-  // Commands a person needs again after the first time stay under a fold (designSystem/README.md, "Commands to copy").
-  function howTo(summary, ...body) {
-    return h('details', { class: 'set-how' }, h('summary', null, summary), body);
-  }
+  // The page is groups of rows (settingsRows.js): which are open is kept for the page's life, since it is drawn again
+  // on each answer. A link or the search that names a row opens it.
+  const { open, row, line, group, howTo } = window.WoodshedSettingsRows.create({ render });
 
   function change(path, body, done, working) {
     return act({
@@ -184,6 +136,68 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       codexReviewsSwitch(),
       !me.available && h('p', { class: 'form-note is-error' }, 'This console has no secrets manager yet, so nothing can be saved here. ', h('a', { href: '/secrets' }, 'Choose one on the Secrets page.')),
       codexStatus);
+  }
+
+  // Grok Build and OpenCode: each runs only on its owner's own sign-in (shared/agents.cjs), saved here as
+  // users/<login>/<agent>-auth and handed to that person's own My Woodshed sessions alone. One card each, from the
+  // registry's words. Their boxes and notes are made once and kept across draws, as Codex's are.
+  const A = window.WoodshedAgents;
+  const agentInputs = Object.fromEntries(A.OWN_SIGN_IN_AGENTS.map((id) => [id, h('textarea', {
+    id: `${id}-auth`, class: 'field mono', rows: '3', autocomplete: 'off', spellcheck: 'false', placeholder: A.agent(id).signIn.placeholder,
+  })]));
+  const agentStatus = Object.fromEntries(A.OWN_SIGN_IN_AGENTS.map((id) => [id, h('p', { class: 'form-note', role: 'status' })]));
+
+  function agentChange(id, path, body, done, working) {
+    return act({ card: id, note: agentStatus[id], working, done, call: async () => { me = await W.postJson(path, body); agentInputs[id].value = ''; loadReviews(); } });
+  }
+
+  // Whether reviews of your pull requests may run this agent on your sign-in, when you pick it under Reviews of my pull
+  // requests: Codex's switch, for an agent with no team key. On once a sign-in is saved, unless turned off; the console
+  // adds the sign-in to the agent's calls (console/reviewAgentProxy.mjs), never into the review session.
+  function agentReviewsSwitch(id) {
+    const a = A.agent(id);
+    if (!a.reviews) return null;
+    const saved = Boolean(me.agentAuth?.[id]?.set);
+    const on = Boolean(saved && me.ownAgentForReviews?.[id]);
+    const what = id === 'opencode' ? 'your Anthropic or OpenAI API key, of those saved here' : 'your sign-in';
+    return h('div', { class: `toggle-row${on ? '' : ' is-off'}` },
+      h('button', {
+        type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': `${id}-reviews-label`, disabled: !saved || !me.available || busy.has(id),
+        onclick: () => agentChange(id, `/api/my/agent-auth/${id}/reviews`, { on: !on }, on ? `Off: ${a.name} does not review your pull requests.` : `On: pick ${a.name} under Reviews of my pull requests to have it review them.`),
+      }),
+      h('span', { class: 'toggle-label', id: `${id}-reviews-label` }, 'Also use it for reviews of my pull requests'),
+      h('p', { class: 'sub' }, on
+        ? `On: when you pick ${a.name} under Reviews of my pull requests, it reviews the pull requests you open on ${what}. The console adds it to ${a.name}\u2019s calls; it never goes into the review session.${a.signIn.rotates && id === 'grok' ? ' A login that has expired is not used: a Grok session of yours refreshes it.' : ''}`
+        : `Off: ${a.name} never reviews your pull requests. There is no team key for it.`),
+      !saved && h('p', { class: 'why-off' }, 'Save a sign-in above to turn this on.'));
+  }
+
+  function agentCard(id) {
+    const a = A.agent(id);
+    const saved = me.agentAuth?.[id];
+    const set = Boolean(saved?.set);
+    const pill = set ? h('span', { class: 'pill is-ok' }, `Saved ${W.when(saved.savedAt)}`) : h('span', { class: 'pill' }, 'Not set');
+    const how = [
+      steps(...a.signIn.steps, { text: `Paste it below and press Save.${a.signIn.rotates ? ` A login ${a.product} refreshes is saved back when a session stops.` : ''}` }),
+    ];
+    return row({
+      id, title: a.product, pill,
+      value: set ? `Your own sign-in, for ${a.name} sessions${a.reviews && me.ownAgentForReviews?.[id] ? ' and, when you pick it, reviews of your pull requests' : ''}` :`Save ${a.signIn.kinds}, and New session offers ${a.name}`,
+    },
+      h('p', { class: 'sub' }, `Choose ${a.name} as the agent in New session. It runs only on your own sign-in, handed to your own My Woodshed sessions and nobody else’s: ${a.name} never runs in a shared session.${a.reviews ? ` It can review your own pull requests, below, without the sign-in ever entering the review.` : ''}`),
+      set ? howTo('How to get a sign-in', how) : how,
+      h('label', { class: 'field-label', for: `${id}-auth` }, h('span', null, set ? 'Replace the sign-in' : 'Paste your sign-in')),
+      agentInputs[id],
+      h('div', { class: 'set-actions' },
+        h('button', { type: 'button', class: 'btn btn-open', disabled: !me.available || busy.has(id), onclick: () => agentChange(id, `/api/my/agent-auth/${id}`, { value: agentInputs[id].value }, `Saved. Your next ${a.name} session uses it.`) }, 'Save'),
+        set && h('button', {
+          type: 'button', class: 'btn btn-quiet', disabled: busy.has(id), onclick: () => {
+            if (window.confirm(`Remove your ${a.product} sign-in? New ${a.name} sessions are refused until you save one again.`)) agentChange(id, `/api/my/agent-auth/${id}/remove`, {}, 'Removed.', 'Removing…');
+          },
+        }, 'Remove')),
+      agentReviewsSwitch(id),
+      !me.available && h('p', { class: 'form-note is-error' }, 'This console has no secrets manager yet, so nothing can be saved here. ', h('a', { href: '/secrets' }, 'Choose one on the Secrets page.')),
+      agentStatus[id]);
   }
 
   // Whether reviews of your pull requests run Codex on your sign-in, when an admin has Codex review beside Claude Code.
@@ -752,13 +766,12 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
         viewRow('phone', 'Sessions on a phone', 'The same for a narrow window, under 720px wide.'));
   }
 
-  // Who reviews the pull requests you open (console/reviewAgents.mjs), as a grid: Claude Code and Codex on their own
-  // rows, Off and On across the top (designSystem/components/OnOffGrid). Both on is both, both off is no code review.
-  // On is offered only while the team's key or your own sign-in can run it; with nothing saved, the most there is runs.
-  // A pick saves at once.
+  // Who reviews the pull requests you open (console/reviewAgents.mjs), as a grid: each agent that reviews on its own row
+  // (shared/agents.cjs), Off and On across the top (designSystem/components/OnOffGrid). Several on is all of them, all
+  // off is no code review. On is offered only while the team's key or your own sign-in can run it: Grok Build and
+  // OpenCode have no team key. With nothing saved, the most of Claude Code and Codex runs. A pick saves at once.
   let reviews = null;
   const reviewStatus = h('p', { class: 'form-note', role: 'status' });
-  const AGENTS_OF = { none: [], claude: ['claude'], codex: ['codex'], both: ['claude', 'codex'] };
   let reviewsLoaded = false;
   const loadReviews = () => W.getJson('/api/my/reviews').then((answer) => { reviews = answer; }, () => {}).finally(() => { reviewsLoaded = true; if (me) render(); });
 
@@ -768,27 +781,31 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
 
   function reviewsCard() {
     if (!reviews) return null;
-    const { available, best, choice } = reviews;
-    const on = new Set(AGENTS_OF[choice ?? best] ?? []);
-    const rows = [
-      ['claude', 'Claude Code', 'Needs a Claude token (Sign-ins), or the team\u2019s Anthropic key.'],
-      ['codex', 'Codex', 'Needs a Codex sign-in (Sign-ins), or the team\u2019s OpenAI key.'],
-    ];
+    const { available, best, choice, ownWhy = {} } = reviews;
+    const on = new Set(A.reviewersOf(choice ?? best) ?? []);
+    const needs = {
+      claude: 'Needs a Claude token (Sign-ins), or the team\u2019s Anthropic key.',
+      codex: 'Needs a Codex sign-in (Sign-ins), or the team\u2019s OpenAI key.',
+      grok: 'Needs your Grok Build sign-in (Sign-ins), on for reviews. There is no team key for it.',
+      opencode: 'Needs an Anthropic or OpenAI API key in your OpenCode sign-ins (Sign-ins), on for reviews. There is no team key for it.',
+    };
+    const rows = A.REVIEW_AGENT_IDS.map((id) => [id, A.agent(id).product, ownWhy[id] ? `${ownWhy[id].replace(/^the author's/, 'Your')}.` : needs[id]]);
     const pick = (agent, value) => {
       const next = new Set(on);
       if (value) next.add(agent); else next.delete(agent);
-      const chosen = next.has('claude') && next.has('codex') ? 'both' : next.has('claude') ? 'claude' : next.has('codex') ? 'codex' : 'none';
-      saveReviews(chosen, 'Saved. It applies to the next review.');
+      saveReviews(A.reviewChoiceOf([...next]), 'Saved. It applies to the next review.');
     };
     const radio = (agent, label, value) => h('input', {
       type: 'radio', name: `reviews-${agent}`, value: value ? 'on' : 'off', checked: on.has(agent) === value,
       disabled: busy.has('reviews') || (value && !available[agent]), 'aria-label': `${label} ${value ? 'on' : 'off'}`,
       onchange: () => pick(agent, value),
     });
-    const cantRun = choice && AGENTS_OF[choice].some((a) => !available[a]);
-    const who = on.has('claude') && on.has('codex') ? 'Claude Code and Codex both review' : on.has('claude') ? 'Claude Code reviews' : on.has('codex') ? 'Codex reviews' : 'No code review of';
+    const cantRun = choice && (A.reviewersOf(choice) ?? []).some((a) => !available[a]);
+    const names = A.REVIEW_AGENT_IDS.filter((id) => on.has(id)).map((id) => A.agent(id).product);
+    const listed = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
+    const who = !names.length ? 'No code review of' : names.length === 2 ? `${listed} both review` : names.length > 2 ? `${listed} all review` : `${listed} reviews`;
     return row({ id: 'my-reviews', title: 'Reviews of my pull requests', pill: h('span', { class: choice ? 'pill is-ok' : 'pill' }, choice ? 'Your own' : 'Default'), value: `${who} the pull requests you open` },
-      h('p', { class: 'sub' }, 'Who reviews a pull request you open, in repos that review with Woodshed sessions. With both on, the stricter verdict wins, so it is approved only when both approve. With both off, there is no code review, and the Slack post and QA go on without one.'),
+      h('p', { class: 'sub' }, 'Who reviews a pull request you open, in repos that review with Woodshed sessions. With several on, the strictest verdict wins, so it is approved only when all of them approve. With all off, there is no code review, and the Slack post and QA go on without one. Grok Build and OpenCode review only on your own sign-in, which the console adds to their calls: it never enters the review.'),
       h('table', { class: 'onoff-grid' },
         h('thead', null, h('tr', null, h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Reviewer')), h('th', { scope: 'col' }, 'Off'), h('th', { scope: 'col' }, 'On'))),
         h('tbody', null, rows.map(([agent, label, needs]) => h('tr', { class: available[agent] ? null : 'is-unavailable' },
@@ -797,7 +814,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
           h('td', null, radio(agent, label, true)))))),
       h('p', { class: 'form-note' }, choice
         ? (cantRun ? 'What you chose cannot all run now, so your reviews get what of it can.' : 'Your own choice. ')
-        : 'Default: the most there is, from your sign-ins and the team\u2019s keys. ',
+        : 'Default: the most of Claude Code and Codex there is, from your sign-ins and the team\u2019s keys. ',
       choice && h('button', { type: 'button', class: 'btn-link', disabled: busy.has('reviews'), onclick: () => saveReviews(null, 'Back to the default.') }, 'Back to the default')),
       reviewStatus);
   }
@@ -875,7 +892,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       // A repo sessions cannot start on is said first: it is what stops the person, whatever else is set.
       blockersCard(),
       // What a new person does first, then how their sessions run, what is kept between them, each repo's own, and the look.
-      group({ id: 'set-signins', label: 'Sign-ins' }, tokenCard(), codexCard(), githubCard(), cliCard()),
+      group({ id: 'set-signins', label: 'Sign-ins' }, tokenCard(), codexCard(), A.OWN_SIGN_IN_AGENTS.map(agentCard), githubCard(), cliCard()),
       group({ id: 'set-sessions', label: 'Sessions' }, projectCard(), terminalCard(), reviewsCard(), limitsCard()),
       group({ id: 'set-kept', label: 'Kept for you' }, databasesCard(), homeCard()),
       group({
@@ -892,9 +909,10 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     repoSettings.afterRender();
   }
 
-  // A link that names a row (the setup card's #claude and #codex, the search's sections, ⇧⌘,'s #my-display) opens it,
-  // scrolls to it once its group is drawn, and puts the caret in the box of the two that have one. Once per page load.
-  const FOCUS = { claude: 'claude-token', codex: 'codex-auth' };
+  // A link that names a row (the setup card's #claude, #codex and the other agents', the search's sections, ⇧⌘,'s
+  // #my-display) opens it, scrolls to it once its group is drawn, and puts the caret in the box of those that have one.
+  // Once per page load.
+  const FOCUS = { claude: 'claude-token', codex: 'codex-auth', ...Object.fromEntries(A.OWN_SIGN_IN_AGENTS.map((id) => [id, `${id}-auth`])) };
   let asked = window.location.hash.slice(1) || null;
   if (new URLSearchParams(window.location.search).get('connected')) open.add('my-github');
   function showAsked() {

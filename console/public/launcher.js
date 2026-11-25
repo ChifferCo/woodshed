@@ -2,7 +2,8 @@
 // optional name and issue, PR or branch,
 // claude's model, effort and permission mode, files attached (the paperclip, a paste or a drop), and the repo's
 // skills on `/`. The session it starts is private to whoever is signed in and
-// runs on their own Claude token or Codex sign-in, so without either the form says where to save it instead. Built once and kept
+// runs on their own Claude token or Codex sign-in, or their own Grok Build or OpenCode sign-in
+// (shared/agents.cjs), so without one the form says where to save it instead. Built once and kept
 // across the page's refreshes, so nothing typed into it is lost.
 (function () {
   'use strict';
@@ -13,13 +14,33 @@
   const MODELS = [['', 'default', 'Claude’s own default'], ['opus', 'opus', 'Most capable'], ['sonnet', 'sonnet', 'Balanced, faster'],
     ['haiku', 'haiku', 'Smallest and quickest'], ['fable', 'fable', 'Newest generation']];
   const EFFORTS = [['', 'default'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']];
-  const AGENTS = [['claude', 'Claude', 'Claude Code, on your Claude plan'], ['codex', 'Codex', 'OpenAI Codex, on your Codex sign-in or the team key']];
+  // Every agent a session can run (shared/agents.cjs), in its order: the two the team's key can run, then the ones that
+  // run on your own sign-in alone.
+  const A = window.WoodshedAgents;
+  const AGENT_WORDS = {
+    claude: 'Claude Code, on your Claude plan', codex: 'OpenAI Codex, on your Codex sign-in or the team key',
+    grok: 'Grok Build, on your own xAI sign-in', opencode: 'OpenCode, on the providers you signed in to',
+  };
+  const AGENTS = A.AGENT_IDS.map((id) => [id, A.agent(id).name, AGENT_WORDS[id] ?? A.agent(id).product]);
+  // What each permission mode does, in an agent that is not Claude Code or Codex (the entrypoint's mapping onto its flags).
+  const OWN_MODE_WORDS = {
+    auto: 'Works unattended, without asking', acceptEdits: 'Edits freely, asks before commands', plan: 'Plans only, changes nothing',
+    default: 'The agent\u2019s own approval rules',
+  };
+  const ownModes = (id) => A.agent(id).permissionModes.map((m) => [m, m, A.agent(id).modeWords?.[m] ?? OWN_MODE_WORDS[m]]);
+  const ownEfforts = (id) => (A.agent(id).efforts ?? ['']).map((e) => [e, e || 'default']);
+  // What a session of that agent runs on, for the line under Start.
+  const RUNS_ON = { claude: 'Claude plan', codex: 'Codex sign-in or the team key' };
+  const runsOn = (id) => RUNS_ON[id] ?? `own ${A.agent(id).product} sign-in`;
   // Codex's models and efforts are OpenAI's catalog's, as the console reads it for you (GET /api/my/codex-models,
   // codexModels.mjs); its permission modes are CODEX_PERMISSION_MODES in sessions.mjs.
   const CODEX_MODES = [['auto', 'auto', 'Works unattended; asks when the model decides to'], ['plan', 'plan', 'Read-only, changes nothing'],
     ['default', 'default', 'Codex\u2019s own approval policy']];
   const MODES = [['auto', 'auto', 'Works unattended; refuses what looks risky'], ['acceptEdits', 'acceptEdits', 'Edits freely, asks before commands'],
     ['plan', 'plan', 'Plans only, changes nothing'], ['default', 'default', 'Asks before every tool']];
+
+  // For + Another agent on a session's pane bar (session.js), which offers the same choices.
+  W.agentChoices = { AGENTS, MODELS, EFFORTS, MODES, CODEX_MODES };
 
   function select(id, options) {
     return h('select', { id, class: 'field' }, options.map(([value, label, title]) => h('option', { value, title }, label)));
@@ -490,7 +511,19 @@
     const workOn = h('input', { id: 'l-on', class: 'field mono', autocomplete: 'off', placeholder: 'Search open PRs, or type PR #123 or a branch' });
     const agent = select('l-agent', AGENTS);
     const model = select('l-model', MODELS);
+    // An agent other than Claude Code or Codex takes any model name its own --model does (the registry's modelRe): typed,
+    // unless it is Grok Build and the console read a list of its models on the person's own sign-in.
+    const modelText = h('input', { id: 'l-model-text', 'aria-label': 'Model', class: 'field mono', autocomplete: 'off', spellcheck: 'false', hidden: true });
+    const ownAgent = () => !['claude', 'codex'].includes(agent.value);
+    // Grok Build's, read on the person's own Grok sign-in (GET /api/my/grok-models, grokModels.mjs): none without one,
+    // and then the model is typed.
+    let grokCatalog = null;
+    // A Grok model typed before its list came, and not on it: the text box stays, with what was typed (showGrokCatalog).
+    let grokTyped = false;
+    const typedModel = () => ownAgent() && !(agent.value === 'grok' && grokCatalog?.models?.length && !grokTyped);
+    const modelValue = () => (typedModel() ? modelText.value.trim() : model.value);
     const effort = select('l-effort', EFFORTS);
+    const effortField = field('l-effort', 'Effort', effort);
     const mode = select('l-mode', MODES);
     // Start says its key (⌘↵, Ctrl+Enter elsewhere), which works from any field of the form; a phone has no keys.
     const K = window.WoodshedKeys;
@@ -528,14 +561,15 @@
     // Model, effort and permissions, folded on a phone to one line of what is picked, and open on a desktop as before.
     const picked = h('span', { class: 'loptions-picked' });
     const showPicked = () => {
-      picked.textContent = [model, effort, mode].map((s) => s.selectedOptions[0]?.textContent ?? '').join(' · ');
+      const modelWord = typedModel() ? modelText.value.trim() || 'default' : model.selectedOptions[0]?.textContent ?? '';
+      picked.textContent = [modelWord, ...[effort, mode].filter((s) => !s.hidden).map((s) => s.selectedOptions[0]?.textContent ?? '')].join(' · ');
     };
     function fill(select, options) {
       select.replaceChildren(...options.map(([value, label, title]) => h('option', { value, title }, label)));
     }
     // The Codex catalog, asked for the first time Codex is picked and again on each pick after, since OpenAI changes it.
     let codexCatalog = null;
-    const codexNote = h('p', { class: 'sub lcatalog-note', hidden: true });
+    const catalogNote = h('p', { class: 'sub lcatalog-note', hidden: true });
     function codexModelOptions() {
       return [['', 'default', 'Codex\u2019s own default'], ...(codexCatalog?.models ?? []).map((m) => [m.slug, m.slug, m.description || m.name])];
     }
@@ -545,6 +579,15 @@
       const efforts = picked ? picked.efforts : [...new Set((codexCatalog?.models ?? []).flatMap((m) => m.efforts))];
       return [['', picked?.defaultEffort ? `default (${picked.defaultEffort})` : 'default'], ...efforts.map((e) => [e, e])];
     }
+    function grokModelOptions() {
+      return [['', 'default', 'Grok Build\u2019s own default'], ...(grokCatalog?.models ?? []).map((m) => [m.slug, m.name, m.description || m.slug])];
+    }
+    // The picked model's efforts, when the list names them; the registry's otherwise, as for the default model.
+    function grokEffortOptions() {
+      const picked = typedModel() ? null : grokCatalog?.models.find((m) => m.slug === model.value);
+      if (!picked?.efforts) return ownEfforts('grok');
+      return [['', picked.defaultEffort ? `default (${picked.defaultEffort})` : 'default'], ...picked.efforts.map((e) => [e, e])];
+    }
     function keepPick(select, options) {
       const was = select.value;
       fill(select, options);
@@ -553,8 +596,33 @@
     function showCodexCatalog() {
       keepPick(model, codexModelOptions());
       keepPick(effort, codexEffortOptions());
-      codexNote.textContent = codexCatalog?.note ? `Codex models: ${codexCatalog.note}.` : '';
-      codexNote.hidden = !codexCatalog?.note;
+      showCatalogNote();
+      showPicked();
+    }
+    // The line under the menus: why the picked agent's list is not a fresh one, or why there is none.
+    function showCatalogNote() {
+      const catalog = agent.value === 'codex' ? codexCatalog : agent.value === 'grok' ? grokCatalog : null;
+      const words = agent.value === 'codex' ? 'Codex models' : 'Grok Build models';
+      catalogNote.textContent = catalog?.note ? `${words}: ${catalog.note}.` : '';
+      catalogNote.hidden = !catalog?.note;
+    }
+    modelText.addEventListener('input', () => {
+      if (agent.value === 'grok' && grokTyped && !modelText.value.trim()) {
+        grokTyped = false;
+        showGrokCatalog();
+      }
+    });
+    function showGrokCatalog() {
+      // What was typed while there was no list is kept: picked in the menu when the list has it, in the box when not.
+      const typed = !modelText.hidden ? modelText.value.trim() : '';
+      if (typed) grokTyped = !(grokCatalog?.models ?? []).some((m) => m.slug === typed);
+      const listed = !typedModel();
+      model.hidden = !listed;
+      modelText.hidden = listed;
+      if (listed) keepPick(model, grokModelOptions());
+      if (listed && typed) model.value = typed;
+      keepPick(effort, grokEffortOptions());
+      showCatalogNote();
       showPicked();
     }
     function loadCodexCatalog() {
@@ -563,29 +631,57 @@
         if (agent.value === 'codex') showCodexCatalog();
       }, () => {});
     }
-    model.addEventListener('change', () => { if (agent.value === 'codex') keepPick(effort, codexEffortOptions()); });
+    // Asked each time Grok Build is picked, as Codex's is: a sign-in saved since, or xAI back, shows at once.
+    function loadGrokCatalog() {
+      W.getJson('/api/my/grok-models').then((answer) => {
+        grokCatalog = answer;
+        if (agent.value === 'grok') showGrokCatalog();
+      }, () => {
+        grokCatalog = { models: [], source: null, note: 'type a model name, since the console did not answer' };
+        if (agent.value === 'grok') showGrokCatalog();
+      });
+    }
+    model.addEventListener('change', () => {
+      if (agent.value === 'codex') keepPick(effort, codexEffortOptions());
+      if (agent.value === 'grok') keepPick(effort, grokEffortOptions());
+    });
     function showAgent() {
       const codex = agent.value === 'codex';
-      fill(model, codex ? codexModelOptions() : MODELS);
-      fill(effort, codex ? codexEffortOptions() : EFFORTS);
-      fill(mode, codex ? CODEX_MODES : MODES);
+      const grok = agent.value === 'grok';
+      const own = ownAgent();
+      const typed = typedModel();
+      const a = A.agent(agent.value);
+      model.hidden = typed;
+      modelText.hidden = !typed;
+      modelText.placeholder = a.modelHint ? `default (e.g. ${a.modelHint})` : 'default';
+      if (!typed) fill(model, codex ? codexModelOptions() : grok ? grokModelOptions() : MODELS);
+      fill(effort, codex ? codexEffortOptions() : grok ? grokEffortOptions() : own ? ownEfforts(agent.value) : EFFORTS);
+      // An agent with no effort on its command line has no menu for it.
+      effortField.hidden = own && !a.efforts;
+      effort.hidden = effortField.hidden;
+      fill(mode, codex ? CODEX_MODES : own ? ownModes(agent.value) : MODES);
       if (codex) loadCodexCatalog();
-      codexNote.hidden = !codex || !codexCatalog?.note;
-      prompt.placeholder = `What should ${codex ? 'Codex' : 'Claude'} do? Type / for the repo\u2019s skills.`;
+      if (grok) loadGrokCatalog();
+      showCatalogNote();
+      prompt.placeholder = `What should ${a.name} do? Type / for the repo\u2019s skills.`;
       showPicked();
     }
     // Until the person picks one, the agent follows their sign-ins: Codex for someone with only a Codex sign-in saved.
     let agentPicked = false;
     agent.addEventListener('change', () => {
       agentPicked = true;
+      // A model name is one agent's own (OpenCode's `provider/model`, Grok's `grok-…`): another agent starts from its default.
+      modelText.value = '';
+      grokTyped = false;
       showAgent();
       if (me) update(me);
     });
     for (const s of [model, effort, mode]) s.addEventListener('change', showPicked);
+    modelText.addEventListener('input', showPicked);
     showPicked();
     const options = h('details', { class: 'loptions', open: !window.matchMedia('(max-width: 720px)').matches },
       h('summary', null, h('span', { class: 'field-label' }, 'Agent, model, effort and permissions'), picked),
-      h('div', { class: 'lgrid4' }, field('l-agent', 'Agent', agent), field('l-model', 'Model', model), field('l-effort', 'Effort', effort), field('l-mode', 'Permissions', mode)), codexNote);
+      h('div', { class: 'lgrid4' }, field('l-agent', 'Agent', agent), field('l-model', 'Model', h('div', null, model, modelText)), effortField, field('l-mode', 'Permissions', mode)), catalogNote);
     // Where a blocked repo's fix card goes, in place of the rest of the form: the picker above stays.
     const blockedSlot = h('div', { class: 'launch-setup', hidden: true });
     const body = h('div', { class: 'launch-body' },
@@ -602,7 +698,8 @@
     const noToken = h('div', { class: 'launch-setup', hidden: true });
     const tokenHelp = h('p', { class: 'sub' }, 'For Claude, run ', h('code', null, 'claude setup-token'),
       ' on your laptop. For Codex, run ', h('code', null, 'codex login'), ' and copy ', h('code', null, '~/.codex/auth.json'),
-      ', or use an OpenAI API key. Save it on My settings: your sessions run on your own plan or sign-in.');
+      ', or use an OpenAI API key. Save it on My settings: your sessions run on your own plan or sign-in. Grok Build and OpenCode run on your own sign-in too: ',
+      ...A.OWN_SIGN_IN_AGENTS.flatMap((id, i) => [i ? ', ' : '', h('a', { href: `/settings#${id}` }, A.agent(id).product)]), '.');
     const el = h('section', { class: 'launch' },
       // On a phone New session is a screen of its own (/?new=1), and this is the way back to the list.
       h('a', { class: 'launch-back', href: '/' }, '‹ My Woodshed'),
@@ -638,7 +735,7 @@
       error.hidden = true;
       try {
         const session = await W.postJson('/api/my/sessions', {
-          prompt: prompt.value, workOn: workOn.value, agent: agent.value, model: model.value, effort: effort.value, permissionMode: mode.value,
+          prompt: prompt.value, workOn: workOn.value, agent: agent.value, model: modelValue(), effort: effortField.hidden ? '' : effort.value, permissionMode: mode.value,
           ...(projects.value() ? { project: projects.value() } : {}),
           attachments: attachments.ids(),
         });
@@ -658,9 +755,10 @@
 
     function update(next) {
       me = next;
-      // Only the agents set up to run are offered (`agents` in /api/my): a Claude token, or a Codex sign-in or the team's
-      // OpenAI key. A console from before `agents` offers both.
-      const offered = AGENTS.filter(([value]) => !me?.agents || me.agents[value]);
+      // Only the agents set up to run are offered (`agents` in /api/my): a Claude token, a Codex sign-in or the team's
+      // OpenAI key, or the person's own sign-in for the others. A console from before `agents` offers Claude and Codex,
+      // and one from before the other agents never lists them, which leaves them out.
+      const offered = AGENTS.filter(([value]) => (me?.agents ? me.agents[value] : ['claude', 'codex'].includes(value)));
       const shown = offered.length ? offered : AGENTS.slice(0, 1);
       if (shown.map(([v]) => v).join() !== [...agent.options].map((o) => o.value).join()) {
         const was = agent.value;
@@ -670,7 +768,8 @@
         if (agent.value !== was) showAgent();
       }
       agent.disabled = shown.length < 2;
-      const preferred = me?.codexAuth?.set && !me.claudeToken?.set && shown.some(([v]) => v === 'codex') ? 'codex' : shown[0][0];
+      // With no Claude token, the first agent they can run: Codex for someone with only a Codex sign-in saved.
+      const preferred = !me?.claudeToken?.set && me?.codexAuth?.set && shown.some(([v]) => v === 'codex') ? 'codex' : shown[0][0];
       if (me && !agentPicked && agent.value !== preferred) {
         agent.value = preferred;
         showAgent();
@@ -679,7 +778,7 @@
       const ready = Boolean(me) && W.setupDone(me);
       const after = ready ? W.stepsAfterSetup(me) : [];
       noToken.hidden = ready && !after.length;
-      if (!ready && me) noToken.replaceChildren(W.setupCard(me), ...(me.claudeToken?.set || me.codexAuth?.set ? [] : [tokenHelp]));
+      if (!ready && me) noToken.replaceChildren(W.setupCard(me), ...(W.anyAgentSignIn(me) ? [] : [tokenHelp]));
       else if (after.length) noToken.replaceChildren(W.setupCard(me, { compact: true, steps: after }));
       form.hidden = !ready;
       // A repo that cannot start sessions (databaseGate.mjs) keeps the picker, and shows its fix in place of the rest.
@@ -696,7 +795,7 @@
       note.replaceChildren(...(full()
         ? [`${me.running} of ${me.limit} running: this one waits in line and starts by itself when one stops.`,
           ...(W.isAdmin() ? [' Need more at once? ', h('a', { href: '/console-settings' }, 'Raise the limit in Settings'), '.'] : [])]
-        : [`Runs on your ${agent.value === 'codex' ? 'Codex sign-in or the team key' : 'Claude plan'}, from ${projects.repo() ? `${projects.repo()}\u2019s` : 'the'} default branch unless you name a branch.`]));
+        : [`Runs on your ${runsOn(agent.value)}, from ${projects.repo() ? `${projects.repo()}\u2019s` : 'the'} default branch unless you name a branch.`]));
     }
     // New session pressed on its own screen: show what is missing, or focus the prompt, so the button always answers.
     function nudge() {
@@ -714,6 +813,4 @@
   }
 
   W.createLauncher = createLauncher;
-  // The agents and Claude's models, for the session page's Hand off dialog (session.js).
-  W.agentChoices = { AGENTS, MODELS };
 })();

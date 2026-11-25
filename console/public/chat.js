@@ -1,15 +1,19 @@
 // The Chat tab: a running session's conversation as a chat, in place of the agent's terminal. The thread is read from
-// the agent's own record of the conversation (claude's transcript, codex's rollout), through the session's statusd
+// the agent's own record of the conversation (claude's transcript, codex's rollout, the other agents' own), through the session's statusd
 // (GET /api/sessions/<id>/transcript), and drawn as messages: the person's on the right, the agent's replies as text,
 // and each run of tool calls between them as one work log that folds open (chatThread.cjs). The composer under it
 // types a message into the live agent (POST …/send, as the phone's message box does), with files from the picker or
 // dropped or pasted, and Stop sends it Esc (POST …/interrupt). The agent still runs in its terminal, which stays on the
 // TUI tab. claude's questions (AskUserQuestion) are answered here: one option picked for each, then Send answers
 // (POST …/answer), which the session types into the picker once its pane shows that same question. An approval the
-// pane shows (claude's permission dialog, codex's approval; GET …/prompt) is on the Needs you line with Approve and
+// pane shows (claude's permission dialog, codex's and the other agents' approvals; GET …/prompt) is on the Needs you line with Approve and
 // Deny, under the same check. Anything else it asks there shows as Needs you, with a button to the TUI tab. The code
 // each turn changed shows under its last work log that edited a file, from the edits' diffs the record carries.
 // session.js makes the Chat tab the one a running session opens on.
+// An agent started beside the session's own (session/agents.mjs) has a Chat of its own: session.js shows it a view of
+// the session whose `id` is that agent's (`<session>~agent-2~<its start>`, which keys its drafts, bubbles and folds), whose state and
+// message ids are the agent's, and whose `apiBase` is its routes (/api/sessions/<id>/agents/agent-2), with `uploadBase`
+// the session's own, where files land.
 (function () {
   'use strict';
   const W = window.Woodshed;
@@ -20,6 +24,9 @@
   const FAST_MS = 1500;
   const SLOW_MS = 5000;
   const LIMIT = 300;
+  // The conversations last shown, kept in the page as read, so coming back to one draws it at once and its next read
+  // asks only whether it changed since (as many as the terminals kept loaded, session.js's MAX_TERMINALS).
+  const KEPT = 8;
   const MAX_FILES = 8;
   const MAX_FILE_MB = 25;
   const SEND_TIMEOUT_MS = 20_000;
@@ -100,6 +107,10 @@
     let session = null;
     // The last answer for the shown session: { id, agent, entries, partial, writtenAt }.
     let record = null;
+    // Each conversation's last answer, by keyOf.
+    const kept = T.keptRecords(KEPT);
+    // A session's own conversation by its id and start: a Resume's is another, and an agent's id already holds its start.
+    const keyOf = (s) => `${s.id}~${s.startedAt ?? ''}`;
     let readError = null;
     let timer = null;
     let ticker = null;
@@ -149,6 +160,9 @@
       scroller, h('div', { class: 'chat-foot' }, h('div', { class: 'chat-col' }, status, composer)));
 
     const mine = () => files.get(session?.id) ?? [];
+    // Where the shown conversation's calls go: the session's own, or an agent's beside it.
+    const apiOf = (s) => s.apiBase ?? `/api/sessions/${s.id}`;
+    const uploadsOf = (s) => s.uploadBase ?? `/api/sessions/${s.id}`;
     const pendingOf = (id) => pending.get(id) ?? [];
     const agent = () => W.agentOf(session);
     // Working: as the console last read the agent, or as its record says, whichever knew first.
@@ -212,6 +226,7 @@
     async function attach(list) {
       const id = session?.id;
       if (!id) return;
+      const uploads = uploadsOf(session);
       if (mine().length + list.length > MAX_FILES) return W.shell.toast(`At most ${MAX_FILES} files in one message`);
       const big = list.find((f) => f.size > MAX_FILE_MB * 1024 * 1024);
       if (big) return W.shell.toast(`${big.name || 'That file'} is over ${MAX_FILE_MB} MB`);
@@ -219,7 +234,7 @@
         const entry = { name: file.name || `picture.${(file.type.split('/')[1] || 'png').replace(/[^a-z0-9]/g, '')}`, path: null, busy: true };
         files.set(id, [...(files.get(id) ?? []), entry]);
         drawComposer();
-        const res = await fetch(`/api/sessions/${id}/upload?${new URLSearchParams({ name: entry.name, pane: 'none' })}`, {
+        const res = await fetch(`${uploads}/upload?${new URLSearchParams({ name: entry.name, pane: 'none' })}`, {
           method: 'POST', headers: { 'x-woodshed': '1', 'content-type': 'application/octet-stream' }, body: file,
         }).catch(() => null);
         const body = await res?.json().catch(() => ({}));
@@ -245,6 +260,7 @@
     async function send() {
       const id = session?.id;
       if (!id || sending.has(id)) return;
+      const api = apiOf(session);
       // Enter calls this past Send's disabled button: a file still uploading keeps the draft as it is.
       const uploading = mine().find((f) => f.busy);
       if (uploading) return W.shell.toast(T.notReady({ text: field.value, files: mine(), sending: false }));
@@ -270,7 +286,7 @@
       drawComposer();
       drawThread(true);
       try {
-        const answer = await W.postJson(`/api/sessions/${id}/send`, { text, id: sent.id }, { signal: AbortSignal.timeout(T.sendTimeoutMs(text)) });
+        const answer = await W.postJson(`${api}/send`, { text, id: sent.id }, { signal: AbortSignal.timeout(T.sendTimeoutMs(text)) });
         // Held by the console while the agent is busy: nothing has reached it yet, and the bubble says so until the
         // agent's record holds it.
         // An answer that could not be read (postJson gives {}) says neither: it waits as a held one does, never let go
@@ -317,7 +333,7 @@
       if (!id) return;
       stopButton.disabled = true;
       try {
-        await W.postJson(`/api/sessions/${id}/interrupt`, {});
+        await W.postJson(`${apiOf(session)}/interrupt`, {});
         W.shell.toast(`Stopping ${agent()}'s turn`);
       } catch (err) {
         W.shell.toast(`Not stopped: ${err.message}`, { ms: 6000 });
@@ -455,10 +471,11 @@
       const id = session?.id;
       const body = T.answerBody(item, picks.get(key) ?? []);
       if (!id || !body) return;
+      const api = apiOf(session);
       answers.set(key, { state: 'sending' });
       drawThread(false);
       try {
-        await W.postJson(`/api/sessions/${id}/answer`, body, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+        await W.postJson(`${api}/answer`, body, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
         answers.set(key, { state: 'sent' });
       } catch (err) {
         answers.set(key, { state: 'refused', error: err.name === 'TimeoutError' ? `no answer in ${SEND_TIMEOUT_MS / 1000} s` : err.message });
@@ -477,7 +494,7 @@
       approval = { busy: decision, error: null };
       drawStatus();
       try {
-        await W.postJson(`/api/sessions/${id}/answer`, { kind: 'approval', decision, key: shown.key }, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+        await W.postJson(`${apiOf(session)}/answer`, { kind: 'approval', decision, key: shown.key }, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
         approval = null;
         answered = { id, decision, prompt: JSON.stringify(shown) };
         prompt = { id, prompt: null };
@@ -625,7 +642,7 @@
       promptReading = true;
       let read = null;
       try {
-        read = await W.getJson(`/api/sessions/${id}/prompt`);
+        read = await W.getJson(`${apiOf(session)}/prompt`);
       } catch {
         // A console or session from before /prompt, or one that did not answer: the line gets its button to the TUI tab.
       } finally {
@@ -650,11 +667,12 @@
       const id = session.id;
       try {
         const since = record?.id === id && record.writtenAt ? `&since=${record.writtenAt}` : '';
-        const answer = await W.getJson(`/api/sessions/${id}/transcript?limit=${LIMIT}${since}`);
+        const answer = await W.getJson(`${apiOf(session)}/transcript?limit=${LIMIT}${since}`);
         if (id !== session?.id) return;
         readError = null;
         if (answer.unchanged && record?.id === id) return;
         record = { id, ...answer };
+        kept.keep(keyOf(session), record);
         drawThread(false);
         // The record can end the turn (an interrupt) before the console's state says so: Stop goes with it.
         drawComposer();
@@ -724,7 +742,9 @@
       if (moved) {
         if (recognition) recognition.abort();
         recognition = null;
-        record = null;
+        // The conversation as it was last read, drawn now: the read below only asks whether it changed since.
+        record = kept.get(keyOf(s)) ?? null;
+        if (record) kept.keep(keyOf(s), record);
         readError = null;
         const label = `Message ${agent()}`;
         field.placeholder = label;

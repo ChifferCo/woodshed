@@ -7,8 +7,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { seedEnv, seedEnvFiles } from './dbAdmin.mjs';
+import { pathOf, readToml } from '../shared/codexConfig.mjs';
 import { loadProject } from '../shared/project.mjs';
 import { fixtureApp, fixtureCheckout, fixtureProject } from '../shared/projectFixture.mjs';
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 
 const SESSION_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ENTRYPOINT = fs.readFileSync(path.join(SESSION_DIR, 'entrypoint.sh'), 'utf8');
@@ -182,6 +184,47 @@ test('a repo with no app, or no project file, has its rules say what Set up app 
   assert.doesNotMatch(writePrompt({ attachments: false, repoDir: withApp }).rules, /Set up app/);
 });
 
+test('a project whose CI runs QA on a label tells its sessions to add it once ready; QA run by the console, or none, says nothing', () => {
+  assert.doesNotMatch(writePrompt({ attachments: false }).rules, /QA runs in its CI|\{\{QA_LABEL/);
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-qalabel-'));
+  try {
+    fs.mkdirSync(path.join(repo, '.woodshed'));
+    const review = { author: 'ci[bot]', heading: '## Review', workflow: '.github/workflows/review.yml', rerun: '[run-review]', commentAuthor: null };
+    const withQa = (q) => fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ pullRequests: { review, suites: [], qa: q, mergeRisk: null } }));
+    // QA in the repo's CI: a label added with the session's gh, the App's or its owner's, starts the workflow.
+    withQa({ check: 'QA', label: "qa: Bob's, run", heading: '## QA', author: 'ci[bot]', runner: 'actions' });
+    for (const kind of ['shared', 'private']) {
+      const told = writePrompt({ attachments: false, kind, repoDir: repo });
+      assert.ok(told.rules.includes("PR that has the `qa: Bob's, run` label"), kind);
+      assert.ok(told.rules.includes("`gh api repos/{owner}/{repo}/issues/<PR number>/labels -f labels\\[\\]=qa:\\ Bob\\'s\\,\\ run`"), 'whole, shell-quoted for the command, brackets and all');
+      assert.match(told.rules, /once the PR is ready for review, when you open it ready or mark a draft ready, never to a draft/);
+      assert.doesNotMatch(told.rules, /\{\{/);
+      assert.match(told.out, /QA label: qa: Bob's, run/);
+    }
+    // QA run by the console: it starts for a person's label, or the console's own with autoLabel, never the App's that a
+    // session adds, so a session is not told to add it.
+    for (const q of [{ check: 'QA', label: 'run-qa', heading: '## QA', runner: 'woodshed' }, { check: 'QA', label: 'run-qa', heading: '## QA', runner: 'woodshed', autoLabel: true }]) {
+      withQa(q);
+      const told = writePrompt({ attachments: false, kind: 'shared', repoDir: repo });
+      assert.doesNotMatch(told.rules, /QA runs in its CI|\{\{QA_LABEL/, JSON.stringify(q));
+      assert.match(told.out, /QA label: none/);
+    }
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('sessions open their pull requests ready, and a requirement they could not prove is no reason for a draft', () => {
+  for (const kind of ['shared', 'private']) {
+    const { rules } = writePrompt({ attachments: false, kind });
+    assert.match(rules, /^- Open the PR ready for review, not as a draft\. A draft is only for work that is not finished/m, kind);
+    assert.match(rules, /A requirement you could not prove is not a reason for a draft/);
+    assert.match(rules, /Always try your best to check it in the running app/);
+    assert.doesNotMatch(rules, /could have proven it here and did not, open the PR as a draft/);
+    assert.doesNotMatch(rules, /Once the PR is ready for review/, 'the review tag goes on from the first push');
+  }
+});
+
 test('a project with a review tag tells its sessions to end each push\'s last commit with it; one with none says nothing', () => {
   const none = writePrompt({ attachments: false, kind: 'shared' });
   assert.doesNotMatch(none.rules, /code review runs on a push|\{\{REVIEW_TAG\}\}/);
@@ -194,7 +237,7 @@ test('a project with a review tag tells its sessions to end each push\'s last co
     fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ pullRequests: { review, suites: [], qa: null, mergeRisk: null } }));
     for (const kind of ['shared', 'private']) {
       const tagged = writePrompt({ attachments: false, kind, repoDir: repo });
-      assert.ok(tagged.rules.includes('end the subject of the last commit of each push with ` [run-review]`'), kind);
+      assert.ok(tagged.rules.includes('End the subject of the last commit of each push with ` [run-review]`'), kind);
       assert.match(tagged.rules, /keep the tag out of the PR title/);
       assert.doesNotMatch(tagged.rules, /\{\{/);
       assert.match(tagged.out, /review tag: \[run-review\]/);
@@ -211,7 +254,7 @@ test('a project with a review tag tells its sessions to end each push\'s last co
   after(() => fs.rmSync(bare, { recursive: true, force: true }));
   fixtureCheckout(bare);
   const byDefault = writePrompt({ attachments: false, repoDir: bare, reviewTag: '[woodshed-review]' });
-  assert.ok(byDefault.rules.includes('end the subject of the last commit of each push with ` [woodshed-review]`'));
+  assert.ok(byDefault.rules.includes('End the subject of the last commit of each push with ` [woodshed-review]`'));
   assert.match(byDefault.out, /review tag: \[woodshed-review\]/);
 });
 
@@ -269,7 +312,7 @@ test('a repo with no project file gets Woodshed\'s rules alone, and no notes', (
 
 test('claude gets the rules as a system prompt on a fresh start and on a resume, which rewrites them', () => {
   assert.match(fn('claudeFlags'), /--append-system-prompt-file %s' \/tmp\/woodshed-rules\.md/);
-  const run = ENTRYPOINT.slice(ENTRYPOINT.indexOf(' [ "${AGENT:-claude}" != codex ] && resumable; then\n    log "Resuming'));
+  const run = ENTRYPOINT.slice(ENTRYPOINT.indexOf(' [ "${AGENT:-claude}" = claude ] && resumable; then\n    log "Resuming'));
   assert.ok(run.indexOf('  writeRules\n') > run.indexOf('  fi\n'), 'writeRules runs after the resume branch, for both');
   assert.ok(run.indexOf('  writeRules\n') < run.indexOf('  startClaude\n'), 'writeRules runs before claude is started, which reads its file');
 });
@@ -292,7 +335,7 @@ test('every file outside the repo that Woodshed points claude at is one claude r
   ].join('\n');
   const paths = [...new Set([...told.matchAll(/\/tmp\/[\w.\-/]+/g)].map((m) => m[0]))];
   paths.push(ENTRYPOINT.match(/^DEPS_STATUS=(\S+)$/m)[1]);
-  assert.deepEqual(paths.sort(), ['/tmp/answer.md', '/tmp/woodshed-deps', '/tmp/woodshed-docker-ports.log', '/tmp/woodshed-dockerd.log', '/tmp/woodshed-setup.md']);
+  assert.deepEqual(paths.sort(), ['/tmp/answer.md', '/tmp/issue.json', '/tmp/woodshed-deps', '/tmp/woodshed-docker-ports.log', '/tmp/woodshed-dockerd.log', '/tmp/woodshed-setup.md']);
   for (const p of paths) {
     const allowed = hooks.permissions.allow.includes(`Read(/${p})`) || addDirs.some((dir) => p.startsWith(`${dir}/`));
     assert.ok(allowed, `${p} has a Read rule in claudeHooks.json (an absolute path is written //${p.slice(1)})`);
@@ -355,7 +398,7 @@ test('the forwarder of the machine\'s ports starts only with the machine\'s Dock
 test('a QA session writes no prompt, and runs qa.sh in claude\'s pane once statusd answers, working from the start', () => {
   assert.match(ENTRYPOINT, /if \[ "\$\{SESSION_MODE:-\}" = qa \]; then\n    log "Prompt skipped"/);
   const start = fn('startAgent');
-  const qa = start.slice(start.indexOf('SESSION_MODE:-}" = qa'), start.indexOf('elif [ "${AGENT:-claude}" = codex ]'));
+  const qa = start.slice(start.indexOf('SESSION_MODE:-}" = qa'), start.indexOf('elif [ "${AGENT:-claude}" != claude ]'));
   assert.ok(qa.indexOf('touch /tmp/qa-running') < qa.indexOf('agentRun'), 'the session reads as working before the run starts');
   assert.match(qa, /until curl -s -o \/dev\/null http:\/\/127\.0\.0\.1:.*; do sleep 1; done; SESSION_DIR=\$SESSION_DIR bash \$SESSION_DIR\/qa\.sh/);
 });
@@ -471,7 +514,7 @@ function depsRepo(t, { command = 'echo run >> ran' } = {}) {
   fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject({ dependencies: { installs: [install] } }));
   const records = path.join(root, 'records');
   fs.mkdirSync(path.join(records, 'api'), { recursive: true });
-  const recorded = execFileSync('bash', ['-c', `. "${SESSION_DIR}/deps.sh"; depsRecord "$1" "$2" vendor`, 'x', path.join(repoDir, 'api'), install.files.join(' ')], { encoding: 'utf8' });
+  const recorded = execFileSync('bash', ['-c', `. "${SESSION_DIR}/deps.sh"; depsRecord "$1" "$2" vendor`, 'x', path.join(repoDir, 'api'), install.files.join(' ')], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH }) });
   fs.writeFileSync(path.join(records, 'api/built-from'), recorded);
   return { root, repoDir, records };
 }
@@ -483,7 +526,7 @@ function refreshDeps({ root, repoDir, records }, env = {}) {
     'project() { node "$SHARED_DIR/project.mjs" "$@"; }', `. "${SESSION_DIR}/deps.sh"`,
     `DEPS_STATUS=${root}/woodshed-deps`, fn('refreshDeps'), 'refreshDeps',
   ].join('\n');
-  const run = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, WOODSHED_DEPS_RECORDS: records, ...env } });
+  const run = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, WOODSHED_DEPS_RECORDS: records, ...env }) });
   const ran = path.join(repoDir, 'api/ran');
   return { ...run, status: fs.readFileSync(path.join(root, 'woodshed-deps'), 'utf8'), runs: fs.existsSync(ran) ? fs.readFileSync(ran, 'utf8').split('\n').filter(Boolean).length : 0 };
 }
@@ -509,6 +552,26 @@ test('refreshDeps runs an install again where a file changed or a glob matches a
   assert.equal(refreshDeps(repo).runs, 2);
   fs.rmSync(path.join(repo.records, 'api'), { recursive: true });
   assert.equal(refreshDeps(repo).runs, 3, 'an install the image has no record of, as one a branch added, runs');
+});
+
+test('a Grok Build or OpenCode session runs none of the branch\'s installs by itself, and says which to run', (t) => {
+  for (const [agent, product] of [['grok', 'Grok Build'], ['opencode', 'OpenCode']]) {
+    const repo = depsRepo(t);
+    assert.equal(refreshDeps(repo, { AGENT: agent }).status, 'ready\n', `${agent}: nothing changed, nothing to run`);
+    fs.writeFileSync(path.join(repo.repoDir, 'api/deps.lock'), 'v2');
+    const changed = refreshDeps(repo, { AGENT: agent });
+    assert.equal(changed.runs, 0, `${agent}: the branch's command never ran`);
+    assert.equal(changed.status, `skipped: this ${product} session runs none of the branch's installs by itself, since they could read its owner's own sign-in. These changed since the image was built, and are yours to run before you need what they install: \`echo run >> ran\` in api.\n`);
+    assert.match(changed.stdout, new RegExp(`Dependencies not refreshed: this ${product} session runs none of the branch's installs by itself \\(changed: 1\\)`));
+    assert.doesNotMatch(changed.stdout, /reinstalling/);
+  }
+  // Claude Code and Codex sessions run it, as before: each on a fixture of its own, so each has a change to install.
+  for (const agent of ['claude', 'codex']) {
+    const repo = depsRepo(t);
+    fs.writeFileSync(path.join(repo.repoDir, 'api/deps.lock'), 'v2');
+    const installed = refreshDeps(repo, { AGENT: agent });
+    assert.deepEqual([installed.status, installed.runs], ['ready\n', 1], agent);
+  }
 });
 
 test('a reinstall reads the install secrets already in the session\'s environment, and not the manifest on its stdin', (t) => {
@@ -907,12 +970,12 @@ test('a Codex session starts codex with the picked flags, and the rules go in co
     encoding: 'utf8', env: { PATH: process.env.PATH, PERMISSION_MODE: 'plan', MODEL: 'gpt-5.5', EFFORT: 'high' },
   });
   assert.equal(flags, ' --sandbox read-only --ask-for-approval on-request --model gpt-5.5 -c model_reasoning_effort=\\"high\\"');
-  assert.ok(ENTRYPOINT.indexOf('  writeRules\n  if [ "${AGENT:-claude}" = codex ]') > 0, 'the rules are written before codex is configured');
-  assert.ok(ENTRYPOINT.indexOf('  pullSettings\n') < ENTRYPOINT.indexOf('    configureCodex\n'), 'the owner\'s synced config is there before codex is configured');
+  assert.ok(ENTRYPOINT.indexOf('  writeRules\n  case "${AGENT:-claude}" in\n    codex)\n      configureCodex\n') > 0, 'the rules are written before codex is configured');
+  assert.ok(ENTRYPOINT.indexOf('  pullSettings\n') < ENTRYPOINT.indexOf('    codex)\n      configureCodex\n'), 'the owner\'s synced config is there before codex is configured');
 });
 
 // configureCodex as the entrypoint has it, in a codex home of the test's own, after a pull wrote `pulled` into it.
-function configureCodex({ pulled = {}, linkedInstructions = false } = {}) {
+function configureCodex({ pulled = {}, linkedInstructions = false, agent = 'codex' } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-codex-'));
   const codexHome = path.join(tmp, 'codex');
   fs.mkdirSync(codexHome);
@@ -922,7 +985,7 @@ function configureCodex({ pulled = {}, linkedInstructions = false } = {}) {
   const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }',
     fn('configureCodex').replaceAll('/tmp/', `${tmp}/`), 'configureCodex'].join('\n');
   try {
-    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: tmp, SESSION_DIR, SHARED_DIR, REPO_DIR: '/work/app', CODEX_HOME_DIR: codexHome } });
+    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: tmp, SESSION_DIR, SHARED_DIR, REPO_DIR: '/work/app', CODEX_HOME_DIR: codexHome, AGENT: agent } });
     const read = (name) => (fs.existsSync(path.join(codexHome, name)) ? fs.readFileSync(path.join(codexHome, name), 'utf8') : null);
     return { out, config: read('config.toml'), agents: read('AGENTS.md'), override: read('AGENTS.override.md') };
   } finally {
@@ -940,6 +1003,34 @@ test('a Codex session trusts its checkout in the owner\'s own config.toml, and t
   assert.equal(owner.config, 'model = "gpt-5.5"\n\n[tui]\nnotifications = true\n\n[projects."/work/app"]\ntrust_level = "trusted"\n', 'the owner\'s settings stay, with the checkout trusted');
   assert.equal(owner.agents, 'Use pnpm.\n', 'the synced file is left as it is');
   assert.equal(owner.override, '# Woodshed rules\n\nOpen a pull request.\n\n\n# Your own instructions, from ~/.codex/AGENTS.md\n\nUse pnpm.\n', 'codex reads this in place of AGENTS.md: the rules, then theirs');
+});
+
+test('extra agents in Grok Build and OpenCode sessions skip branch startup configuration', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-extra-agent-flags-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const mcp = path.join(tmp, 'mcp.json');
+  fs.writeFileSync(mcp, '{}');
+  const script = ['set -euo pipefail', 'tainted() { return 1; }', fn('claudeFlags'), fn('extraClaudeFlags'),
+    'extraClaudeFlags > "$FLAGS_FILE"'].join('\n');
+  for (const agent of ['grok', 'opencode', 'claude', 'codex']) {
+    const flagsFile = path.join(tmp, 'flags');
+    execFileSync('bash', ['-c', script], { env: { PATH: process.env.PATH, SESSION_DIR, AGENT: agent, MCP_CONFIG: mcp, FLAGS_FILE: flagsFile } });
+    const flags = fs.readFileSync(flagsFile, 'utf8');
+    assert.match(flags, /--settings .*claudeHooks\.json/);
+    if (agent === 'claude' || agent === 'codex') {
+      assert.ok(flags.includes('--mcp-config ' + mcp));
+      assert.doesNotMatch(flags, /--setting-sources|--strict-mcp-config/);
+      continue;
+    }
+    assert.match(flags, /--setting-sources user --strict-mcp-config --disable-slash-commands/);
+    assert.doesNotMatch(flags, / --mcp-config/);
+    const owner = configureCodex({ agent, pulled: { 'config.toml': 'model = "gpt-5.5"\n\n[projects."/work/app"]\ntrust_level = "trusted"\n' } });
+    const config = readToml(owner.config).filter((statement) => statement.kind === 'kv');
+    assert.deepEqual(config.map((statement) => [pathOf(statement), statement.value]), [
+      [['model'], '"gpt-5.5"'],
+      [['projects', '/work/app', 'trust_level'], '"untrusted"'],
+    ]);
+  }
 });
 
 test('Codex startup does not copy a linked sign-in into the model instructions', () => {
@@ -1266,6 +1357,16 @@ test('the agent runs in Herdr only in a private session whose owner picked it, a
   }
 });
 
+test('a review that Grok Build or OpenCode reviews in still runs review.sh in tmux, and never the agent on a sign-in of its own', () => {
+  const start = fn('startAgent').replaceAll('/tmp/', '$HOME/');
+  for (const agents of ['claude grok', 'grok opencode']) {
+    const { calls } = agentTerminalRun({ mode: 'review', kind: '', env: { REVIEW_AGENTS: agents, SESSION_DIR: '/opt/woodshed/session', WOODSHED_TERMINAL: 'tmux' }, body: `${start}\nstartAgent` });
+    assert.equal(calls, 'tmux send-keys -t claude SESSION_DIR=/opt/woodshed/session bash /opt/woodshed/session/review.sh Enter\n', agents);
+  }
+  // A review session gets nobody's sign-in: the console's proxy adds the author's to its calls (reviewAgentProxy.mjs).
+  assert.doesNotMatch(fn('startAgent'), /configureGrok|configureOpencode|agentAuth/);
+});
+
 test('the owner\'s terminal comes from the /settings answer, read where the other own settings are', () => {
   const fetch = fn('fetchOwnerSettings');
   assert.match(fetch, /OWNER_TERMINAL=\$\(jq -r '\.terminal \/\/ empty' <<< "\$answer"\)/);
@@ -1352,7 +1453,7 @@ test('startClaude types the agent at once, or once its parent made its terminal,
 });
 
 test('while the agent\'s terminal is not there yet, the TUI tab says so and attaches once it is', () => {
-  assert.match(fn('startClaude'), /\[ ! -f "\$AGENT_TERMINAL_WAIT" \] \|\| attach=\(bash -c "\$TUI_WAIT_THEN_ATTACH"\)/);
+  assert.match(fn('startClaude'), /\[ ! -f "\$AGENT_TERMINAL_WAIT" \] \|\| attach=\$TUI_WAIT_THEN_ATTACH/);
   const line = /^TUI_WAIT_THEN_ATTACH=(.*)$/m.exec(ENTRYPOINT)[1];
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-tui-wait-'));
   try {
@@ -1361,6 +1462,245 @@ test('while the agent\'s terminal is not there yet, the TUI tab says so and atta
     const script = `TUI_WAIT_THEN_ATTACH=${line}\n(sleep 1; touch ${tmp}/made) &\nbash -c "$TUI_WAIT_THEN_ATTACH"`;
     const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: `${tmp}:/usr/bin:/bin` } });
     assert.match(out, /^Waiting for your Herdr to make the agent's terminal \(woodshed session new --herdr --parent\)\.\.\.\r\nattached to claude\n$/);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// Grok Build and OpenCode: their flags for each mode, and their own files, from the owner's own sign-in.
+const agentFlags = (name, env) => execFileSync('bash', ['-c', `${fn(name)}\n${name}`], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, ...env }) });
+
+test('each agent gets its own flags for the mode, model and effort New session picked', () => {
+  assert.equal(agentFlags('grokFlags', {}), ' --no-alt-screen --no-auto-update --always-approve');
+  assert.equal(agentFlags('grokFlags', { PERMISSION_MODE: 'plan', MODEL: 'grok-build', EFFORT: 'high' }), ' --no-alt-screen --no-auto-update --permission-mode plan --model grok-build --effort high');
+  assert.equal(agentFlags('grokFlags', { PERMISSION_MODE: 'default' }), ' --no-alt-screen --no-auto-update');
+  assert.equal(agentFlags('opencodeFlags', {}), ' --auto');
+  assert.equal(agentFlags('opencodeFlags', { PERMISSION_MODE: 'plan', MODEL: 'anthropic/claude-sonnet-4-5' }), ' --agent plan --model anthropic/claude-sonnet-4-5');
+  assert.equal(agentFlags('opencodeFlags', { PERMISSION_MODE: 'default' }), '');
+  const command = (agent) => execFileSync('bash', ['-c', [fn('codexFlags'), fn('grokFlags'), fn('opencodeFlags'), fn('agentCommand'), fn('promptFlag'), 'printf "%s|%s" "$(agentCommand)" "$(promptFlag)"'].join('\n')],
+    { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, AGENT: agent, SESSION_DIR: '/opt/woodshed/session' }) });
+  assert.equal(command('grok'), '/opt/woodshed/session/bin/grok --no-alt-screen --no-auto-update --always-approve|');
+  assert.equal(command('opencode'), '/opt/woodshed/session/bin/opencode --auto| --prompt');
+  assert.ok(fn('startAgent').includes('agentRun "$(agentCommand)$(promptFlag) \\"\\$(cat /tmp/woodshed-prompt.md)\\""'), 'the prompt after the agent\'s own flag for it');
+});
+
+// One agent's configure function as the entrypoint has it, in a home of the test's own, given `auth` as its sign-in.
+function configureAgent(name, auth, env = {}) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-agent-'));
+  const home = path.join(tmp, 'home');
+  fs.mkdirSync(path.join(home, '.config', 'woodshed'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.config', 'woodshed', 'agent-auth'), auth, { mode: 0o600 });
+  fs.writeFileSync(path.join(tmp, 'woodshed-rules.md'), '# Woodshed rules\n');
+  const vars = ['OWN_AGENT_AUTH_FILE=$HOME/.config/woodshed/agent-auth', 'GROK_HOME_DIR=$HOME/.grok',
+    'OPENCODE_DATA_DIR=$HOME/.local/share/opencode', 'OPENCODE_CONFIG_DIR=$HOME/.config/opencode'];
+  const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }', ...vars,
+    fn('ownAgentAuthIsKey'), fn('agentDir'), fn('refuseRulesOutsideCheckout'), fn('opencodePermission'), fn(name).replaceAll('/tmp/', `${tmp}/`), name].join('\n');
+  const read = (file) => (fs.existsSync(path.join(home, file)) ? fs.readFileSync(path.join(home, file), 'utf8') : null);
+  const mode = (file) => fs.statSync(path.join(home, file)).mode & 0o777;
+  try {
+    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, HOME: home, SESSION_DIR: '/opt/woodshed/session', REPO_DIR: '/work/app', ...env }) });
+    return { out, read, mode };
+  } catch (err) {
+    return { out: String(err.stdout), failed: true, read, mode };
+  } finally {
+    setImmediate(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  }
+}
+
+test('Grok Build: a login as its own auth.json, a key left to the wrapper; its config, trust, rules and hooks', () => {
+  const login = '{"https://auth.x.ai::b1a00492":{"key":"access","refresh_token":"r"}}';
+  const g = configureAgent('configureGrok', login);
+  assert.equal(g.read('.grok/auth.json'), login);
+  assert.equal(g.mode('.grok/auth.json'), 0o600);
+  assert.match(g.read('.grok/config.toml'), /\[cli\]\nauto_update = false/);
+  assert.match(g.read('.grok/config.toml'), /\[compat\.claude\]\nmcps = false\nhooks = false/);
+  assert.match(g.read('.grok/trusted_folders.toml'), /^\[folders\."\/work\/app"\]\ntrusted = true\ndecided_at = \d+\n$/);
+  assert.equal(g.read('.grok/rules/woodshed.md'), '# Woodshed rules\n');
+  assert.equal(g.read('.grok/hooks/woodshed.json'), null, 'its hooks are the image\'s policy\'s, the only ones grok runs');
+  assert.match(g.out, /own Grok Build login/);
+  assert.doesNotMatch(g.read('.grok/config.toml'), /preferred_method/, 'a login is grok\'s own way in');
+  const key = configureAgent('configureGrok', 'xai-abc');
+  assert.equal(key.read('.grok/auth.json'), null, 'a key is never written into grok\'s home');
+  // Without it grok opens its browser sign-in whatever XAI_API_KEY holds.
+  assert.match(key.read('.grok/config.toml'), /\[auth\]\npreferred_method = "api_key"\n$/);
+  assert.match(key.out, /own xAI key/);
+});
+
+test('OpenCode: its auth.json, its config with the effort as each agent\'s variant, and the rules', () => {
+  const auth = '{"anthropic":{"type":"api","key":"sk-ant-x"}}';
+  const o = configureAgent('configureOpencode', auth, { EFFORT: 'high' });
+  assert.equal(o.read('.local/share/opencode/auth.json'), auth);
+  assert.equal(o.mode('.local/share/opencode/auth.json'), 0o600);
+  assert.deepEqual(JSON.parse(o.read('.config/opencode/opencode.json')), {
+    $schema: 'https://opencode.ai/config.json', autoupdate: false, share: 'disabled', agent: { build: { variant: 'high' }, plan: { variant: 'high' } },
+  });
+  assert.equal(o.read('.config/opencode/AGENTS.md'), '# Woodshed rules\n');
+  assert.match(o.out, /providers: anthropic/);
+  assert.equal(JSON.parse(configureAgent('configureOpencode', auth).read('.config/opencode/opencode.json')).agent, undefined);
+  assert.equal(configureAgent('configureOpencode', 'sk-ant-x').failed, true, 'a bare key is not its auth.json');
+});
+
+test('OpenCode: each mode\'s permission rules mean what Claude Code\'s mode does, and auto writes none', () => {
+  const auth = '{"anthropic":{"type":"api","key":"sk-ant-x"}}';
+  const config = (env) => JSON.parse(configureAgent('configureOpencode', auth, env).read('.config/opencode/opencode.json'));
+  const asks = { edit: 'ask', bash: 'ask', webfetch: 'ask' };
+  // Its own policy allows edits and commands: default holds both to asking.
+  assert.deepEqual(config({ PERMISSION_MODE: 'default' }).permission, asks);
+  assert.equal(config({ PERMISSION_MODE: 'default' }).agent, undefined);
+  assert.deepEqual(config({ PERMISSION_MODE: 'acceptEdits' }).permission, { edit: 'allow', bash: 'ask', webfetch: 'ask' });
+  // plan: the plan agent's own rules come after the global ones in OpenCode, so its edit deny holds and a command asks;
+  // the build agent, if the person switches to it, asks for both.
+  const plan = config({ PERMISSION_MODE: 'plan', EFFORT: 'high' });
+  assert.deepEqual(plan.permission, asks);
+  assert.deepEqual(plan.agent, { build: { variant: 'high' }, plan: { variant: 'high', permission: { edit: 'deny', bash: 'ask' } } }, 'the effort kept beside the rules');
+  for (const env of [{ PERMISSION_MODE: 'auto' }, {}]) {
+    const auto = config(env);
+    assert.equal(auto.permission, undefined, '--auto answers every ask itself');
+    assert.equal(auto.agent, undefined);
+  }
+  // acceptEdits is its build agent under those rules: no flag of its own.
+  assert.equal(agentFlags('opencodeFlags', { PERMISSION_MODE: 'acceptEdits' }), '');
+});
+
+test('Grok Build: not started where a rules file it reads by itself points outside the checkout', (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-grok-repo-'));
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-grok-elsewhere-'));
+  t.after(() => { fs.rmSync(repo, { recursive: true, force: true }); fs.rmSync(elsewhere, { recursive: true, force: true }); });
+  const secret = path.join(elsewhere, 'auth.json');
+  fs.writeFileSync(secret, '{"key":"secret"}');
+  const start = () => configureAgent('configureGrok', 'xai-abc', { REPO_DIR: repo });
+  const reset = () => { for (const f of fs.readdirSync(repo)) fs.rmSync(path.join(repo, f), { recursive: true, force: true }); };
+
+  fs.writeFileSync(path.join(repo, 'CLAUDE.md'), 'rules\n');
+  fs.symlinkSync('CLAUDE.md', path.join(repo, 'AGENTS.md'));
+  assert.equal(start().failed, undefined, 'a link inside the checkout is the repo\'s own choice');
+
+  for (const [what, make] of [
+    ['AGENTS.md', () => fs.symlinkSync(secret, path.join(repo, 'AGENTS.md'))],
+    ['.claude/CLAUDE.md', () => { fs.mkdirSync(path.join(repo, '.claude')); fs.symlinkSync(secret, path.join(repo, '.claude', 'CLAUDE.md')); }],
+    ['.grok/rules', () => { fs.mkdirSync(path.join(repo, '.grok')); fs.symlinkSync(elsewhere, path.join(repo, '.grok', 'rules')); }],
+    ['.claude/rules/deep/r.md', () => { fs.mkdirSync(path.join(repo, '.claude', 'rules', 'deep'), { recursive: true }); fs.symlinkSync(secret, path.join(repo, '.claude', 'rules', 'deep', 'r.md')); }],
+    ['.cursor', () => fs.symlinkSync(elsewhere, path.join(repo, '.cursor'))],
+  ]) {
+    reset();
+    make();
+    const g = start();
+    assert.equal(g.failed, true, what);
+    assert.match(g.out, new RegExp(`ERROR: the repo's ${what.replaceAll('.', '\\.')} points outside the checkout`), what);
+    assert.equal(g.read('.grok/config.toml'), null, `${what}: nothing written for grok`);
+  }
+});
+
+test('OpenCode: the repo\'s AGENTS.md, or its CLAUDE.md, is copied after the rules, never through a symlink', (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-oc-repo-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const auth = '{"anthropic":{"type":"api","key":"sk-ant-x"}}';
+  const start = () => configureAgent('configureOpencode', auth, { REPO_DIR: repo });
+  const none = start();
+  assert.equal(none.read('.config/opencode/AGENTS.md'), '# Woodshed rules\n', 'none to copy');
+  assert.equal(JSON.parse(none.read('.config/opencode/opencode.json')).instructions, undefined, 'never a path opencode reads again');
+  fs.writeFileSync(path.join(repo, 'CLAUDE.md'), 'Claude rules\n');
+  assert.equal(start().read('.config/opencode/AGENTS.md'), "# Woodshed rules\n\n\n# The repo's own CLAUDE.md\n\nClaude rules\n");
+  fs.writeFileSync(path.join(repo, 'AGENTS.md'), 'Agent rules\n');
+  assert.equal(start().read('.config/opencode/AGENTS.md'), "# Woodshed rules\n\n\n# The repo's own AGENTS.md\n\nAgent rules\n", 'AGENTS.md first, as opencode reads them');
+  // A branch's AGENTS.md pointing at a credential: never followed, nor CLAUDE.md taken in its place.
+  const secret = path.join(repo, 'auth.json');
+  fs.writeFileSync(secret, '{"anthropic":{"key":"sk-ant-secret"}}');
+  fs.rmSync(path.join(repo, 'AGENTS.md'));
+  fs.symlinkSync(secret, path.join(repo, 'AGENTS.md'));
+  const linked = start();
+  assert.equal(linked.read('.config/opencode/AGENTS.md'), '# Woodshed rules\n');
+  assert.match(linked.out, /WARNING: the repo's AGENTS\.md is a symlink, so OpenCode does not get it/);
+});
+
+test('an own-sign-in agent\'s start stops without its sign-in, and keeps the copy it was given', () => {
+  const settings = fn('fetchOwnerSettings');
+  assert.match(settings, /grok \| opencode\)/);
+  assert.match(settings, /\[ -n "\$token" \] \|\| die "the console sent no sign-in for \$\{AGENT\}: save yours on My settings"/);
+  assert.match(settings, /\(umask 077 && printf '%s' "\$token" > "\$OWN_AGENT_AUTH_FILE"\)/);
+  assert.match(fn('configureMcp'), /\[ "\$\{AGENT:-claude\}" = claude \]/, 'MCP servers only for claude');
+});
+
+test('the rules and setup files are never read through a link out of the checkout, which could name a sign-in', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'project-rules-link-'));
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'project-rules-elsewhere-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(elsewhere, { recursive: true, force: true }); });
+  // An inert sentinel where a sign-in would be.
+  const sentinel = path.join(elsewhere, 'agent-auth');
+  fs.writeFileSync(sentinel, 'SENTINEL-NOT-A-SECRET');
+  fs.mkdirSync(path.join(dir, '.woodshed'));
+  fs.mkdirSync(path.join(dir, 'docs'));
+  fs.writeFileSync(path.join(dir, '.woodshed/project.yaml'), fixtureProject({ rules: 'docs/rules.md', setup: 'docs/setup.md' }));
+  const cli = (field) => {
+    try {
+      return { out: execFileSync('node', [path.join(SHARED_DIR, 'project.mjs'), 'file', field], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: isolatedEnv({ PATH: process.env.PATH, REPO_DIR: dir }) }) };
+    } catch (err) {
+      return { out: err.stdout, err: err.stderr, failed: true };
+    }
+  };
+
+  // A link inside the checkout is the repo's own choice.
+  fs.writeFileSync(path.join(dir, 'RULES.md'), 'Our rules\n');
+  fs.symlinkSync('../RULES.md', path.join(dir, 'docs/rules.md'));
+  fs.writeFileSync(path.join(dir, 'docs/setup.md'), 'Our setup\n');
+  assert.deepEqual([cli('rules').out, cli('setup').out], ['Our rules\n', 'Our setup\n']);
+
+  for (const field of ['rules', 'setup']) {
+    fs.rmSync(path.join(dir, `docs/${field}.md`));
+    fs.symlinkSync(sentinel, path.join(dir, `docs/${field}.md`));
+    const read = cli(field);
+    assert.equal(read.failed, true, field);
+    assert.match(read.err, new RegExp(`docs/${field}\\.md is a link to a file outside the checkout, which is never read`));
+    assert.doesNotMatch(`${read.out}${read.err}`, /SENTINEL/, `${field}: the sentinel is never printed`);
+  }
+  // A folder on the path that links out is the same.
+  fs.rmSync(path.join(dir, 'docs'), { recursive: true });
+  fs.symlinkSync(elsewhere, path.join(dir, 'docs'));
+  fs.writeFileSync(path.join(elsewhere, 'rules.md'), 'SENTINEL-NOT-A-SECRET');
+  assert.equal(cli('rules').failed, true);
+});
+
+test('the start token leaves the environment for a file only its user reads, before anything starts', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'start-token-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const file = path.join(tmp, 'woodshed-start-token');
+  const script = (token) => [
+    'set -euo pipefail', 'log() { :; }',
+    `START_TOKEN_FILE=${file}`, fn('keepStartToken').replace(/^START_TOKEN_FILE=.*$/m, ''),
+    'keepStartToken', 'env | grep -c "^WOODSHED_START_TOKEN=" || true', 'bash -c \'echo "child: ${WOODSHED_START_TOKEN:-none}"\'',
+  ].join('\n');
+  const run = (token) => spawnSync('bash', ['-c', script(token)], { encoding: 'utf8', env: { PATH: process.env.PATH, ...(token ? { WOODSHED_START_TOKEN: token } : {}) } });
+  const given = run('wst_abc');
+  assert.equal(given.status, 0, given.stderr);
+  assert.equal(given.stdout, '0\nchild: none\n', 'nothing started after it inherits the token, statusd and the app included');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'wst_abc');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  const none = run(null);
+  assert.equal(none.status, 0, none.stderr);
+  assert.equal(fs.existsSync(file), false, 'a run with no token leaves none from an earlier one');
+});
+
+// The TUI tab's ttyd runs woodshed-attach with the URL's `arg` (--url-arg): an agent started beside the session's own
+// (agents.mjs) by its tmux session, anything else the session's own, as WOODSHED_TUI_ATTACH says.
+test('the TUI tab attaches to the agent the page names, and to the session\'s own otherwise', () => {
+  assert.match(fn('startClaude'), /WOODSHED_TUI_ATTACH=\$attach ttyd --writable --url-arg .*"\$SESSION_DIR\/bin\/woodshed-attach"/s);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-attach-'));
+  try {
+    // tmux that has only agent-2, and says what it would attach to.
+    fs.writeFileSync(path.join(tmp, 'tmux'), '#!/bin/bash\ncase "$1" in has-session) [ "$3" = =agent-2 ] ;; attach) echo "tmux attach $3" ;; esac\n', { mode: 0o755 });
+    const attach = (...args) => execFileSync(path.join(SESSION_DIR, 'bin', 'woodshed-attach'), args, {
+      encoding: 'utf8', env: { PATH: `${tmp}:/usr/bin:/bin`, WOODSHED_TUI_ATTACH: 'echo own agent' }, timeout: 5000,
+    });
+    assert.equal(attach('agent-2'), 'tmux attach =agent-2\n');
+    assert.equal(attach(), 'own agent\n');
+    for (const bad of ['agent-1', 'claude', 'agent-2; reboot', '../agent-2']) assert.equal(attach(bad), 'own agent\n', bad);
+    // In Herdr, the agent's Herdr terminal of that name.
+    fs.writeFileSync(path.join(tmp, 'hc'), '#!/bin/bash\ncase "$1" in get) [ "$4" = agent-3 ] ;; attach) echo "hc attach $2" ;; esac\n', { mode: 0o755 });
+    const inHerdr = (...args) => execFileSync(path.join(SESSION_DIR, 'bin', 'woodshed-attach'), args, {
+      encoding: 'utf8', env: { PATH: `${tmp}:/usr/bin:/bin`, WOODSHED_TUI_ATTACH: 'echo own agent', WOODSHED_TERMINAL: 'herdr', WOODSHED_HC_BIN: path.join(tmp, 'hc') }, timeout: 5000,
+    });
+    assert.equal(inHerdr('agent-3'), 'hc attach agent-3\n');
+    assert.equal(inHerdr(), 'own agent\n');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

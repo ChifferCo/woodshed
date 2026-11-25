@@ -21,7 +21,7 @@ every session, with no switch, and its head reads **My sessions** (`/all` opens 
 loopback alone), one whose People list has a single member, or one whose `WOODSHED_ONE_PERSON` is `1`. The setting
 decides when set, `0` keeping the two views (the dev console sets it, `DEV_CONSOLE_ONE_PERSON=1` for the one list);
 `/api/sessions` says which in `onePerson`. **Take it** on
-an unassigned card, or **Assign to me**, **Hand over to** and **Unassign** in the card's ⋯ menu, change
+an unassigned card, or **Assign to me**, **Hand over…** (a dropdown of who can be assigned) and **Unassign** in the card's ⋯ menu, change
 who has it; only someone who can be assigned can (`POST /api/sessions/<id>/assign`). A later comment from someone else does not move it, but
 someone who can be assigned commenting on an unassigned session takes it. Assignment is a label, not a permission: a shared session stays visible
 to everyone with Sessions from GitHub, and a private one cannot be assigned. On an issue's session the GitHub issue follows: the assignee is put on
@@ -84,6 +84,26 @@ whose it is: **My repo settings** and **My session timeouts** are yours; Setting
 Both terminals stay connected while another tab shows. A session started from an
 image without the second ttyd has Terminal greyed out.
 
+**The terminal page.** Both tabs frame the console's own page, `/static/term.html#term/<id>` (or `#shell/<id>`):
+xterm.js, copied into `public/vendor/xterm/` at the versions ttyd 1.7.7 bundles, and `public/terminalPage.js`, which
+speaks ttyd's protocol on `/<kind>/<id>/ws`. The page names its files by hash, as every page does, so the browser keeps
+it and opening a terminal loads only its websocket. The session's ttyd is the connection alone: no HTTP request reaches
+it, so neither its own page nor its `/token` (`/<kind>/<id>/…` answers 404). The websocket's first message is the
+console's (`terminalProxy.mjs`): ttyd's credential with the size the page asked for, so the page never holds the
+credential. A browser's compression offer goes to ttyd with `client_no_context_takeover` added, and ttyd's answer comes
+back with it too should ttyd leave it out, so the browser compresses each message on its own: the console can read that
+first message compressed and send its own uncompressed, and nothing after it refers back to bytes ttyd never saw. ttyd's
+output stays compressed. The session's `-t` flags (theme, scrollback) reach the page as ttyd's preferences.
+
+tmux sizes the agent's window by the client used last, and only input counts, so after a phone opened a session a
+desktop that only scrolls or comes back to the front would stay at the phone's width: the page sends tmux a focus-in on
+a wheel, a click or tap, or its window coming to the front (at most every 2 s, and only while tmux asked for focus
+events, `focus-events on` in `session/tmux.conf`), which gives tmux that device's size again, and only from a terminal on
+screen: one not displayed (a phone on its list, another tab) never takes the window. Nor is a terminal ever fitted below
+20 columns or 5 rows: a frame squeezed to nothing for a moment as the page changes would make xterm's fit its 2x1
+minimum, tmux would draw every device's screen at 2 columns, and claude's lines would stay that narrow in their history.
+The last size stays until the next resize.
+
 On a phone (720px wide or less) it works as the shed does there: the sessions
 page is the rail, and a session's page is its pane alone, with **‹** back to the
 list. The terminal is drawn at 0.7 of its size so about 70 columns fit, and a
@@ -98,7 +118,9 @@ The size and the key bar's choice are remembered in the browser.
 A running session opens on its **Chat** tab unless its person picked TUI as their default view (`public/chat.js`): the conversation as a chat instead of the agent's
 terminal. The thread is read from the agent's own record of it, claude's transcript or codex's rollout, through
 statusd's `GET /transcript` (session/README.md), every 1.5 s while the agent works or a message waits to show and every
-5 s otherwise, with `since` so a record that did not move costs the session a stat. The person's messages are on the
+5 s otherwise, with `since` so a record that did not move costs the session a stat. The page keeps the last 8
+conversations shown as it read them (`keptRecords` in `public/chatThread.cjs`), by session and start: coming back to one
+draws it at once, and its first read only asks whether it moved since. The person's messages are on the
 right; the agent's replies are Markdown, read into a tree and built as DOM nodes, never as HTML, with only http(s)
 and mailto links (`public/chatThread.cjs`); each run of tool calls between them is one work log, summed up in a line
 (`Ran 3 commands, edited 2 files`, `1 failed`) that folds open to the calls, open while it is the turn still running.
@@ -125,6 +147,27 @@ several options, and anything else the agent asks only in its terminal stay **An
 the **TUI** tab (`?tab=tui`; `?tab=agent`, its old name, still opens it): hooks, Remote Control and Resume work as before. A session that is not running has
 no Chat tab and shows its start or its end there.
 
+**More than one agent in a session.** The owner of a running My Woodshed session can start another agent in it, beside
+its own: the agent switch on the pane bar, after the tabs while Chat or TUI shows (`components/AgentSwitch`), has
+**+ Another agent**, a dialog with New session's Agent, Model, Effort and Permissions and an optional first message
+(`POST /api/sessions/<id>/agents`, checked as New session checks its form; the console logs `console: another agent
+asked for`, and `fleet: another agent allowed in the session` the first time a session runs that agent). Up to three
+run beside the session's own, each in the same checkout in a terminal of its own (`session/agents.mjs`): a tmux
+session, or a Herdr terminal when the owner's Agent terminal is Herdr, which their own Herdr then shows beside `claude`. The
+switch lists them all with their state words and says how many others need you; picking one points Chat at its own
+conversation (`/api/sessions/<id>/agents/<agent-N>/transcript`, `send`, `interrupt`, `prompt`, `answer`) and the TUI
+tab at its terminal (`#term/<id>?arg=agent-N` on the terminal page, which puts `arg` on its websocket for ttyd's URL
+argument). The pick is kept per session in the browser tab.
+**Stop** in the switch's menu ends one. An extra Codex agent runs on its owner's Codex sign-in, which the
+console sends with that start alone, or on the team's OpenAI key through the console's proxy, which the session may use
+only once the agent started (`fleet.allowAgent`), as a Codex session does. A session's lockdown drops that at once and cuts
+its calls on the way (`openaiProxy: calls cut at the lockdown`). A shared session, a question, a review and a QA run have none, nor a session
+that has seen production data: its lockdown stops them. They last while the session runs: a Resume starts its own
+agent alone. The command line does the same (cli/README.md, "Sessions"): `woodshed session agents <id>` lists them,
+`woodshed session agent <id> --agent codex --model … "first message"` starts one, `… stop agent-N` ends one, and
+`woodshed session connect <id> --agent agent-N` puts a terminal on one (`x-woodshed-agent` on the terminal pipe,
+`console/execPipe.mjs`).
+
 Under claude's terminal on the TUI tab, a phone has a message box
 (`public/messageBox.js`): the phone's own keyboard, so autocorrect, dictation
 and paste work, **📎** for photos and files, and **🎤** for the browser's speech
@@ -132,8 +175,9 @@ recognition (hidden where the browser has none). Files go to `/tmp/uploads` with
 nothing typed (`upload?pane=none`); **Send** puts the text and their paths into
 claude as one message, through statusd's `POST /send`. Return is a new line. An
 unsent draft stays with its session in this tab. A terminal whose connection
-dropped while the phone was in the background (ttyd's "Press ⏎ to Reconnect")
-reconnects by itself once the page is in front, at most three times a minute.
+dropped (a phone in the background closes it) reconnects by itself once the page
+is in front, at most three times a minute; past that it says "Press ⏎ to
+reconnect" (`terminalPage.js`).
 
 Review, while the session runs, is the shed's own page and server, run inside
 the session: statusd hands `/shed-review/*` to `session/reviewShed/`, which
@@ -154,8 +198,18 @@ and no Discussion tab, and the session refuses a GitHub write called directly.
 Read-only means GitHub only: anyone who can see a shared session can still start
 its analysis, ask and chat, which spend its Claude.
 
+A session with more than one pull request has a review of each. The checkout's, `claude-<id>`, is of the branch checked
+out now; each other pull request the session opened has its own, `claude-<id>-pr<n>`, taken from GitHub's head of it
+into a detached worktree under `/tmp/woodshed-review-worktrees`, so the checkout and its branches are never touched,
+with its own analysis, Q&A, comments, verdict and merge, which go to that pull request. **Pull requests** above the
+title links each; asked for the one checked out, the page opens the checkout's. The proxy names the session's pull
+requests on its own repo to statusd (`x-woodshed-pulls`, from the session's `prUrls`), and statusd opens no review of a
+pull request it did not name (`review: refused, not one of the session's pull requests`); a review of another one logs
+`review: pull request review ensured` with the number.
+
 What the page does, from the shed's own review code:
-- **The diff** is the checkout against its merge base with the default branch, with
+- **The diff** is the checkout against its merge base with the default branch (with the base of its pull request
+  instead, when it has one open on another branch, so a stacked one shows only its own change), with
   everything uncommitted and untracked (as `.gitignore` allows), read through a
   scratch index so the session's own is left alone. **Read again** reads it
   afresh.
@@ -468,7 +522,8 @@ TUI and Terminal tabs):
   canvas, so the browser's own find sees nothing there: the bar reads xterm's buffer (`public/terminalFind.cjs`), which
   is the screen and the browser's scrollback, case ignored and a wrapped line read as one. Every match is marked, the
   one shown in bright amber and scrolled to; Enter goes to an older one, Shift+Enter a newer one, Esc closes it. The
-  marks are xterm decorations, not its selection, since ttyd copies every selection to the clipboard. What scrolled
+  marks are xterm decorations, not its selection, since the terminal page copies every selection to the clipboard, as
+  ttyd's did. What scrolled
   off before this browser attached is in tmux's history alone: scroll past the top into copy mode, then `?` searches it.
 - **The conversation so far**, the Chat tab's thread, for an app to show and scroll by itself, apart from the terminal:
   `GET /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>` answers what was asked, what the agent said, and a
@@ -481,8 +536,18 @@ And what the shed shows about each session:
   merged or closed, `queued` in yellow while it waits in GitHub's merge queue
   (its place on hover), and otherwise one mark for what most needs a look (✗ a failing check
   or changes requested, a spinning ring while checks run, ✓ green or approved), with the
-  counts on hover. A session that opens another pull request keeps each one
-  it reported (`prUrls`, oldest first) and shows a chip for each, but a merged
+  counts on hover. While a review or QA session the console started is at work on the pull
+  request (waiting in line or running: `woodshedRunsOn` in `console/sessions.mjs`), the chip
+  says `review`, `QA` or `review, QA` with the ring in place of the ✓, since its checks say
+  nothing of them until they report; a failing check keeps its ✗ beside the word. The hover
+  card and the chip's tooltip say `Woodshed review running`. A session that opens another pull request keeps each one
+  it reported (`prUrls`, oldest first, by number): the one of the branch checked out and
+  those of its checkout's other branches, a git worktree's included, and those claude opened with `gh pr create` from
+  another clone (statusd's `prUrls`, session/README.md). One on another repo is kept only for a private session, and only
+  on a project its owner may start sessions on (`projectAccess`, as New session offers them), since the console reads
+  it with that project's token (`reportableRepos` in `console/fleet.mjs`): a shared session, review, QA run or question
+  keeps its own repo's alone; its chip names its repo (`woodshed-cloud #151`), and it goes where it was
+  first seen, since two repos' numbers say nothing of which came first. It shows a chip for each, but a merged
   or closed one only while no newer one came after it, so the newest always
   stays. The card and pane bar show the newest two of those, a phone's bar
   the newest one, and the older fold into a `+N` chip that names each on hover;
@@ -492,13 +557,13 @@ And what the shed shows about each session:
 - **CPU and memory**: the container's, from statusd's `/status`, in the pane bar's meter (`CPU 41%` while all is
   well, the whole line once one runs high), and after the status word on a phone. Amber past 70% of its memory or
   75% of its cores, red past 90% or 95%, the one over the line first.
-- **Plan**: in a private session's pane bar meter, how much of your session agent's (Claude or Codex) plan is used,
+- **Plan**: in a private session's pane bar meter, how much of your session agent's (Claude, Codex or Grok Build) plan is used,
   its fullest window's share (`Plan 68%`), amber from 70%, red from 90% and `Plan out` at 100%. Click the meter for each
-  window's share and when it resets, a tick for how much of it has gone by, how old the reading
+  window's share and when it resets (a reset already past says so; a window with no end says neither), a tick for how much of it has gone by (left off when a Grok period names no length), how old the reading
   is, and the machine's CPU, memory and disk against their limits (on a phone, the plan under ⋯). Claude Code hands the limits only to its status
   line, after each answer: `session/statusline.sh` saves them to
   `~/.claude/woodshed-usage/claude.json` and statusd's `/status` returns them
-  (`session/planUsage.mjs`; Codex uses local rollout limits from `session/codexPlanUsage.mjs`). Readings and running counts are shared only between private sessions using the same agent. Every private session on the same agent
+  (`session/planUsage.mjs`; Codex uses local rollout limits from `session/codexPlanUsage.mjs`; Grok Build uses the allowance it logs in `~/.grok/logs/unified.jsonl`, `session/grokPlanUsage.mjs`, one week or month). OpenCode reports none. Readings and running counts are shared only between private sessions using the same agent. Every private session on the same agent
   shows the newest reading any of them has, a stopped one's last
   included, and a window whose reset has passed reads 0%. Claude Code reports
   the all-models week only, not claude.ai's per-model one, and leaves a window
@@ -655,13 +720,15 @@ what was forgotten. Forget it is refused while one of your sessions runs, since
 that session would save its home again within 5 minutes; Remove My Woodshed
 stops them first.
 
-**Hand off…**, in a running private session's ⋯ menu (or `woodshed session handoff <id> --agent codex|claude`), carries
-its work on with another agent: Claude Code to Codex, Codex to Claude Code, or a fresh run of the same one
+**Hand off…**, in a running private session's ⋯ menu (or `woodshed session handoff <id> --agent <agent>`), carries
+its work on with another agent: any of Claude Code, Codex, Grok Build and OpenCode to any other (`shared/agents.cjs`), or a
+fresh run of the same one
 (`console/handoff.mjs`; `POST /api/my/sessions/<id>/handoff`). Each agent keeps its conversation in a format of its own
 that no other reads, so what goes across is agent-neutral:
 - the branch: the session stops, which commits and pushes its work as any stop does, and a new private session of yours
-  starts on that branch with the agent and model picked, under the same name, and the permission mode it ran in when
-  that agent has it (else the agent's default). Unlike an ordinary Stop, it stops only once the push went through: a push
+  starts on that branch with the agent and model picked, under the same name, and the loosest permission mode of the new
+  agent that lets it do no more unasked than the old one could, as a session started from another gets
+  (`modeForStartedSession`). Grok Build and OpenCode start on their own default model. Unlike an ordinary Stop, it stops only once the push went through: a push
   refused (the branch moved on remotely) leaves it running, its work committed in its checkout and statusd sending again
   (`POST /checkpoint {"keepRunningOnFailure": true}`, which turns its sends, home saves and shared settings sync back
   on), and nothing is handed off. A Stop pressed while that push is under way is held, and carried out if the push fails
@@ -783,6 +850,33 @@ answering, the menus are your last list read, or else codex's built-in list (`BU
 --bundled` of the image's codex), and a line under them says so. `CODEX_CLIENT_VERSION` follows the image's
 `CODEX_VERSION`, which `codexModels.test.mjs` checks; refresh `BUILT_IN` with it.
 
+**Grok Build** and **OpenCode** are on the Agent menu too (`shared/agents.cjs`), each only for someone whose own sign-in
+for it is saved on My settings: they run on nothing else, since the console holds no team key or proxy for them. The
+sign-in is `users/<login>/grok-auth` (an xAI key, `xai-…`, or `~/.grok/auth.json` from `grok login`) or `opencode-auth`
+(`~/.local/share/opencode/auth.json` from `opencode auth login`), saved with `POST /api/my/agent-auth/<agent>` and
+removed with `…/remove`. The save also takes the command line's token, for `woodshed setup` and `woodshed sign-in push`,
+which send the file from the person's computer after checking it there (cli/README.md, setup's step 4): as the token's
+own person only, through the same `setAgentAuth`, and answered with `{agent, set, savedAt}`, never the page's view. It is
+handed to that person's private sessions of that agent alone (`/settings`'s `agentAuth`), never to a shared session, a
+question, QA or a review, and a resume needs it saved as a start does. A review of the person's own pull request may
+still run them on it, through the console, which never hands it over ("Who reviews", below). Their logins rotate their
+refresh token at each use, so a session sends the refreshed one back at stop
+(`POST /agent-auth`, with the digest of the sign-in it was given), kept only while the saved one is still that sign-in (not a
+key or login saved since, nor another session's refresh) and does not run out before it. Their **Model** is a name their
+own `--model` takes, blank for the agent's default (OpenCode's is `provider/model`); **Effort** and **Permissions**
+offer what each one's command line has (`efforts` and `permissionModes` in the registry). None of them gets the
+console's MCP servers yet, and Grok Build runs none of a repo's own either (`session/grokRequirements.toml`).
+
+Grok Build's **Model** is a menu when the console could read its models on your own Grok sign-in (`grokModels.mjs`,
+`GET /api/my/grok-models`), as Codex's is: a login (`~/.grok/auth.json`) asks `GET
+https://cli-chat-proxy.grok.com/v1/models` with its access token, and an xAI key `GET https://api.x.ai/v1/models`, whose
+image and video models a session cannot use and are left out. The list is kept 10 minutes, tried again a minute after a
+failure, and forgotten when you save or remove the sign-in. **Effort** is then the picked model's efforts, its default
+marked, kept to the registry's. As for Codex, the console never refreshes the login: one whose `expires_at` has passed is
+not sent, and gives your last list read or none. With none (no sign-in, an expired login, xAI not answering) the
+Model is the box to type in again, and a line under the menus says why. A start is checked against the registry's shape
+alone, never the list, so a model typed while the list cannot be read still starts.
+
 Under the token, the switch **Also use it for shared sessions I start from
 GitHub** (on by default, and only with a token saved) runs the shared
 sessions you start, with the label or a `/woodshed` comment, on your plan too.
@@ -822,6 +916,91 @@ that it fetches no managed settings or organization policy with a custom base
 URL (`/status` says so). The docker launcher's sessions, which get the team key
 in their env file, use it directly.
 
+### Sessions that start sessions
+
+Claude in a My Woodshed session can hand a piece of work to a new session of the same person's: asked to "open a
+session for X", it writes the new session's first prompt as a full brief and runs `woodshed-session new --prompt-file
+<file>` (`session/startSessions.mjs`; the session's rules say how, `session/prompt.md`). The new session is an ordinary
+private session of that person's, with a branch of its own, and `woodshed-session list` and `get <id>` say how each it
+started is doing: its state, branch, pull request, last line and link. The two are not tied together otherwise:
+stopping one does nothing to the other.
+
+- **The credential is its own** (`console/sessionStarts.mjs`). At each launch of a private session the console makes a
+  start token, `wst_` and 64 hex, keeps only its sha256 on the session (`startTokenHash`, which `publicSession` never
+  sends to a page) and hands the token in `WOODSHED_START_TOKEN`. The entrypoint writes it to
+  `/tmp/woodshed-start-token` (mode 0600) and unsets it before anything starts (`keepStartToken`), so neither statusd nor
+  the app it starts has it in their environment; `woodshed-session` reads the file. It works only on the session API's
+  `/sessions` routes, never on `/api/cli` or a page, which no browser reaches, and refuses any call with an Origin. It
+  does nothing once the session stops (the hash goes with its run), and a resume makes another. A session's app, which
+  runs as the same user in the same container, can read the file if it goes looking: what the token can do is bounded
+  instead, below. `ownsSessionToken` knows it too, so a host routes the call to its installation as it does the session
+  token's.
+- **Who gets one**: a running private session, never a shared one, a question from Slack, a review or QA run, or a
+  session that has seen production data (its prompt could carry that data to an untainted session; a taint after the
+  launch makes the token do nothing).
+- **The start** is New session's own (`startMine` in `server.mjs`), as the session's owner: their Claude token (or Codex
+  sign-in, or for `--agent grok` or `opencode` their own Grok Build or OpenCode sign-in saved on My settings, the same
+  `signInRefusal`; Resume asks it the same way), their databases, write access to the project's repo (the session's own unless `--repo` names another
+  project), and the project's readiness; the owner must still be on the console and still have write access to its repo on GitHub, checked as for a command
+  line token (once an hour per person, `createWriteAccess`): New session's project check asks nothing of the default
+  project, whose writers the page's sign-in rechecks. It counts
+  in their My Woodshed sessions and waits in line past the limit, and a hosted console bills it as any session. Its
+  permission mode is the starting session's, never one it picks and never looser: the new agent gets the loosest of its own modes that does no more unasked (`modeForStartedSession` in `shared/agents.cjs`, which ranks every agent's modes; the console logs `sessionStarts: mode tightened for the agent` when it differs). Codex's `default` edits and runs sandboxed commands unasked, so a Codex session started from a `default` or `acceptEdits` one runs in `plan`, its read-only sandbox, where each write asks. An agent other than those `shared/agents.cjs` lists is refused with 400. A branch
+  that is the starting session's own is refused. It gets nothing of the starting session's but `startedFrom`, its id.
+- **Limits**: none of its own. The person's **My Woodshed sessions per person** applies as it does to New session: past
+  it, a started session waits in line.
+- **How it shows**: the started session's hover card and Details say **Started from** with the other's name (a link in
+  Details), and the other's say **Started here** with each it started. On Mine's rail it sits under the session that
+  started it while that one is live (`W.railGroups`), folded or open with the toggle on the main card (`3 sessions · 1
+  needs you`), and one that asks its person shows on Needs you too (design system, RailCard).
+- **A piece of the work, or work of its own**: by default a started session is a piece of the starting session's work:
+  it is grouped under it and in its `list`. `woodshed-session new --separate` starts work of its own
+  (`startedApart`): at the top of the rail, in no group and in no `list` but `--all`, still saying where it came from.
+  The session's rules (`session/prompt.md`) tell Claude to choose by what it is asked: related work is a piece, unrelated
+  work or work the person says they will drive is separate, and it says which it chose.
+
+The console logs `sessionStarts: session started` with `from`, the new `id` and its `status` (`queued` when it waits in line), `sessionStarts: start
+refused` with `why` (`no prompt`, `same branch`, `not a member`, `write access gone`, or `start checks` with
+New session's `status`), `refused, no running session has that start token` and `refused, a browser's call`. The
+session's log says `Session starts on` when it got a token.
+
+**Messages between them.** A session reaches every other private session of the same person's (never anyone else's, a
+shared one, a question from Slack, a review or a QA run), on the same token and the same session API: nothing goes from
+one session's machine to another's. `list --all` lists them; `list` alone the ones this session started.
+
+- `woodshed-session send <id> "<message>"` (`reply "<message>"` for the session's starter) types it in at the other's
+  prompt as the Chat tab's message is (`fleet.send`), headed `[Message from session <id> "<title>", …]` with how to
+  answer, so the agent and its person tell it from what the person typed. It is held while that session works, waits
+  in line or is paused, and typed once it is at its prompt again, as a held Chat message is.
+- A message from the session a wait is on answers that wait: `send … --wait` and `wait` print it (`[replied HH:MM] …`),
+  and it is not typed in behind the wait, where it would be held until the waiting turn ended, which it never would. A
+  wait on a session that is itself waiting on this one answers at once (`waitingOnYou`), so two sessions never wait on
+  each other: a session answering a message replies and ends its turn, and `reply` never waits.
+- `wait <id>` answers once it is done, needs its person, or stopped; `--reply` (and `send --wait`) once it has worked on
+  what was sent, or says nothing took it up (never seen working, with nothing held, for 90 s). The console answers each
+  wait within 4 minutes and the command asks again.
+- `read <id>` is what it was asked and said, from its statusd's `/transcript`, tools left out. A session that has seen
+  production data is never read by another (403), and what any route says of it (`get`, `list`, `wait`) carries
+  nothing its agent wrote: no last message, and `tainted: true`.
+- `stop <id>` and `resume <id>` are the page's Stop and Resume, with Resume's checks (`resumeMine` in `server.mjs`).
+- `rename "<name>"` renames the session itself, `rename <id> "<name>"` another of the person's, as the page's rename.
+
+**Helpers beside a session's own agent.** For a side task of the same work, in the same checkout and branch, a session
+starts an agent beside its own, as **+ Another agent** does, instead of a session: `woodshed-session agent new
+"<prompt>" [--agent claude|codex] [--wait]`, then `agent list`, `agent send <agent-N> "<message>" [--wait]`, `agent read
+<agent-N>` and `agent stop <agent-N>`. These are the session API's `/agents` routes, which reach only the calling
+session's own agents and go through the page's own route (`agentAction` in `server.mjs`, `handle.agentAction`), with its
+checks: a private session, never a tainted one, three at most, an agent the console allows (a Codex one's sign-in). The
+agent runs in the calling session's permission mode, never a looser one, and what it is sent is headed `[From this
+session's own agent]` or `[Message from this session's own agent]`, as its Chat tab shows. `--wait` reads the agents'
+state every 3 s until it worked and is back at its prompt (`it did not take it up` after 90 s with nothing held for it).
+The console logs `sessionStarts: agent asked for` with `from` and `agent`, then the page's `console: another agent asked
+for`.
+
+The console logs `sessionStarts: message` with `from`, `to`, the `chars` and `outcome` (`sent`, `queued`, `in-box`,
+`unknown`, `answered a wait`), `sessionStarts: wait answered at once, the other session waits on this one`, `sessionStarts: session stopped`, `sessionStarts: resume` with the `status`, `sessionStarts: session renamed`, and `sessionStarts: transcript
+not read` when the other's statusd did not answer.
+
 ### MCP servers
 
 Admins give sessions' claude MCP servers on Console settings' **MCP servers** card, or through its API
@@ -839,7 +1018,7 @@ server (`mcpServers.mjs`, `checkServer`):
   console can lock a session down: the docker launcher, or AWS with `prod_mcp`'s guarded network, and a session API and
   egress proxy address. Otherwise the page and the API say why.
 - `shared` (ordinary ones only): shared sessions and questions from Slack get it too. A QA run or a review never gets
-  any, since it runs a pull request's code, nor does a Codex session yet.
+  any, since it runs a pull request's code, nor does a Codex, Grok Build or OpenCode session yet.
 - `auth`, what the relay adds to each call: `oidc`, a five-minute token the console signs for `audience` (below);
   `header`, a header (`header`, such as `authorization` or `x-api-key`) whose value is kept in the secret store as
   `mcp-servers/<name>/header`, written once on the card or with `/header` and never read back; or `none`.
@@ -1054,6 +1233,16 @@ names none, so the pull requests sessions open carry it. Someone who wants no re
 none on My settings ("Who reviews"). `GET /api/review-readiness`
 says what runs in `review` (`{runner, rerun, from}`, `from` being `project file` or `default`).
 
+**A push that dismissed the review's approval is reviewed again, tag or not.** Where the repo dismisses stale
+approvals, a commit pushed after the review approved takes the approval away, and nothing else gives it back: a merge of
+the default branch with git's own message (`Merge branch 'main'`, `Merge remote-tracking branch 'origin/main'`) carries
+no tag. So when the review's own last verdict on the pull request is an APPROVE of an older commit and GitHub lists that
+review as `DISMISSED`, the next pull request event (the push, or the dismissal itself) starts a review of the head
+(`approvalDismissed` in `fleet.mjs`; it logs `fleet: the review's approval was dismissed by a push, reviewing it again`).
+A fix after changes were asked for still waits for the tag, so a session can push its fixes in several commits for one
+review, and a repo that keeps stale approvals is not reviewed again, since its approval stands. The tag is read from the
+commit's whole message, not GitHub's shortened headline, and a merge commit's counts like any other.
+
 At each verdict the console finds the reviewer App's installation on the repo, mints a token narrowed to pull requests,
 and submits the review at the reviewed commit. It logs `fleet: review verdict submitted` with `as: 'reviewer App'`, or
 `as: 'console App'` when no reviewer App was made, in which case GitHub refuses an approval of the App's own pull
@@ -1076,21 +1265,32 @@ console to post to GitHub:
   A session that ends without a review turns it into `The review did not finish` with the reason
   (`fleet: review ended without a report`).
 
-### Who reviews: Claude Code, Codex, both or none
+### Who reviews: Claude Code, Codex, Grok Build, OpenCode, several or none
 
 Each person picks who reviews the pull requests they open, on My settings' **Reviews of my pull requests** card
-(`reviewAgents.mjs`; kept with their settings, `userSettings.mjs` `reviewAgents`): **Claude Code and Codex**, **Claude
-Code only**, **Codex only** or **No code review**. A choice is offered only while something can run it:
+(`reviewAgents.mjs`; kept with their settings, `userSettings.mjs` `reviewAgents`): any of **Claude Code**, **Codex**,
+**Grok Build** and **OpenCode**, or **No code review**. The choice is saved as `none`, `claude`, `codex`, `both`, or the
+reviewers' ids joined with `+` in the registry's order (`claude+grok`; shared/agents.cjs, `reviewersOf`), and
+`woodshed config set reviews` takes the same. A choice is offered only while something can run it:
 
 - Claude Code: the team's `anthropic-api-key`, or their own Claude token while they run shared sessions on it;
-- Codex: the team's `openai-api-key`, or their own Codex sign-in while they use it for reviews (below).
+- Codex: the team's `openai-api-key`, or their own Codex sign-in while they use it for reviews (below);
+- Grok Build: their own Grok sign-in (an xAI key, or a `grok login` that has not expired) while they use it for reviews;
+- OpenCode: an Anthropic or OpenAI API key among their own OpenCode sign-ins, while they use them for reviews.
 
-With no choice saved, a review runs the most there is: both, else the one there is, else none. A saved choice that can
-no longer run keeps what of it can, else falls back the same way, and the console says why. A pull request is the
+There is no team key for Grok Build or OpenCode: with the author's own sign-in off, missing or expired, that reviewer is
+left out, and `fleet: review runs other than the author chose` says why (`Grok Build left out: …`). With no choice saved,
+a review runs the most of Claude Code and Codex there is: both, else the one there is, else none; Grok Build and
+OpenCode review only when picked. A saved choice that can no longer run keeps what of it can, else falls back the same
+way, and the console says why. A pull request is the
 person's whose session opened it, or its GitHub author otherwise (`pullOwner`); one whose author fails the identity
 checks of their Claude plan (`teamKeyReason`), or a bot, gets the most the team keys can run.
 
-The review gets `review.agents` and `REVIEW_AGENTS` (`claude`, `codex` or both), and `session/review.sh` runs each.
+The review gets `review.agents` and `REVIEW_AGENTS` (any of `claude`, `codex`, `grok`, `opencode`), and
+`session/review.sh` runs each, every one but Claude in the background beside it, in its own `.review/<agent>/`.
+Before any of them starts, it removes the whole `.review/` folder: a branch can commit one, verdict and all, which a
+reviewer that writes none would leave to be reported as its own (the pane says `The pull request carries a .review
+folder of its own`).
 Codex works as in a Codex session: it reads the checkout, runs what it likes (the container is the sandbox) and writes
 its verdict's files itself, in `.review/codex/`. It gets `REVIEW_CODEX_MINUTES` (20 by default), then is stopped, and
 Claude's verdict goes out alone. Codex alone sends its own verdict.
@@ -1100,18 +1300,21 @@ Claude's verdict goes out alone. Codex alone sends its own verdict.
 Slack post and its brief (the gates come without `review`, `gatesFor` in `fleet.mjs`) and QA (`reviewApproved`). A
 review that runs on it later clears the skip.
 
-The two verdicts become one (`codeReview.mjs merge`):
+The verdicts become one (`codeReview.mjs merge`, each reviewer named with its folder):
 
-- The stricter conclusion wins, so a pull request is approved only when both approve.
-- The highest reported merge risk wins. When both rate it High, the check prefers a report with a failure reason
+- The strictest conclusion wins, so a pull request is approved only when all approve.
+- The highest reported merge risk wins. When several rate it High, the check prefers a report with a failure reason
   and a pre-merge check.
-- The comment and summary have a section from each, and each inline comment says whose it is.
-- An earlier comment is resolved when the reviewer who wrote it (its `**Claude Code:**` or `**Codex:**`, read from the
+- The comment and summary have a section from each (`### Grok Build: COMMENT`), and each inline comment says whose it
+  is. The review's heading names them (`## Claude Code and Grok Build review`, `reviewHeading`), which the gates read
+  as the review's.
+- An earlier comment is resolved when the reviewer who wrote it (its `**Claude Code:**`, `**Codex:**`, `**Grok Build:**`
+  or `**OpenCode:**`, read from the
   comment records `review.sh` keeps in `earlier-comments.jsonl`) found it fixed;
   one with no such mark, or whose writer wrote no verdict, only when every reviewer that gave a verdict found it fixed.
-- When one writes no verdict, the other's goes out alone and says so.
+- When one writes no verdict, the others' go out and say so.
 
-The PR comment says `Reviewing with Claude Code and Codex`.
+The PR comment says `Reviewing with Claude Code and Codex` (or whoever reviews).
 
 No sign-in ever enters the review session, which reads what anyone who can push to the pull request wrote. The
 console's OpenAI proxy (`openaiProxy.mjs`) adds one of these to each of codex's calls, as the Anthropic proxy does for
@@ -1144,20 +1347,96 @@ claude:
 - **The team's `openai-api-key`**, on `/openai`, for everyone else (`REVIEW_CODEX_AUTH=key`), and for an author whose
   saved ChatGPT login has expired.
 
+Grok Build and OpenCode review the same way, on the author's own sign-in alone, which the console's review agent proxy
+(`reviewAgentProxy.mjs`) adds to each call; the session holds only its `SESSION_TOKEN`, as the agent's API key:
+
+- **The switch.** On My settings' Grok Build and OpenCode cards, **Also use it for reviews of my pull requests** is on
+  once a sign-in is saved, unless the person turns it off (`POST /api/my/agent-auth/<agent>/reviews`, `woodshed config
+  set grok-reviews|opencode-reviews`). It needs the same checks as Codex's (`teamKeyReason`; never a bot). Picking the
+  agent on the Reviews card is what makes it review. The review keeps `review.ownSignIns`: whose sign-in and how
+  (`{grok: {login, via: 'key'|'login'}, opencode: {login, provider}}`), never the sign-in itself.
+- **Grok Build** runs with `XAI_API_KEY` set to the session's token and `GROK_MODELS_BASE_URL` at the console's
+  `/grok/v1`, which takes all its model traffic: `GET /v1/models`, `POST /v1/responses` (its session title on a key, and
+  its turns on a login's model list) and `POST /v1/chat/completions` (its turns on a key), measured with grok 1.0.92.
+  It runs with `--disallowed-tools x_search`, since `--disable-web-search` leaves xAI's X search in, and the proxy takes
+  the `id` off the reasoning items it sends back on `/v1/responses` (reviewAgentScope.mjs says why). The proxy sends
+  them on with the author's xAI key to `api.x.ai/v1`, or with a login's access token to `cli-chat-proxy.grok.com/v1`,
+  only while its `expires_at` is ahead: the console never refreshes a login (`grokModels.mjs` says why), which a Grok
+  session of theirs does at its stop.
+- **OpenCode** reviews only on an API key (`{type: 'api'}`) of Anthropic or OpenAI, the first of those the author's
+  `auth.json` has (`OPENCODE_REVIEW_PROVIDERS` in shared/agents.cjs), and the session gets `REVIEW_OPENCODE_PROVIDER`.
+  Its own config points that provider alone at the console's `/opencode/<provider>/v1` (its `baseURL`), with the
+  session's token as the key: `x-api-key` for Anthropic, a bearer for OpenAI. The proxy swaps it for the author's key,
+  to `api.anthropic.com` (`POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/models`) or `api.openai.com`
+  (`POST /v1/responses`, `GET /v1/models`). A login (`oauth`: Claude Pro or Max through OpenCode, ChatGPT,
+  Copilot) is never used: those rotate, and OpenCode's plugins reshape their calls in ways a proxy should not copy.
+  Other key providers (OpenRouter, Google and the rest) are left out until each has its upstream, header and paths
+  here. OpenCode picks its model itself, its default for that provider.
+
+Each call is checked as Codex's are: only a review session running that agent with an author's sign-in recorded, the
+switch and the sign-in read again at each call (one turned off, removed, expired, or an OpenCode key gone from
+`auth.json`, stops at once), the provider the review started on, and only those paths, in plain form, each with the
+one method it names and no query string. The rest get a 404, or a 405 for a known path asked with another method
+(`reviewAgentProxy: refused a call a review's agent does not need`, with the method and the path but never a query):
+the same path read with another method is another API, such as OpenAI's `GET /v1/chat/completions`, which lists every
+stored completion in the key's project. A private Grok or OpenCode session never comes
+here: it runs on its owner's own sign-in, directly.
+
+Each call's body is read too (up to 32 MB) and checked before the author's sign-in is read or added
+(`reviewAgentScope.mjs`). A model API takes in a body the IDs of what the author's account already holds, and reads it
+for the model: OpenAI's and xAI's `previous_response_id`, `conversation`, a stored `prompt`, an `item_reference`, a
+`file_id`, a `file_search` tool's vector stores or `code_interpreter`'s container; Anthropic's file sources,
+`container` and `mcp_servers`. The review's agent reads what anyone who can push to the pull request wrote, and can
+run commands with the session's token, so a prompt planted there could have it send one. The check is an allowlist,
+not a denylist: only the fields each agent was measured to send pass, at the top level and nested (input items,
+content blocks, tools), each object picked by its `type`, so a field a provider adds later is refused until it is
+measured and listed. Measured in the session image with a recording stand-in upstream (`reviewInImage.mjs`, whose
+`modelStandIn.mjs` prints each body's field names) over a turn with a tool call and the turn after it: grok 1.0.92
+sends its whole conversation to `/v1/chat/completions` each turn and calls `/v1/responses` once, for its title, with
+`store: false`; OpenCode 1.19.6 on OpenAI sends `store: false` and its reasoning items back by `encrypted_content`, with
+no `id`; on Anthropic, text, thinking, tool use and tool result blocks. None sends `previous_response_id` or any other ID
+of a stored object, so none passes, not even one the provider gave the same review: the only IDs that pass are the
+conversation's own tool call IDs, matched within the same body. A Responses body must carry `store: false`: left out,
+OpenAI and xAI store the response in the author's API project, where its members could read a private pull request's
+content, so it is refused (`field: 'store'`). Beyond what was measured, only what names nothing
+passes: an image given inline (base64, or a `data:` URL, never a URL or a file), a tool result's `is_error`,
+Anthropic's `redacted_thinking`. Tools are functions alone; a provider's own tools have a `type` of their own and are
+refused. A tool's schema and a tool call's arguments are the agent's own and not walked. A body that is not JSON gets a
+400, a compressed one a 415, one over the cap a 413, and a field not listed a 403 naming the field
+(`reviewAgentProxy: refused, a body a review's agent does not send`, with `path`, `why` and `field`, never a value).
+When an agent's update changes what it sends, its reviews fail on that 403: run `reviewInImage.mjs` on the new image
+(with `IN_IMAGE_OPENCODE_PROVIDER=openai` for OpenCode on OpenAI), read the fields it prints, and list the new ones
+that name nothing.
+Grok's conversation and session ids (`x-grok-conv-id`, `x-grok-session-id`, `x-grok-conv-group-id`, any
+`x-grok-…-id`), which xAI may keep state by, reach xAI as ids of the review's own (`scopedId`): a UUID made from the
+review session, the header and the id sent, with a key the console makes at start. The same id stays the same within a
+review, so its turns stay one conversation, and no id a session sends ever names a conversation outside it.
+
 
 The console logs:
 
 - `userSettings: reviews of my pull requests` with the `choice`;
-- `userSettings: own Codex sign-in for reviews` on each person's switch;
-- `fleet: review session started` with its `agents` and `codex` (`own ChatGPT login`, `own key` or `team key`);
+- `userSettings: own Codex sign-in for reviews`, `own Grok Build sign-in for reviews` and `own OpenCode sign-in for
+  reviews` on each person's switches;
+- `fleet: review session started` with its `agents` and `codex` (`own ChatGPT login`, `own key` or `team key`), and
+  `grok` (`own key` or `own login`) and `opencode` (`own anthropic key`, `own openai key`) for those that run;
 - `fleet: review runs other than the author chose` with `choice`, `agents` and `why`;
 - `fleet: review not started` with `reason: 'the author chose no code review'`;
 - `openaiProxy: first call on the author's ChatGPT login`, `on the author's key` or `on the team key`;
-- `openaiProxy: refused, the author's sign-in not usable` with `why`.
+- `openaiProxy: refused, the author's sign-in not usable` with `why`;
+- `reviewAgentProxy: first call on the author's Grok Build sign-in` (or `OpenCode`) with `via`;
+- `reviewAgentProxy: refused, the author's sign-in not usable` with `why`, `refused, not a review session`, `refused,
+  the review does not run it`, `refused, not the provider the review started on`, `refused, a body a review's agent
+  does not send` with `why` (`not JSON`, `compressed`, `too large`, `a field not allowed`) and the `field`, and
+  `upstream not reached`.
 
 In the session's pane: `Codex reviews on the author's ChatGPT login, which the console adds to its calls` or `on a key
 the console adds to its calls`, then `Codex ended (exit=…)`, and `Codex took longer than … minutes and was stopped`
-when it did. Codex's own log is at `.review/logs/codex.jsonl`.
+when it did. Codex's own log is at `.review/logs/codex.jsonl`. Grok Build and OpenCode say `Grok Build reviews on the
+author's own sign-in, which the console adds to its calls` or `OpenCode reviews on the author's own <provider> key`,
+then `… ended (exit=…)`, and what the console refused (`Grok Build: @<login>'s saved Grok Build login has expired`);
+their logs are `.review/logs/grok.jsonl` and `opencode.jsonl`. They take `REVIEW_AGENT_MINUTES` (Codex's by default),
+set in the installation's session env, which the ECS launcher passes on as it does `REVIEW_CODEX_MINUTES` (`PER_SESSION_ENV`).
 
 **A review asked for by hand.** `woodshed review start` (cli/README.md, "Reviewing your open pull requests now", and
 `woodshed setup`'s last review step) calls `POST /api/my/pulls/<number>/review` with the project's name, which the
@@ -1203,8 +1482,10 @@ Only an admin can open them (see "Sign-in"). The same menu signs
 you out.
 
 - **Webhook events** (`/events`): each message it took off the webhooks queue,
-  what it did with it (started or messaged a session, skipped one the poll
-  already handled, ignored, failed) and the delivery id. Labels and comments
+  one line each: when it came, what the console did with it (started or messaged
+  a session, skipped one the poll already handled, ignored, failed), the event,
+  what it was on, who sent it and the delivery id, and a status word (Acted on,
+  Ignored, Skipped, Failed). Labels and comments
   it does not act on, and Slack events that are not mentions, are left out.
   Each message is one line appended to `webhookEvents.jsonl`, beside
   `state.json`; the page shows the last 7 days, and a sweep every 12 hours
@@ -1212,8 +1493,8 @@ you out.
   delivery the Lambda refused never reaches the queue: GitHub's Recent
   Deliveries page shows those. When a source is switched off on Console
   settings (below), the page says so above the list.
-- **Webhooks** card on Console settings (`/console-settings#webhooks`): a
-  switch for GitHub, and on the Slack card's Questions row one for Slack, shown
+- **GitHub webhooks** row on Console settings, under This console (`/console-settings#webhooks`): a
+  switch for GitHub on the row itself, and on the Slack group's Questions row one for Slack, shown
   where webhooks reach the console (a queue, the local receiver, or the program
   it is embedded in), that turn each source off on its own. **GitHub webhooks** off, the console drops
   each GitHub delivery as it arrives, so the queue forgets it, and polls GitHub
@@ -1232,13 +1513,16 @@ you out.
   first delivery it drops, and at start `console: GitHub webhooks are switched
   off on Console settings, polling` or `console: Slack questions are switched
   off on Console settings`.
-- **Secrets & webhooks** (`/secrets`, the second tab of Settings): each secret's state and when it last
-  changed. Replace saves a new version, so the one before stays restorable as
+- **Secrets & webhooks** (`/secrets`, the second tab of Settings): groups of rows that open in place, as on My
+  settings (`public/settingsRows.js`), one row per secret. A closed row says what the secret is for, when it last
+  changed and whether it is set; open, it has the value behind Show and the form that sets or replaces it. A link to
+  `#secret-<name>` opens that row. Replace saves a new version, so the one before stays restorable as
   `AWSPREVIOUS`. Show reveals a session secret, since anyone who reaches the
   console can already read it in a session's terminal; the GitHub App's key is
   write-only. Slack's two keys are not listed: they are set on the Slack card
-  (below, "Slack"), and a line says so. A new App key is used at once, after a test token minted with it
-  succeeds. The webhook card checks four things (the App's webhook switched
+  (below, "Slack"), and a row says so. A new App key is used at once, after a test token minted with it
+  succeeds. The GitHub webhook group has three rows: Connection, Payload URL and secret, and a link to Webhook
+  events. Connection checks four things (the App's webhook switched
   on, the five events subscribed, the App connected to the Lambda with the
   stored secret, GitHub's last delivery accepted) and **Set up webhook** walks
   through them in three steps: the boxes only GitHub's settings page can tick
@@ -1246,7 +1530,7 @@ you out.
   the App with the Lambda's URL, `PATCH /app/hook/config`), and a test label
   whose delivery the modal follows from GitHub (`GET /app/hook/deliveries`) to
   the console's events log. The Lambda rereads
-  its secret when a signature fails, so Rotate under Advanced takes effect at once.
+  its secret when a signature fails, so Rotate secret on the Payload URL and secret row takes effect at once.
 
 Every change says what it changes and what that affects before it goes ahead.
 Replacing or rotating a secret needs its name typed; the server checks the
@@ -1645,7 +1929,9 @@ while `woodshed review` uses `GET /api/review-readiness` ("The reviewer App"). F
 (`console/cliConfig.mjs`), `GET /api/cli/config` returns the person's choices on My settings and
 never a secret, and `POST /api/my/terminal`, `/api/my/reviews`, `/api/my/codex-auth/reviews`,
 `/api/my/claude-token/shared`, `/api/my/projects/default` and `/api/my/github/identity`, which answer the token with
-that same view rather than the page's whole My settings answer. Each is answered by the page's own code as the token's
+that same view rather than the page's whole My settings answer. `woodshed sign-in push` (and setup) uses
+`POST /api/my/agent-auth/grok|opencode`, the own sign-in's save alone (never `…/remove`), answered with whether one is
+saved and when. Each is answered by the page's own code as the token's
 person, so it sees and changes exactly what they could on the page.
 Every other route refuses it with 403, and so do those for a call with an Origin header (a page's). Those writes need no
 `x-woodshed` header or Origin, which only stand between another site and the browser's cookie; each logs
@@ -1701,9 +1987,9 @@ exit code.
 with the same token and the size it opens at in `x-woodshed-terminal-size` (`<columns>x<rows>`). The console checks it
 as it does a pipe, as it opens and every 15 seconds after, and closes it on the same revokes and lockdown. It sends it
 on to the session's ttyd for that tab with ttyd's credential in place of the person's token, as `terminalProxy.mjs`
-does the page's. ttyd 1.7.7 also wants its credential in the terminal's first message, which a page reads from ttyd's
-`/token`: the console sends that message itself, with the size asked for, so `TERMINAL_TOKEN` never leaves it. No
-compression is asked for. Then it copies bytes both ways. The log lines are the pipe's, with `kind` (`term` or
+does the page's. ttyd 1.7.7 also wants its credential in the terminal's first message: the console sends that message
+itself, with the size asked for, as it does the page's, so `TERMINAL_TOKEN` never leaves it. No compression is asked
+for. Then it copies bytes both ways. The log lines are the pipe's, with `kind` (`term` or
 `shell`; `exec` for a pipe). It is the same terminal as the tab's: the agent's tmux or Herdr terminal, or the shell's
 tmux, so what is typed in one shows in the other.
 
@@ -1726,7 +2012,7 @@ first to sign in is the first member and an admin, as on any new console. Once a
 what is asked again, at the next hourly check.
 
 Write access alone is not enough: a person must also be on the console's list,
-on the **People** page (`console/members.mjs`, `members` and `memberRequests`
+on the **People** tab of Settings (`console/members.mjs`, `members` and `memberRequests`
 in `state.json`). An admin can invite a handle (it must have write
 access), accept or decline someone asking to join, and remove another member;
 nobody can remove themselves. A writer who is not on the list signs in only as
@@ -1748,8 +2034,28 @@ until the first is switched on. The first person to sign in to a console with
 an empty list is its first admin. Locked out with no admin left: stop the console, set `"admin": true` on your entry under `members`
 in `/var/lib/<prefix>/console/state.json`, and start it again.
 
-**What each member can do.** People is a table, one row per member and one
-column per switch, each off for a new member and set by an admin:
+**The page** reads as the other settings pages do (`public/settingsRows.js`): **Asking to join** is a group of plain
+rows, one per person, with Accept and Decline on the row, and is left out while nobody asks; **Members** is a group
+whose box holds the table below, which scrolls sideways inside the box on a phone; and **Invite someone** (Add someone
+behind a hosting proxy) is that box's last row, which opens in place on its form (`/people#invite-card` opens it).
+
+**What each member can do.** Members is a table, one row per member, with a **Role** select and what that role can do
+beside it, in words. A role is a name for one set of three switches, which the console keeps and checks
+(`console/peopleRoles.mjs`): picking one sets all three at once (`POST /api/people/access`, `members: role set` in the
+log), and the role shown is read back from the switches, so a list from before roles shows as roles too.
+
+| Role | Admin | Sessions from GitHub | Can be assigned |
+| --- | --- | --- | --- |
+| Owner | on | on | on |
+| Member | off | on | on |
+| Contributor | off | on | off |
+| Private only | off | off | off |
+
+The first person to sign in to a new console is a full Owner. An owner with a switch off (behind a hosting proxy, where
+Can be assigned starts off, or an admin from before roles) shows as **Owner (partly)**, with what they lack in words;
+picking Owner turns the rest on. Picking any other role for yourself while you are an owner asks first, since it takes
+these pages away at once and only another owner can give them back; the last owner is refused anyway. Invite someone takes a role too, picked from a table of the roles with what each can do; without one (an older page or a script), someone new has every switch
+off, Private only. The switches:
 - *Admin*, above.
 - *Sessions from GitHub* (`githubSessions`): the `woodshed` label and
   `/woodshed` comments start or message a session for them, and they see
@@ -1764,10 +2070,10 @@ column per switch, each off for a new member and set by an admin:
   switch starts off, and sessions already assigned keep their assignee.
 
 **Behind a hosting proxy** there is no People list of the console's own, and no People page, unless the program
-embedding the console hands over its list (`members`, "Embedding the console"). With it, People is a tab of Settings,
+embedding the console hands over its list (`members`, "Embedding the console"). With it, People is a tab of Settings, as on any console,
 after General and Secrets & webhooks, for owners (the admins there). Who is in and each person's role (Owner or
-Member) are the program's: **Add someone** takes a GitHub handle and a role, Remove and the Role column change them
-there, and core keeps no copy of the list (`console/hostedMembers.mjs`). Nobody asks to join, so there is no Asking to
+Member) are the program's: **Add someone** takes a GitHub handle and a People role, Remove and the Role column change
+them there (Owner is the program's owner role, every other People role its member role), and core keeps no copy of the list (`console/hostedMembers.mjs`). Nobody asks to join, so there is no Asking to
 join, accept or decline, and no dot. The switches stay the console's, in `state.json` under `memberSwitches` by
 lowercased handle: *Sessions from GitHub* is on for everyone listed (it was never asked behind a proxy, and it also
 gates seeing shared sessions), so only those turned off are kept; *Can be assigned* is off, as above. Someone the list
@@ -1858,9 +2164,11 @@ redirect.
 - Writes and terminal websockets must come from the console's own origin
   (Woodshed's `sameOrigin.mjs`), and writes also need the `x-woodshed: 1`
   header, which a cross-site form cannot send.
-- The proxy adds each session's ttyd credentials. ttyd still gives that
-  terminal credential to the browser, so it is a separate token from the one
-  statusd checks, and only the console can reach statusd.
+- The proxy adds each session's ttyd credentials, in the terminal's first
+  websocket message too, and passes on nothing of a ttyd but its websocket at
+  `/<kind>/<id>/ws` as written (ttyd reads `%74oken`, `//token` and `token;x` as
+  its `/token`), so the browser never holds the terminal credential. It is a separate token from the one
+  statusd checks all the same, and only the console can reach statusd.
 - The database viewers and the Redis viewer have no login of their own, so a
   page on another site must not reach them through a signed-in browser.
   The console refuses any request to `/term/`, `/redis/`, `/pg/` or `/mongo/`
@@ -1981,7 +2289,26 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   marks its entry in the side list and menu, and its tab in the row and among the entry's pages. `styles` are its
   stylesheets (paths), loaded after the console's, so its rules use the design system's variables and follow the
   theme; it scopes them to `.host-page`, which holds its part. Its forms and links stay the program's. Someone who is not an admin sees the program's tabs alone, and Settings in the Console group opens the
-  first of them; with no tabs, nothing changes for them.
+  first of them; with no tabs, nothing changes for them. It draws its part with the console's own components, made on
+  its server by `settingsMarkup.mjs` (designSystem/components/SettingsRows, "From a program's server"), so it looks
+  like the console's pages and follows the design system as it changes; their rows open in place (`public/hostRows.js`).
+- `repoPage({name, repo, headers})`: groups of the program's own on a repo's settings page (Console settings → Repos →
+  Repo settings), after the console's, for what it keeps about the repo: its session image's project file, the data its
+  sessions start from. Async; it answers markup from `settingsMarkup.mjs`, `{markup, scripts}`
+  where its groups need scripts to work (an upload's: paths on the console's address, at most eight), or `null` for
+  none. The admin's view of the repo carries it as `host: {html, scripts}` (`GET /api/console-settings/repos/<project>`),
+  and the page puts the markup in as a template's contents, so no `<script>` in it runs, then loads each script once:
+  markup from `settingsMarkup.mjs` alone, which escapes every value, never a string the program built some other way. A
+  script listens on the document, or for `woodshed:host-groups` on `window`, which the page fires each time it draws the
+  groups anew (a save answering with new ones). Its forms post to the program, which sends the page back to
+  `/console-settings/repos/<project>#<row>`, opening that row. A hook that throws, or answers anything else, adds none
+  and logs `repoSettings: the program's groups not given`; the page is shown without them.
+- `standalonePage({title, body, brand: {label, href, icon?}, groups?, current?, login?, signOut?, dialog?, refresh?, styles?, scripts?})`
+  from `server.mjs`: a page of the program's that stands outside any console, such as a first visit before there is a
+  console to be in. It is the settings pages' frame drawn by the server, the program's name (and its mark, `icon`, a path) heading the side list in
+  place of Back to sessions, its `groups` of links under it and Sign out posting to `signOut`, with the design system's
+  stylesheet and `hostRows.js` and no console script, so it asks no console anything. `dialog` is a step drawn over it
+  (`settingsMarkup.mjs`'s `dialog`), the page inert behind; `refresh` reloads it after that many seconds.
 - `members: {list(), add({login, role, by}), remove({login, by}), setRole({login, role, by})}`, with `trusted` only
   (given without it, `createInstallation` throws): the program's own list of who is in, for the People page (above,
   "Sign-in", behind a hosting proxy). `list()` answers `[{login, role, note?}]`, `role` `owner` or `member` (an
@@ -2020,7 +2347,8 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - The command line's routes are core's own (`cliSignIn.mjs`): `/cli` is behind the program's sign-in like any page, and
   `/api/cli/*` carries its own token in `Authorization`, so the program's proxy passes those through without its
   sign-in, as it does `/api/tunnel/*`. When a request carries `Authorization: Bearer wsc_…`, also pass through the
-  session routes listed in `cliSessions.mjs` and the six settings writes listed in `cliConfig.mjs`. The console checks
+  session routes listed in `cliSessions.mjs` (the own sign-in's save among them) and the six settings writes listed in
+  `cliConfig.mjs`. The console checks
   the token itself and refuses it on other routes.
 - `cliDevices`, from `createCliDevices()` (`cliSignIn.mjs`): for a program serving several installations at one address,
   one waiting room for the command line's sign-ins that it gives them all. `POST /api/cli/device` and `/api/cli/token`
@@ -2089,6 +2417,13 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   program connects people on its own (on their first page, say): My settings then shows the connection as a status,
   "Pushes as @you", or, unconnected, says it did not happen and offers Connect as the way back. Without a secret store it is off
   (`console: Connect GitHub off, the host gave no secret store to keep tokens in`).
+- The installation's `matchSlack({login, emails})`, for a program that signs people in itself: the Slack match core's
+  own sign-in makes (`slackPeople.mjs`), which links a member's Slack user from the verified emails on their GitHub
+  account so People shows it and assignment pings reach them. Call it as they sign in, with `emails()` answering those
+  emails (GitHub's `/user/emails`, which a GitHub App's user token reads only with the account permission Email
+  addresses: read); it is called only when a look is due, at most once a day, and never over a link set by hand on
+  People. Someone the program's `members` list does not have is not matched (`skipped`). It never throws, and answers
+  `linked`, `unmatched`, `manual` or `skipped`; Slack's bot needs `users:read.email`.
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
@@ -2117,8 +2452,8 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   (`href`) in place of Replace keys. Core has no install flow of its own: whatever `href` leads to writes the same
   `slack-bot-token` the dialog does. Without the hook the dialog opens on the own app's steps.
 
-A Claude token or Codex sign-in written straight into the secret store, as `users/<login>/claude-token` or
-`codex-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
+A Claude token, Codex sign-in or own sign-in for another agent written straight into the secret store, as
+`users/<login>/claude-token`, `codex-auth`, `grok-auth` or `opencode-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
 
 ## Slack
 
@@ -2188,14 +2523,17 @@ console only, like the App key: a session never sees it.
 
 ### Setting it up: the Slack card
 
-Console settings has one **Slack** card for all of it (`public/consoleSettings.js`, its server side
-`console/slackSetup.mjs`). Not set up, it says what Slack does and has **Set up Slack**, which opens a dialog
+Console settings has one **Slack** group for all of it, a row each for the bot, pull requests and questions
+(`public/consoleSettings.js`, its server side
+`console/slackSetup.mjs`). Not set up, it is one line that says what Slack does and has **Set up Slack**, which opens a dialog
 (`public/slackSetup.js`). Where the program embedding the console offers an install of its own (`slackInstall`,
 "Embedding the console"), the dialog first asks which way to connect; otherwise it opens on the own app's steps:
 
 1. **Create the app from this manifest**: the console makes a Slack app manifest (`slackManifest`) with the bot's
-   scopes (`app_mentions:read`, `channels:read`, `chat:write`, `groups:read`, `reactions:write`, `users:read`,
-   `users:read.email`), the Messages tab the assignee's direct messages need, and this console's events Request URL
+   scopes (`app_mentions:read`, `channels:history`, `channels:read`, `chat:write`, `groups:read`,
+   `reactions:write`, `users:read`, `users:read.email`; the `channels:history` scope lets a question read the thread it was
+   asked in, and an app made before it is reinstalled with it: until then the console logs `slack: call refused`
+   with `missing_scope` and `asks: thread not read`, and answers from the mention alone), the Messages tab the assignee's direct messages need, and this console's events Request URL
    with the `app_mention` bot event. The URL is the embedding program's (`slackEventsUrl`), else the provider's: the
    webhooks Lambda's function URL at `/slack` on AWS, the local receiver's `WOODSHED_LOCAL_WEBHOOK_URL` at `/slack`.
    With neither the manifest has no events, and the dialog says where the address comes from. Paste it at
@@ -2225,13 +2563,14 @@ Connected, the card has a row each:
   What the card says of the saved token is kept until the token changes, and an app reinstalled with new scopes keeps
   its token: **Check again**, next to a missing scope or a refused token, asks Slack about it now and reads the
   channel list again (`POST /api/console-settings/slack/recheck`, `slack: saved token checked again`).
-- **Pull requests**: the channel, and **Change channel**, the picker again. **Limits** unfolds the two waits before a
+- **Pull requests**: the channel, which the closed row names; opened, the picker again with **Save channel** and
+  **No channel** (closing the row cancels a pick), and under **Limits** the two waits before a
   post (the review and suites, and the QA check; the table below).
 - **Questions**, only where the console answers them at all (a Slack bot and a session API): the switch that was on
   the Webhooks card (`POST /api/console-settings/webhooks` with `source: "slack"`), when the bot was last mentioned
   (from the Webhook events log), a note while no signing secret is saved, and **Limits** for the questions' own
   (below, "Questions from Slack").
-- **Disconnect Slack**, behind a typed `slack`, deletes both secrets (`POST /api/console-settings/slack/disconnect`;
+- **Disconnect Slack**, in the Bot row behind a typed `slack`, deletes both secrets (`POST /api/console-settings/slack/disconnect`;
   `slack: disconnected`). It is offered only where the secret store makes a secret on its first write
   (`createsOnWrite`, providers/README.md), as the local store does: a store whose secrets its infrastructure made, as
   Terraform makes AWS's, would be left without the one the webhooks Lambda reads, so there the keys are replaced
@@ -2415,8 +2754,7 @@ pull request can be done:
   next read is not messaged again, and finishing a turn is not a question.
 - **Needs a human:** the session left a comment that opens with
   `Needs a human:` on its issue or pull request, as its prompt and the review
-  and CI feedback ask when it cannot go on (`session/readyGate.mjs` asks for one
-  when a change cannot be proven in the session). The webhooks handler (the
+  and CI feedback ask when it cannot go on. The webhooks handler (the
   Lambda, or the local provider's receiver) passes on each such comment with
   its author, and the console keeps only one from its own App, `<slug>[bot]`
   as GitHub names it (`console/appIdentity.mjs`), since that is how a session
@@ -2461,7 +2799,10 @@ anyone Slack will not say anything about.
    it gets no repo settings, and the install secrets are unset before claude starts.
    `session/ask.md` tells claude to read the code, link each claim to it at the
    commit it read, and post the answer with `session/answer.sh`, which goes
-   through the session API's `POST /answer` to the thread.
+   through the session API's `POST /answer` to the thread. When the person who mentioned it asked for an issue in that
+   message, it searches for an open one first, then runs `session/issue.sh`, which goes through `POST /issues`: the
+   console opens the issue with its App (the session's token never writes). Only for someone linked on People whose GitHub login writes to that repo, only on the console's own repos,
+   labels the repo already has. The console posts the issue's link in the thread; a refusal's reason is told to the session.
 4. Another mention in the same thread is typed into that session, or resumes it
    with its conversation once it has stopped. A mention in a new thread is a new
    question.
@@ -2475,7 +2816,7 @@ A follow-up has to mention the bot too: the app reads mentions only
 (`app_mention`), not every message in a channel.
 
 To turn it on, on the same Slack app as the pull request posts: Set up Slack on the Slack card (above, "Setting it up:
-the Slack card"). An app made from its manifest already has the scopes (`app_mentions:read`, `chat:write`,
+the Slack card"). An app made from its manifest already has the scopes (`app_mentions:read`, `channels:history`, `chat:write`,
 `reactions:write`, `users:read` and `users:read.email` for questions) and Event Subscriptions with this console's
 Request URL (on AWS, the `slack_events_url` Terraform output; Slack checks it at once) and the bot event
 `app_mention`; paste its **Signing Secret** in the dialog's third step. An app made by hand needs the same, then
@@ -2517,18 +2858,23 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
 
 The Settings page (`/console-settings`, first under Console in the avatar
 menu; its General tab, beside the Secrets & webhooks tab) holds the numbers above. Only an admin can
-open it and change them. Each card saves its own values together with its Save
-button, with no typed confirm since changing a value back undoes it (the typed
+open it and change them. It is groups of rows that open in place, as My settings is (`public/settingsRows.js`,
+designSystem/components/SettingsRows): **This console** (Woodshed, GitHub webhooks), **Repos**, **Shared sessions**,
+**Kept sessions** (Retention, Sessions holding data), **Slack** and **MCP servers**. A closed row says what it is set
+to and its status word, several may be open at once, and a link or the search that names a row opens it
+(`/console-settings#card-retention`; `#card-projects` opens on Add a repo, and the older `#slack` and `#webhooks`
+still land on theirs). Each row of numbers saves its own values together with its Save
+button, sending only the ones that changed, with no typed confirm since changing a value back undoes it (the typed
 confirm is kept for what cannot be undone: Stalled's fixes below, secrets, a
-restore), and the server refuses a value out of its range, keeping none of the
-card's:
+restore), and the server refuses a value out of its range, keeping none of that
+save's. Its closed row says **Defaults**, **Changed**, or **Not saved** while a typed number waits for its Save:
 
-| Card | Setting | Range | Default |
+| Row | Setting | Range | Default |
 | --- | --- | --- | --- |
-| Sessions | Shared sessions running at once | 1 to 20 | `WOODSHED_MAX_SESSIONS`, 5 |
-| Sessions | My Woodshed sessions per person | 1 to 10 | 3 |
-| Sessions | Pause a session waiting for input after | 0.25 to 24 hours | `WOODSHED_IDLE_HOURS`, 1 |
-| Sessions | Stop a working session after | 1 to 24 hours | `WOODSHED_LIFETIME_HOURS`, 8 |
+| Shared sessions, Running at once | Shared sessions running at once | 1 to 20 | `WOODSHED_MAX_SESSIONS`, 5 |
+| Shared sessions, Running at once | My Woodshed sessions per person | 1 to 10 | 3 |
+| Shared sessions, Timeouts | Pause a session waiting for input after | 0.25 to 24 hours | `WOODSHED_IDLE_HOURS`, 1 |
+| Shared sessions, Timeouts | Stop a working session after | 1 to 24 hours | `WOODSHED_LIFETIME_HOURS`, 8 |
 | Retention | Delete a merged or closed session after | 0 to 30 days | 3 |
 | Retention | Delete a finished session whose PR stays open after | 1 to 90 days | 14 |
 | Retention | Delete a paused session with no pull request after | 1 to 60 days | 7 |
@@ -2548,19 +2894,21 @@ pane bar offer **Extend** to that same person, which puts that an hour later eac
 /api/sessions/<id>/extend`); a resume forgets it. The console logs `fleet: session extended` with `why` (`idle` or `lifetime`) and `until`, and `fleet:
 session limits changed` with who changed them. A question from Slack has neither.
 
-The Slack card's Limits are shown once Slack is set up (above, "Setting it up: the Slack card"); each Limits saves its
-own values, as a card does.
+Slack's limits are in its Pull requests and Questions rows, under Limits, once Slack is set up (above, "Setting it
+up: the Slack card"); each saves its own values, as a row of numbers does.
 
 They live in `state.json` under `settings`, and the console reads them each
 time it uses one, so a change applies on its next tick with no restart. The
 environment values are what a setting is until someone changes it.
 
-The **MCP servers** card, after Repos, lists the servers sessions get and adds, edits and removes them ("MCP servers"
-above, under the Anthropic proxy): each change applies at once, with no typed confirm, and is logged with who made it.
+The **MCP servers** group, last, has a row for each server sessions get ("MCP servers"
+above, under the Anthropic proxy). A server's row opens on its form, with **Save**, **Test** and **Remove**: there is
+no Edit button, and closing the row drops what was typed. **Add a server** is the group's last row. A server the
+installation's configuration sets is a line with Test alone. Each change applies at once, with no typed confirm, and is logged with who made it.
 A header's value is a password field, sent once and never shown again. Where the console cannot lock a session down
 the card says why and offers no Production kind.
 
-The **Woodshed** card, first on the page, follows the git clone the console runs from (`console/woodshedUpdate.mjs`;
+The **Woodshed** row, first on the page under This console, follows the git clone the console runs from (`console/woodshedUpdate.mjs`;
 `WOODSHED_CHECKOUT` names another): at start and every hour, and on **Check now** (`POST
 /api/console-settings/updates/check`), it runs `git fetch` on the remote of the branch the clone tracks, and lists the
 commits `HEAD` lacks, newest first (30, then how many more), with the count beside Console settings in the avatar menu
@@ -2584,8 +2932,9 @@ console logs `woodshedUpdate: following` with the clone, its branch and remote a
 `behindBy` and `aheadBy`, `check failed`, `update started`, `updated, restarting`, and `update failed` with the step
 (`pull`, `starts`, `image`) and whether it went back; the start check logs `console: start check passed`.
 
-The **Repos** card, next, lists the repos sessions can start on (the projects above) and adds more.
-**Add a repo** is a list of the repos the GitHub App may reach and that are not projects yet
+The **Repos** group, next, has a row for each repo sessions can start on (the projects above): closed, it says
+whether the repo is the default or who added it, its sessions and where its pull requests go; opened, it has its
+colour, the link to its own settings page and Remove. **Add a repo**, the group's last row, is a list of the repos the GitHub App may reach and that are not projects yet
 (`GET /api/console-settings/projects/repos`: each of the App's installations, `GET /app/installations`, then its repos,
 `GET /installation/repositories` with a token narrowed to reading metadata), with an optional name; **Add repo** sends
 the pick (`POST /api/console-settings/projects`). Under it, *Not listed?* links each installation's settings on GitHub,
@@ -2672,18 +3021,23 @@ On AWS the base box's role makes, reads and deletes `<prefix>/repos/*` itself (`
 `providers/aws/terraform/baseBox.tf`), so a new env file needs no Terraform.
 
 An admin sets layer 2 on the repo's own page, `/console-settings/repos/<project>` (public/repoSettings.js), which the
-**Settings** link on its row of Console settings' Repos card opens; `?file=<key>` opens one env file's tab. For each env
-file of the project file it shows its key and path, the repo's `defaults` (read only, with a link to the file on
+**Settings** link on its row of Console settings' Repos card opens. It is groups of rows that open in place, as My
+settings is (public/settingsRows.js): **Env files**, **Prompt**, **Sessions from GitHub** and **Slack**; a closed row says
+what it holds, and several may be open at once. Each env file of the project file is a row, which says how many keys this
+installation sets for it; `?file=<key>` opens one. Open, it shows its key, the repo's `defaults` (read only, with a link to the file on
 GitHub), the installation's values (hidden until **Show and edit**, since reading them is logged), the keys the session
 sets itself, and a table of which layer wins each key: key names only, never a value. Env files that name one secret
-are one tab, `app-env → api/.env, worker/.env`, with a note that the values are written to both files; each file's
+are one row, `app-env → api/.env, worker/.env`, with a note that the values are written to both files; each file's
 defaults and overrides are shown under its path where they differ, and the table has a row a file (`LOG_LEVEL in api/.env`)
 for a key the files do not agree on. Then the installation's
-Instructions, with the 16 KB count as they are typed; a save that looks like a credential is refused under the field.
-A key saved for an env file the project file no longer names is listed with **Delete**, which removes everyone's values
+Instructions, read when their row opens, with the 16 KB count as they are typed; a save that looks like a credential is
+refused under the field.
+A key saved for an env file the project file no longer names is a row marked **Unused** with **Delete**, which removes everyone's values
 for it after a typed confirm. A project file with no env files gets a short how-to in their place: an `envFiles` entry with a `path`
-(and `defaults` if any) in a pull request, no `secret` needed, and a tab here once it is on the default branch. Last,
-the repo's **Slack** card ("A channel for each project", above; `#slack` opens it). The page loads for anyone signed
+(and `defaults` if any) in a pull request, no `secret` needed, and a row here once it is on the default branch. Then
+**Sessions from GitHub**: the label's and the `/woodshed` comments' switches on their rows, and the label's name in a row
+that opens (`#github` opens it). Last, the **Slack** group's Pull request channel row ("A channel for each project",
+above; `#slack` opens it). The page loads for anyone signed
 in; its calls answer 403 to anyone but an admin, and it says so.
 
 Each person sets layer 3 on My settings' repo rows, under **Repos and files** (public/myRepoSettings.js, with the layers drawn by

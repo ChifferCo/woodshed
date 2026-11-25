@@ -1,0 +1,25 @@
+<!-- @dsCard group="Actions" height=300 subtitle="The agent switch over Chat and TUI, and its menu" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;600&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
+ .bar{display:flex;gap:8px;align-items:center;padding:6px 8px;background:var(--bar);border-radius:6px;margin-bottom:12px}
+ .sw{display:inline-flex;align-items:center;gap:6px;min-height:24px;padding:0 8px;border-radius:4px;border:1px solid var(--bar-well-line);font:600 11.5px "Red Hat Display",system-ui,sans-serif;color:var(--bar-ink)}
+ .sw.needs{border-color:var(--bar-amber-line)}
+ .count{font-weight:500;color:var(--bar-sub)}
+ .needs-word{color:var(--bar-amber)}
+ .menu{width:300px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--ground);box-shadow:0 8px 24px rgba(27,34,50,.18)}
+ .group{padding:6px 10px 2px;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--sub)}
+ .item{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:6px}
+ .item b{font-size:13.5px;font-weight:600}
+ .item span{font-size:12px;color:var(--sub)}
+ .item.bad b{color:var(--bad)}
+</style>
+<div class="bar"><span class="sw">Codex ▾</span><span class="sw needs">Claude · opus <span class="count">3 agents</span> <span class="needs-word">1 needs you</span> ▾</span></div>
+<div class="menu">
+ <div class="group">AGENTS</div>
+ <div class="item"><b>Codex (the session's own)</b><span>Needs you</span></div>
+ <div class="item"><b>✓ Claude · opus</b><span>Working · auto mode</span></div>
+ <div class="item"><b>Codex · gpt-5.5</b><span>Done · plan mode · high effort</span></div>
+ <div class="group">START</div>
+ <div class="item bad"><b>Stop Claude · opus</b><span>Ends this agent: its conversation stays in the session's home</span></div>
+</div>

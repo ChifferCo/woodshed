@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const read = (name) => fs.readFileSync(new URL(`./public/${name}`, import.meta.url), 'utf8');
 
 function loadCommon() {
-  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
+  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedAgents: require('../shared/agents.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
   const context = vm.createContext({
     window, console,
     document: { addEventListener() {}, createElement: () => ({}) },
@@ -66,6 +66,16 @@ test('a merged or closed pull request shows only while no newer one came after i
   assert.equal(W.shownPrs({ prUrl: null }).length, 0);
 });
 
+test('a pull request the console has not read yet waits for it, unless Woodshed is at work on it', () => {
+  const merged = { state: 'merged' };
+  const shown = (prs) => [...W.shownPrs({ prs }).map((p) => p.url)];
+  assert.deepEqual(shown([{ url: '1', pr: null, reading: true }, { url: '2', pr: null, reading: true }]), [], 'just after a start, nothing yet');
+  assert.equal(W.hasPrs({ prs: [{ url: '1', pr: null, reading: true }] }), false, 'the card shows its branch meanwhile');
+  assert.deepEqual(shown([{ url: '1', pr: merged }, { url: '2', pr: { state: 'open' } }]), ['2'], 'once read, the merged one never showed');
+  assert.deepEqual(shown([{ url: '1', pr: null, reading: false }]), ['1'], 'one the console never reads shows as it is');
+  assert.deepEqual(shown([{ url: '1', pr: null, reading: true, runs: ['review'] }]), ['1'], 'a review at work on it shows');
+});
+
 // common.js with a stand-in document whose elements keep their attributes and text, for what builds chips.
 function loadCommonWithElements() {
   class Node {}
@@ -75,7 +85,7 @@ function loadCommonWithElements() {
     addEventListener() {}
     append(child) { this.text += child.text ?? ''; }
   }
-  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
+  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedAgents: require('../shared/agents.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
   const context = vm.createContext({
     window, console, Node,
     document: { addEventListener() {}, createElement: (tag) => new El(tag), createTextNode: (text) => ({ text }) },
@@ -93,6 +103,23 @@ test('past the cap, the older pull requests fold into one +N chip, the newest sh
   assert.deepEqual([...chips.map((c) => c.text)], ['+2', 'PR #3', 'PR #4']);
   assert.match(chips[0].attrs.title, /2 more pull requests:\n#1\n#2/);
   assert.deepEqual([...W2.prChips({ prs: prs.slice(0, 2) }, { max: 2 }).map((c) => c.text)], ['PR #1', 'PR #2'], 'at the cap, nothing folds');
+});
+
+test('a pull request Woodshed is reviewing or testing says so on its chip, never a tick', () => {
+  const W2 = loadCommonWithElements();
+  const green = { title: 'Fix', state: 'open', review: null, checks: { pass: 4, fail: 0, pending: 0, total: 4 } };
+  const chip = (pr, runs) => W2.prChip({ prUrl: 'https://github.com/o/r/pull/9', pr, runs });
+  assert.equal(chip(green, []).text, 'PR #9✓');
+  const reviewing = chip(green, ['review']);
+  assert.equal(reviewing.text, 'PR #9review', 'the ring has no glyph');
+  assert.match(reviewing.attrs.title, /all 4 checks passing · Woodshed review running/);
+  assert.match(chip(green, ['review', 'qa']).attrs.title, /Woodshed review and QA running/);
+  assert.equal(chip(green, ['review', 'qa']).text, 'PR #9review, QA');
+  assert.equal(chip({ ...green, checks: { pass: 3, fail: 1, pending: 0, total: 4 } }, ['qa']).text, 'PR #9QA✗', 'a failing check keeps its mark');
+  const unread = chip(null, ['qa']);
+  assert.equal(unread.text, 'PR #9QA');
+  assert.equal(unread.attrs.title, 'Woodshed QA running');
+  assert.equal(chip(null, undefined).text, 'PR #9', 'a console from before runs');
 });
 
 test('Start app offers a pick only with more than one app, and each line says what picking it does', () => {

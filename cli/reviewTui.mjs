@@ -8,7 +8,7 @@
 // lines), the size followed on resize, the keys for what is on screen in the footer.
 
 import {
-  analysisLines, chatLines, chatStarters, clean, cut, diffRows, discussionLines, fileLines, fileListLines, fileOrder, headerLines,
+  aiLines, aiOpen, aiPoints, analysisLines, chatLines, chatStarters, clean, cut, diffRows, discussionLines, fileLines, fileListLines, fileOrder, headerLines,
   githubPullUrl, plainText, pullRequestUrl, qaLines, qaVisible, reviewTitle, stripAnsi, tabBar, tabsOf, toAnsi, width,
   wrapSegments, wrapText,
 } from './reviewView.mjs';
@@ -190,10 +190,12 @@ export function initialState({ status, diff, session, pulls = [] }) {
     // Files changed opens on the list of every file; Enter opens one's diff, Esc goes back.
     fileOpen: false,
     cursor: 0,
-    draft: { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [] },
+    draft: { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [], aiReviews: [] },
     draftLoading: Boolean(status.livePr),
     chat: { messages: [], busy: false, pending: null, error: null, since: null, starter: -1 },
     qa: { data: null, started: false, error: null },
+    // AI reviews: the point the cursor is on, which reviews are open (by id), what is typed for each, and a failed ask.
+    ai: { cursor: 0, open: {}, drafts: {}, error: null },
     compose: null,
     sheet: null,
     flash: null,
@@ -223,16 +225,17 @@ export function footerKeys(state) {
   if (state.compose) {
     const keys = [['Enter', state.compose.kind === 'comment' ? (state.compose.mode === 'now' ? 'post now' : state.draft.reviewId ? 'add to review' : 'start a review') : 'send'], ['Esc', 'cancel']];
     if (state.compose.kind === 'comment' && !state.draft.reviewId) keys.push(['Tab', state.compose.mode === 'now' ? 'add to a review instead' : 'post it now instead']);
-    if (state.compose.kind === 'chat') keys.push(['↑↓', 'suggestions']);
+    if (state.compose.kind === 'chat' && !state.compose.about) keys.push(['↑↓', 'suggestions']);
     keys.push(['Ctrl-U', 'clear']);
     return keys;
   }
-  const keys = [['1-5 Tab', 'views']];
+  const keys = [[tabsOf(state).some((t) => t.key === 'ai') ? '1-6 Tab' : '1-5 Tab', 'views']];
   if (state.tab === 'files' && !state.fileOpen) keys.push(['↑↓', 'file'], ['Enter', 'open'], ['i', 'chat about it']);
   else if (state.tab === 'files') {
     keys.push(['↑↓', 'line'], ['n p', 'file'], ['Esc', 'all files'], ['i', 'chat about it']);
     if (state.status.livePr) keys.push(['c', 'comment']);
-  } else keys.push([state.tab === 'qa' && state.qa.data?.items?.length ? 'PgUp PgDn' : '↑↓ PgUp PgDn', 'scroll']);
+  } else keys.push([(state.tab === 'qa' && state.qa.data?.items?.length) || (state.tab === 'ai' && state.draft.aiReviews?.length) ? 'PgUp PgDn' : '↑↓ PgUp PgDn', 'scroll']);
+  if (state.tab === 'ai' && state.draft.aiReviews?.length) keys.push(['↑↓', 'finding'], ['Enter', 'fold'], ['i', 'ask a follow-up']);
   if (state.tab === 'chat' && !state.chat.busy) keys.push(['Enter', 'ask']);
   if (state.tab === 'qa' && state.qa.data?.items?.length) keys.push(['↑↓', 'question'], ['Enter', 'open']);
   if (state.tab === 'qa' && state.qa.data && state.qa.data.status !== 'running') keys.push(['i', state.qa.data.items?.length ? 'ask about it' : 'ask'], ['A', 'ask again']);
@@ -281,6 +284,7 @@ export function bodyOf(state, columns, nowMs = Date.now()) {
   if (!state.diff?.files?.length) return { lines: [[['dim', 'This change has no file changes.']]], items: null };
   if (state.tab === 'files') return state.fileOpen ? fileLines(state, columns) : fileListLines(state, columns);
   if (state.tab === 'qa') return qaLines(state, columns);
+  if (state.tab === 'ai') return aiLines(state, columns, nowMs);
   const make = { analysis: analysisLines, discussion: discussionLines, chat: (s, c) => chatLines(s, c, nowMs) }[state.tab] ?? analysisLines;
   return { lines: make(state, columns), items: null };
 }
@@ -443,7 +447,8 @@ export function runReviewTui({
         const got = await call('GET', '/comments');
         state.draft = {
           prId: got.prId ?? null, headSha: got.headSha ?? null, reviewId: got.reviewId ?? null, description: got.description ?? null,
-          comments: got.comments ?? [], threads: got.threads ?? [], outdated: got.outdated ?? 0, said: got.said ?? [], truncated: Boolean(got.truncated),
+          comments: got.comments ?? [], threads: got.threads ?? [], outdated: got.outdated ?? 0, said: got.said ?? [], aiReviews: got.aiReviews ?? [], checks: got.checks ?? null,
+          truncated: Boolean(got.truncated),
         };
       } catch (err) {
         if (!finished) flash(`Could not read your draft review on GitHub: ${err.message}`, true);
@@ -521,22 +526,36 @@ export function runReviewTui({
         state.chat.messages = got.messages ?? [];
       } catch (err) {
         if (finished) return;
-        state.chat.error = err.message;
-        // A failed turn is not on the record: the question goes back in the box, as the page puts it back.
-        if (state.chat.pending) state.chat.unsent = state.chat.pending;
+        // A failed turn is not on the record: the question goes back in the box, as the page puts it back. A follow-up on
+        // an AI review goes back to its own point's box, and says why under that point.
+        const about = state.chat.pendingAbout;
+        if (about) {
+          if (state.chat.pending && !state.ai.drafts[about]) state.ai.drafts[about] = state.chat.pending;
+          state.ai.error = { id: about, error: `Not answered: ${err.message}` };
+        } else {
+          state.chat.error = err.message;
+          if (state.chat.pending) state.chat.unsent = state.chat.pending;
+        }
       }
       state.chat.busy = false;
       state.chat.pending = null;
+      state.chat.pendingAbout = null;
+      state.chat.pendingLabel = null;
       state.chat.since = null;
       draw();
     }
-    function sendChat(text) {
+    // `about`: a follow-up on an AI review's point, {review, finding, id, label}, which the shed reads from GitHub by its ids.
+    function sendChat(text, about = null) {
       state.chat.pending = text;
+      state.chat.pendingAbout = about?.id ?? null;
+      state.chat.pendingLabel = about?.label ?? null;
       state.chat.busy = true;
       state.chat.error = null;
+      if (about) state.ai.error = null;
       state.chat.since = now();
       draw();
-      settleChat(call('POST', '/chat', { question: text }).then((res) => pollAnswer(res.askId)));
+      const body = about ? { question: text, about: { review: about.review, finding: about.finding } } : { question: text };
+      settleChat(call('POST', '/chat', body).then((res) => pollAnswer(res.askId)));
     }
 
     // --- Q&A ---
@@ -879,12 +898,13 @@ export function runReviewTui({
       state.sheet = {
         kind: 'help', title: 'Keys',
         lines: [
-          '1-5 open the numbered tabs. In a text box, a number is text. Tab and Shift-Tab cycle.',
+          '1-6 open the numbered tabs. In a text box, a number is text. Tab and Shift-Tab cycle.',
           '↑ ↓ j k scroll (on Files changed, move the line), PgUp PgDn Space b by a page, g G the top and the end.',
           '4 Files changed lists every file in the analysis\'s reading order: ↑ ↓ choose one, Enter opens its diff, Esc goes back to the list; in a diff, n p move to the next and previous file.',
           'i on Files changed starts a chat about the file (in its diff, about the line), with its path in the box.',
           'c comments on the line, into your draft review or posted at once (Tab chooses), with a pull request.',
           'Enter on Chat asks the session\'s agent about the change.',
+          '6 AI reviews (with a pull request): what Claude Code and Codex posted, newest first. ↑ ↓ choose a review or a finding, Enter folds a review, i asks the session\'s agent a follow-up about it, which it checks against the code; the answer shows under it, and on Chat too.',
           '2 Q&A: ↑ ↓ choose a question, Enter or → opens it (one at a time, with its follow-ups), ← closes it; i asks a follow-up on it (on the last row, a question of your own), A all of them again.',
           's submits your review (comment, approve or request changes) with your draft comments. m merges, t renames.',
           'o opens the pull request (its underlined number in the header) on GitHub in your browser. Over SSH, or with no display, the status line shows its address instead. In Herdr, Ctrl-click on the number opens it too.',
@@ -969,6 +989,42 @@ export function runReviewTui({
       state.qa.open = qaPath(item.id);
       return startCompose('qa', item.id);
     }
+    // --- AI reviews: the cursor on a review or a finding ---
+    function aiMove(n) {
+      const count = aiPoints(state).length;
+      if (!count) return scrollBy(n);
+      state.ai.cursor = Math.max(0, Math.min(count - 1, (state.ai.cursor ?? 0) + n));
+      state.follow = true;
+      return draw();
+    }
+    function aiSelected() {
+      return aiPoints(state)[Math.max(0, state.ai.cursor ?? 0)] ?? null;
+    }
+    // Enter folds or opens the review the cursor is in, and the cursor goes to its row.
+    function aiToggle() {
+      const point = aiSelected();
+      if (!point) return undefined;
+      const reviews = state.draft.aiReviews ?? [];
+      const index = reviews.indexOf(point.review);
+      state.ai.open = { ...state.ai.open, [point.review.id]: !aiOpen(state, point.review, index) };
+      state.ai.cursor = Math.max(0, aiPoints(state).findIndex((p) => p.review === point.review && !p.finding));
+      state.follow = true;
+      return draw();
+    }
+    // i: a follow-up on the point the cursor is on, a finding or the review as a whole.
+    function aiAsk() {
+      const point = aiSelected();
+      if (!point) return flash('There is no AI review on this pull request to ask about.');
+      if (state.chat.busy) return flash('Still answering the last question: ask this once the answer is in.');
+      const { review, finding } = point;
+      const where = finding ? `${finding.agent ? `${clean(finding.agent)} on ` : ''}${clean(finding.path)}${finding.line ? `:${finding.line}` : ''}` : `${clean(review.heading)}, ${clean(review.conclusion)}`;
+      const id = finding ? finding.id : review.id;
+      state.compose = {
+        kind: 'chat', about: { review: review.id, finding: finding ? finding.id : null, id, label: where },
+        editor: editor(state.ai.drafts[id] ?? ''), prompt: `Follow up on ${cut(where, 40)}: `,
+      };
+      return draw();
+    }
     function openFile(open) {
       if (!fileOrder(state).length) return;
       state.fileOpen = open;
@@ -1022,6 +1078,7 @@ export function runReviewTui({
     function composeKey(key) {
       const c = state.compose;
       if (key === 'escape') {
+        if (c.kind === 'chat' && c.about) state.ai.drafts = { ...state.ai.drafts, [c.about.id]: c.editor.text };
         if (c.kind === 'comment') state.commentDraft = c.editor.text;
         if (c.kind === 'qa') state.qa.drafts = { ...state.qa.drafts, [c.parent ?? '']: c.editor.text };
         state.compose = null;
@@ -1032,7 +1089,8 @@ export function runReviewTui({
         if (!text) return;
         if (c.kind === 'chat') {
           state.compose = null;
-          sendChat(text);
+          if (c.about) delete state.ai.drafts[c.about.id];
+          sendChat(text, c.about ?? null);
         } else if (c.kind === 'qa') {
           state.compose = null;
           if (state.qa.drafts) delete state.qa.drafts[c.parent ?? ''];
@@ -1047,7 +1105,7 @@ export function runReviewTui({
         c.mode = c.mode === 'now' ? 'draft' : 'now';
         return draw();
       }
-      if ((key === 'up' || key === 'down') && c.kind === 'chat') {
+      if ((key === 'up' || key === 'down') && c.kind === 'chat' && !c.about) {
         const starters = chatStarters(state.status.review);
         state.chat.starter = (state.chat.starter + (key === 'up' ? -1 : 1) + starters.length + 1) % (starters.length + 1);
         c.editor = editor(starters[state.chat.starter] ?? '');
@@ -1117,7 +1175,8 @@ export function runReviewTui({
       const list = state.tab === 'files' && !state.fileOpen;
       const diff = state.tab === 'files' && state.fileOpen;
       const qaTab = state.tab === 'qa' && Boolean(state.qa.data);
-      const step = (n) => (list ? moveFile(n) : diff ? moveCursor(n) : qaTab && Math.abs(n) === 1 ? qaMove(n) : scrollBy(n));
+      const aiTab = state.tab === 'ai' && !state.draftLoading && Boolean(state.draft.aiReviews?.length);
+      const step = (n) => (list ? moveFile(n) : diff ? moveCursor(n) : (qaTab || aiTab) && Math.abs(n) === 1 ? (qaTab ? qaMove(n) : aiMove(n)) : scrollBy(n));
       // On Q&A, g and G go to the first question and to the last row (a question of your own).
       switch (key) {
         case 'q': return finish({ code: 'quit' });
@@ -1136,12 +1195,14 @@ export function runReviewTui({
         case 'pagedown': case ' ': return step(page);
         case 'home': case 'g':
           if (qaTab) return qaMove(-Infinity);
+          if (aiTab) return aiMove(-Infinity);
           if (list) return moveFile(-Infinity);
           if (diff) state.cursor = 0;
           state.scroll[scrollKey(state)] = 0;
           return draw();
         case 'end': case 'G':
           if (qaTab) return qaMove(Infinity);
+          if (aiTab) return aiMove(Infinity);
           if (list) return moveFile(Infinity);
           if (diff) return moveCursor(Infinity);
           state.scroll[scrollKey(state)] = Number.MAX_SAFE_INTEGER;
@@ -1160,6 +1221,7 @@ export function runReviewTui({
         case 'f': return state.tab === 'qa' && state.qa.data ? qaAsk() : undefined;
         case 'enter': case 'i':
           if (state.tab === 'chat') return startCompose('chat');
+          if (state.tab === 'ai') return aiTab ? (key === 'i' ? aiAsk() : aiToggle()) : undefined;
           if (qaTab && key === 'enter' && qaSelected()) return qaToggle();
           if (state.tab === 'qa' && state.qa.data) return qaAsk();
           if (state.tab === 'files' && key === 'i') return chatAbout();

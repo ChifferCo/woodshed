@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { ownFilesBodyLimit } from '../shared/ownFiles.mjs';
 import { checkClaudeToken, checkCodexAuth, createUserSettings, userSecretName } from './userSettings.mjs';
+import agents from '../shared/agents.cjs';
 
 
 function fakeSecrets() {
@@ -58,6 +59,7 @@ test('removing everything deletes the person\'s secrets and their record, and le
   const store = { state: {}, save() {} };
   const settings = createUserSettings({ store, secrets });
   await settings.setClaudeToken('octocat', 'sk-ant-joel');
+  await settings.setAgentAuth('octocat', 'grok', 'xai-joel-key-0123456789abcdef');
   await settings.setClaudeToken('mia-dev', 'sk-ant-mia');
   await settings.removeAll('octocat');
   assert.deepEqual([...secrets.values.keys()], ['users/mia-dev/claude-token']);
@@ -145,6 +147,33 @@ test('the switch for reviews on your own Codex sign-in is on by default once one
   assert.equal(settings.usesOwnCodexForReviews('joel'), false, 'no sign-in, no effect');
 });
 
+test('the switches for reviews on your own Grok Build and OpenCode sign-ins work as Codex\'s, each its own', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: fakeSecrets() });
+  assert.equal(settings.usesOwnAgentForReviews('joel', 'grok'), false, 'nothing saved, nothing used');
+  assert.throws(() => settings.setOwnAgentForReviews('joel', 'grok', true), /save your Grok Build sign-in first/);
+  assert.throws(() => settings.setOwnAgentForReviews('joel', 'codex', true), /no own sign-in for codex/);
+  await settings.setAgentAuth('joel', 'grok', 'xai-made-up-joel-0123456789');
+  assert.deepEqual(settings.view('joel').ownAgentForReviews, { grok: true, opencode: false }, 'on by default once saved');
+  settings.setOwnAgentForReviews('joel', 'grok', false);
+  assert.deepEqual([settings.view('joel').ownAgentForReviews.grok, settings.usesOwnAgentForReviews('Joel', 'grok')], [false, false], 'turned off');
+  settings.setOwnAgentForReviews('joel', 'grok', true);
+  await settings.removeAgentAuth('joel', 'grok');
+  assert.equal(settings.usesOwnAgentForReviews('joel', 'grok'), false, 'no sign-in, no effect');
+});
+
+test('a review choice is a preset or reviewers joined with +, saved in the registry\'s order', (t) => {
+  t.mock.method(console, 'log', () => {});
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: fakeSecrets() });
+  settings.setReviewAgents('joel', 'opencode+claude');
+  assert.equal(settings.reviewAgents('joel'), 'claude+opencode');
+  settings.setReviewAgents('joel', 'codex+claude');
+  assert.equal(settings.reviewAgents('joel'), 'both', 'a preset\'s name where one fits');
+  assert.throws(() => settings.setReviewAgents('joel', 'grok+mystery'), (err) => err.status === 400 && /reviewers joined with \+/.test(err.message));
+  settings.setReviewAgents('joel', null);
+  assert.equal(settings.reviewAgents('joel'), null);
+});
+
 test('My settings\' files are tmux-conf and three dotfiles: an env file\'s own lines are Repo settings', async () => {
   const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: fakeSecrets() });
   const view = settings.view('mia');
@@ -170,6 +199,45 @@ test('a Codex sign-in is an API key or a codex auth.json, kept under the person\
   await settings.removeCodexAuth('octocat');
   assert.equal(await settings.codexAuth('octocat'), null);
   assert.equal(settings.view('octocat').codexAuth.set, false);
+});
+
+test('Grok Build and OpenCode sign-ins are each kept under the person\'s login, never in state.json', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const secrets = fakeSecrets();
+  const store = { state: {}, save() {} };
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-11-23T10:00:00Z') });
+  const grok = JSON.stringify({ 'https://auth.x.ai::b1a00492': { key: 'grok-at-1', refresh_token: 'grok-rt-1', auth_mode: 'oidc' } });
+  const opencode = JSON.stringify({ anthropic: { type: 'api', key: 'sk-ant-api-1' } });
+  await settings.setAgentAuth('Octocat', 'grok', ` ${grok}\n`);
+  await settings.setAgentAuth('octocat', 'opencode', opencode);
+  assert.deepEqual([...secrets.values.keys()], ['users/octocat/grok-auth', 'users/octocat/opencode-auth']);
+  assert.equal(await settings.agentAuth('octocat', 'grok'), grok);
+  assert.equal(await settings.agentAuth('octocat', 'opencode'), opencode);
+  assert.deepEqual(settings.view('octocat').agentAuth, {
+    grok: { set: true, savedAt: '2026-11-23T10:00:00.000Z' },
+    opencode: { set: true, savedAt: '2026-11-23T10:00:00.000Z' },
+  });
+  assert.equal(/grok-rt|sk-ant/.test(JSON.stringify(store.state)), false, 'never the value');
+  assert.equal(await settings.agentAuth('mia-dev', 'grok'), null);
+  await settings.removeAgentAuth('octocat', 'grok');
+  assert.equal(await settings.agentAuth('octocat', 'grok'), null);
+  assert.deepEqual([settings.view('octocat').agentAuth.grok.set, settings.view('octocat').agentAuth.opencode.set], [false, true]);
+  await assert.rejects(settings.setAgentAuth('octocat', 'codex', 'sk-x'), /no own sign-in for codex/);
+  await assert.rejects(settings.setAgentAuth('octocat', 'grok', 'not a key hunter2'), (err) => err.shown && !err.message.includes('hunter2'));
+  await assert.rejects(settings.setAgentAuth('octocat', 'opencode', '{"x":{"type":"magic"}}'), /OpenCode auth.json/);
+});
+
+test('an own sign-in written straight into the store counts as set, as a Claude token does', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const secrets = fakeSecrets();
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets, now: () => 1_000_000 });
+  secrets.values.set('users/mia-dev/opencode-auth', '{"openai":{"type":"api","key":"sk-x"}}');
+  await settings.refresh('mia-dev', { force: true });
+  assert.deepEqual(settings.view('mia-dev').agentAuth.opencode.set, true);
+  assert.deepEqual(settings.view('mia-dev').agentAuth.grok.set, false);
+  secrets.values.delete('users/mia-dev/opencode-auth');
+  await settings.refresh('mia-dev', { force: true });
+  assert.deepEqual(settings.view('mia-dev').agentAuth.opencode.set, false);
 });
 
 test('a Codex sign-in is checked, and the error never repeats it', () => {
@@ -234,7 +302,7 @@ test('a store that fails to answer changes nothing about what is set, and is not
   await settings.refresh('mia-dev');
   assert.equal(settings.view('mia-dev').claudeToken.set, true);
   await settings.refresh('mia-dev');
-  assert.equal(reads, 2, 'one refresh, its two reads');
+  assert.equal(reads, 2 + agents.OWN_SIGN_IN_AGENTS.length, 'one refresh, a read for each sign-in: Claude, Codex and each own-sign-in agent');
 });
 
 test('with no token saved, page loads inside the minute ask the store once', async () => {
@@ -246,9 +314,10 @@ test('with no token saved, page loads inside the minute ask the store once', asy
     await settings.refresh('mia-dev');
     clock += 5_000;
   }
-  assert.equal(reads, 2, 'one refresh in the first minute, its claude-token and codex-auth reads');
+  const perRefresh = 2 + agents.OWN_SIGN_IN_AGENTS.length;
+  assert.equal(reads, perRefresh, 'one refresh in the first minute, one read for each agent\'s sign-in');
   await settings.refresh('mia-dev');
-  assert.equal(reads, 4, 'and one more once the minute is up');
+  assert.equal(reads, 2 * perRefresh, 'and one more once the minute is up');
 });
 
 test('the own-files request body limit follows the store\'s limit, and never drops below 160 KB', () => {

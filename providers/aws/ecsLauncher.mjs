@@ -17,12 +17,19 @@ const execFileAsync = promisify(execFile);
 // Never a person's own secret: anyone who can describe a task reads these. A private session fetches those at start.
 const PER_SESSION_ENV = [
   'SESSION_ID', 'SESSION_TOKEN', 'TERMINAL_TOKEN', 'STARTED_BY', 'SESSION_URL', 'ISSUE', 'PR', 'BRANCH', 'PROMPT',
-  'SESSION_KIND', 'AGENT', 'MODEL', 'EFFORT', 'PERMISSION_MODE', 'RESUME_SESSION', 'ATTACHMENTS', 'REVIEW_ONLY', 'SESSION_MODE', 'ASKED_BY', 'QA_BASE', 'REVIEW_BASE', 'REVIEW_AUTHOR', 'REVIEW_AGENTS', 'REVIEW_CODEX_AUTH', 'REVIEW_CODEX_ACCOUNT', 'PROJECT_REPO',
+  'SESSION_KIND', 'AGENT', 'MODEL', 'EFFORT', 'PERMISSION_MODE', 'RESUME_SESSION', 'ATTACHMENTS', 'REVIEW_ONLY', 'SESSION_MODE', 'ASKED_BY', 'QA_BASE', 'REVIEW_BASE', 'REVIEW_AUTHOR', 'REVIEW_AGENTS', 'REVIEW_CODEX_AUTH', 'REVIEW_CODEX_ACCOUNT', 'REVIEW_OPENCODE_PROVIDER', 'PROJECT_REPO',
   'SESSION_APP_DOMAIN',
+  // A review's own knobs (session/review.sh), from the installation's session env: how long Codex, Grok Build and
+  // OpenCode may take, and Grok Build's and OpenCode's homes for a review. Numbers and paths, never a credential: the
+  // author's sign-in stays in the console (reviewAgentProxy.mjs).
+  'REVIEW_CODEX_MINUTES', 'REVIEW_AGENT_MINUTES', 'REVIEW_GROK_HOME', 'REVIEW_OPENCODE_HOME',
   // The tag that asks for the repo's review, for a coding session's rules (console/defaultReview.mjs).
   'WOODSHED_REVIEW_TAG',
   // A private session whose agent's terminal comes from its person's Herdr, as a child of theirs (cli/hc.mjs).
   'WOODSHED_HERDR_PARENT',
+  // A private session's token for starting sessions of its person's (console/sessionStarts.mjs): of the session's
+  // run, like SESSION_TOKEN, and dead once it stops.
+  'WOODSHED_START_TOKEN',
   // MCP servers and production access (console/mcpServers.mjs): the servers it has, whether it may be tainted, is, and its egress proxy.
   'WOODSHED_PROD_MCP', 'WOODSHED_MCP_SERVERS', 'WOODSHED_TAINTED', 'WOODSHED_EGRESS_PROXY',
 ];

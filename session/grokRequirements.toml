@@ -1,0 +1,40 @@
+# Grok Build's machine policy (its requirements.toml), copied root-owned to /etc/grok/requirements.toml by the image, so
+# nothing a session runs as node can change it. A repo's own MCP servers and hooks would otherwise run as Grok opens, in
+# a folder the session trusts, where they can reach the owner's sign-in. Measured with 1.0.92: without this file a repo's
+# `.grok/config.toml` [mcp_servers], `.mcp.json` and `.cursor/mcp.json` servers all start, and its `.grok/hooks/`
+# hooks run; with it none does, and `grok inspect` lists each server as `BLOCKED: locked down by policy`.
+#
+# No MCP server runs: Grok sessions get none from the console either.
+allow_managed_mcp_servers_only = true
+enable_all_project_mcp_servers = false
+allowed_mcp_servers = []
+
+# Only the hooks here run: Grok skips ~/.grok/hooks, every ~/.grok/*.toml, a repo's own, plugins' and the Claude and
+# Cursor compatibility files. These are the session's own, which tell statusd what Grok is doing (session/hookState.mjs,
+# which reads Grok's camelCase events).
+allow_managed_hooks_only = true
+
+[[hooks.SessionStart]]
+hooks = [{ type = "command", command = "node /opt/woodshed/session/hookState.mjs" }]
+
+[[hooks.UserPromptSubmit]]
+hooks = [{ type = "command", command = "node /opt/woodshed/session/hookState.mjs" }]
+
+[[hooks.PreToolUse]]
+hooks = [{ type = "command", command = "node /opt/woodshed/session/hookState.mjs" }]
+
+[[hooks.PostToolUse]]
+hooks = [{ type = "command", command = "node /opt/woodshed/session/hookState.mjs" }]
+
+[[hooks.Stop]]
+hooks = [{ type = "command", command = "node /opt/woodshed/session/hookState.mjs" }]
+
+[[hooks.StopFailure]]
+hooks = [{ type = "command", command = "node /opt/woodshed/session/hookState.mjs" }]
+
+[[hooks.StopCancelled]]
+hooks = [{ type = "command", command = "node /opt/woodshed/session/hookState.mjs" }]
+
+[[hooks.Notification]]
+matcher = "permission_prompt|idle_prompt"
+hooks = [{ type = "command", command = "node /opt/woodshed/session/hookState.mjs" }]

@@ -13,17 +13,55 @@
 // command in this session`, `No, and tell Codex what to do differently`, `Press enter to confirm or esc to cancel`), and
 // its layout (the `›` on the highlighted row, the numbers, each option's key after it) is how codex's list draws them,
 // as far as could be told without a signed-in codex to capture.
-// Usage: node devChatAgent.mjs codex|claude <record dir> <repo dir>
+// For Grok Build (`grok`) it appends ACP updates to ~/.grok/sessions/<repo, URL-encoded>/<id>/updates.jsonl, and for
+// OpenCode (`opencode`) it writes OpenCode 1.19's SQLite database (~/.local/share/opencode/opencode.db: its session,
+// message and part tables), each as session/sessionTranscript.mjs reads them; for both, <record dir> is the home. Their
+// screens are drawn after each agent's own words as their source and docs give them (no signed-in Grok Build or OpenCode
+// was captured): OpenCode's `esc interrupt` footer and `△ Permission required` panel with `Allow once  Allow always
+// Reject`, Grok Build's `Allow …?` with its numbered options and ctrl+c to cancel a turn.
+// Usage: node devChatAgent.mjs codex|claude|grok|opencode <record dir> <repo dir> [flags]
+// Of the flags an agent started beside the session's (session/agents.mjs) is given, it reads claude's --session-id, which
+// names its transcript as claude's does; codex's rollout is held open while it runs, as codex's is, which is how
+// agents.mjs finds a codex's own.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-const [format, dir, repo] = process.argv.slice(2);
+const [format, dir, repo, ...flags] = process.argv.slice(2);
 const now = () => new Date().toISOString();
-const id = crypto.randomUUID();
+const named = flags.indexOf('--session-id');
+const id = named !== -1 && /^[0-9a-f-]{36}$/.test(flags[named + 1] ?? '') ? flags[named + 1] : crypto.randomUUID();
 let file;
-if (format === 'codex') {
+let oc = null;
+if (format === 'grok') {
+  // Grok Build's folder for a checkout: its path as Rust's urlencoding encodes it (sessionTranscript.mjs, grokFolderName).
+  const folder = [...Buffer.from(repo, 'utf8')].map((b) => (/[A-Za-z0-9\-_.~]/.test(String.fromCharCode(b)) ? String.fromCharCode(b) : `%${b.toString(16).toUpperCase().padStart(2, '0')}`)).join('');
+  const own = path.join(dir, '.grok', 'sessions', folder, id);
+  fs.mkdirSync(own, { recursive: true });
+  file = path.join(own, 'updates.jsonl');
+} else if (format === 'opencode') {
+  // node:sqlite warns that it is experimental as it loads: not on the pane's screen.
+  const emit = process.emitWarning;
+  process.emitWarning = (warning, ...rest) => (/SQLite/i.test(String(warning)) ? undefined : emit.call(process, warning, ...rest));
+  const { DatabaseSync } = await import('node:sqlite');
+  process.emitWarning = emit;
+  const dbDir = path.join(dir, '.local', 'share', 'opencode');
+  fs.mkdirSync(dbDir, { recursive: true });
+  const db = new DatabaseSync(path.join(dbDir, 'opencode.db'));
+  // OpenCode's own journal mode: readers (statusd) never wait on its writes.
+  db.exec(`PRAGMA journal_mode = WAL;
+    CREATE TABLE IF NOT EXISTS session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, title TEXT,
+      time_created INTEGER, time_updated INTEGER, time_archived INTEGER);
+    CREATE TABLE IF NOT EXISTS message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+    CREATE TABLE IF NOT EXISTS part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);`);
+  const sessionId = `ses_${id.replace(/-/g, '')}`;
+  db.prepare('INSERT INTO session VALUES (?,?,?,?,?,?,?,?)').run(sessionId, 'dev', null, repo, 'stand-in', Date.now(), Date.now(), null);
+  let n = 0;
+  // Ids that sort in the order written, as OpenCode's own do.
+  const next = (prefix) => `${prefix}_${String(Date.now()).padStart(15, '0')}${String(++n).padStart(6, '0')}`;
+  oc = { db, sessionId, next, message: null };
+} else if (format === 'codex') {
   const d = new Date();
   const day = path.join(dir, 'sessions', String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'));
   fs.mkdirSync(day, { recursive: true });
@@ -32,12 +70,38 @@ if (format === 'codex') {
   fs.mkdirSync(dir, { recursive: true });
   file = path.join(dir, `${id}.jsonl`);
 }
-const write = (record) => fs.appendFileSync(file, `${JSON.stringify(record)}\n`);
+// codex keeps its rollout open; claude and Grok Build append to theirs.
+const held = format === 'codex' ? fs.openSync(file, 'a') : null;
+const write = (record) => (held !== null ? fs.writeSync(held, `${JSON.stringify(record)}\n`) : fs.appendFileSync(file, `${JSON.stringify(record)}\n`));
+// A Grok Build update, in its envelope.
+const update = (u) => write({ timestamp: Date.now() / 1000, method: 'session/update', params: { sessionId: id, update: u } });
+// OpenCode's rows: a message, a part of the newest one, and the session's last change.
+function ocMessage(role, extra = {}) {
+  const t = Date.now();
+  oc.message = oc.next('msg');
+  oc.db.prepare('INSERT INTO message VALUES (?,?,?,?,?)').run(oc.message, oc.sessionId, t, t, JSON.stringify({ role, time: { created: t }, ...extra }));
+  oc.db.prepare('UPDATE session SET time_updated = ? WHERE id = ?').run(t, oc.sessionId);
+}
+function ocPart(data) {
+  if (!oc.message) ocMessage('assistant');
+  const t = Date.now();
+  oc.db.prepare('INSERT INTO part VALUES (?,?,?,?,?,?)').run(oc.next('prt'), oc.message, oc.sessionId, t, t, JSON.stringify(data));
+  oc.db.prepare('UPDATE session SET time_updated = ? WHERE id = ?').run(t, oc.sessionId);
+}
 
 // ---- One record line for each thing said or run, in the agent's own shape.
 let call = 0;
 function said(role, text) {
-  if (format === 'codex') {
+  if (format === 'grok') {
+    // In chunks, as the agent streams them: the Chat joins them.
+    const half = Math.ceil(text.length / 2);
+    for (const chunk of [text.slice(0, half), text.slice(half)]) if (chunk) update({ sessionUpdate: role === 'user' ? 'user_message_chunk' : 'agent_message_chunk', content: { type: 'text', text: chunk } });
+  } else if (format === 'opencode') {
+    if (role === 'user' || !oc.message) ocMessage(role);
+    ocPart({ type: 'text', text, time: { start: Date.now(), end: Date.now() } });
+    // The person's next message starts the agent's reply in a message of its own.
+    if (role === 'user') oc.message = null;
+  } else if (format === 'codex') {
     write({ timestamp: now(), type: 'response_item', payload: { type: 'message', role, content: [{ type: role === 'user' ? 'input_text' : 'output_text', text }] } });
   } else {
     write({ type: role, timestamp: now(), uuid: crypto.randomUUID(), message: { role, content: role === 'user' ? text : [{ type: 'text', text }] } });
@@ -51,6 +115,29 @@ const applied = (files) => JSON.stringify({ output: `Success. Updated the follow
 
 function ran(tool, input, failed = false) {
   const callId = `call_${++call}`;
+  if (format === 'grok') {
+    // ACP kinds, with an edit's diff as the update's content.
+    const kind = tool === 'Read' ? 'read' : tool === 'Edit' || tool === 'Script' ? 'edit' : 'execute';
+    const filePath = typeof input === 'object' ? path.join(repo, input.file) : null;
+    const rawInput = tool === 'Read' ? { path: path.join(repo, input) } : filePath ? { path: filePath } : { command: input };
+    update({ sessionUpdate: 'tool_call', toolCallId: callId, title: kind === 'execute' ? 'bash' : `${kind} ${filePath ?? input}`, kind, status: 'pending', rawInput });
+    const diff = tool === 'Edit' ? [{ type: 'diff', path: filePath, oldText: `${input.before}\n${input.old}\n`, newText: `${input.before}\n${input.new}\n` }]
+      : tool === 'Script' ? [{ type: 'diff', path: filePath, oldText: null, newText: `${input.lines.join('\n')}\n` }] : [];
+    update({ sessionUpdate: 'tool_call_update', toolCallId: callId, status: failed ? 'failed' : 'completed', content: [...diff, { type: 'content', content: { type: 'text', text: failed ? '1 failing' : 'ok' } }] });
+    return;
+  }
+  if (format === 'opencode') {
+    const filePath = typeof input === 'object' ? path.join(repo, input.file) : null;
+    const [name, args] = tool === 'Read' ? ['read', { filePath: path.join(repo, input) }]
+      : tool === 'Edit' ? ['edit', { filePath, oldString: input.old, newString: input.new }]
+        : tool === 'Script' ? ['write', { filePath, content: `${input.lines.join('\n')}\n` }]
+          : ['bash', { command: input, description: 'Run the tests' }];
+    const t = Date.now();
+    ocPart({ type: 'tool', tool: name, callID: callId, state: failed
+      ? { status: 'error', input: args, error: 'exit code 1', time: { start: t, end: t } }
+      : { status: 'completed', input: args, output: 'ok', title: name, metadata: {}, time: { start: t, end: t } } });
+    return;
+  }
   if (format === 'codex') {
     // codex edits with apply_patch, a custom tool whose input is the patch, and reads with a shell command.
     if (tool === 'Edit') {
@@ -145,6 +232,10 @@ const out = (s) => process.stdout.write(s);
 let screen = 'idle';
 // codex's approval options, each with its key, and the one highlighted.
 const APPROVAL = [['Yes, just this once', 'y'], ['Yes, and don\'t ask again for this command in this session', 'a'], ['No, and tell Codex what to do differently', 'esc']];
+// OpenCode's panel, its choice shown by its colour alone (Enter confirms it, Esc rejects), and Grok Build's numbered rows.
+const OC_APPROVAL = ['Allow once', 'Allow always', 'Reject'];
+const GROK_APPROVAL = ['Yes, and don\'t ask again for anything (always-approve mode)', 'Yes, proceed', 'Always allow: npm run', 'No, reject (type to add feedback)'];
+const approvalRows = () => (format === 'opencode' ? OC_APPROVAL : format === 'grok' ? GROK_APPROVAL : APPROVAL);
 let approvalAt = 0;
 let started = 0;
 let typed = '';
@@ -160,8 +251,16 @@ function draw() {
     // claude's own working screen: its box between rules, the turn's line under them, as statusd reads claude's pane.
     const rule = `\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m`;
     out(`\n${rule}\n❯\u00a0\n${rule}\n  ✻ Working… (${Math.round((Date.now() - started) / 1000)}s · esc to interrupt)\n`);
-  } else if (screen === 'working') out(`• Working (${Math.round((Date.now() - started) / 1000)}s • esc to interrupt)\n`);
-  if (screen === 'asking') {
+  } else if (screen === 'working' && format === 'opencode') out(`\n  ⠋ Build  ${Math.round((Date.now() - started) / 1000)}s   esc interrupt\n`);
+  else if (screen === 'working' && format === 'grok') out(`\n  ⠋ Thinking… (${Math.round((Date.now() - started) / 1000)}s · ctrl+c to cancel)\n`);
+  else if (screen === 'working') out(`• Working (${Math.round((Date.now() - started) / 1000)}s • esc to interrupt)\n`);
+  if (screen === 'asking' && format === 'opencode') {
+    out('┃ △ Permission required\n┃   # Shell command\n┃   $ npm run migrate\n┃\n');
+    out(`┃ ${OC_APPROVAL.map((label, i) => (i === approvalAt ? `\x1b[7m ${label} \x1b[0m` : ` ${label} `)).join(' ')}      ⇆ select  enter confirm\n`);
+  } else if (screen === 'asking' && format === 'grok') {
+    out('Allow `npm`?\n\n  $ npm run migrate\n\n');
+    GROK_APPROVAL.forEach((label, i) => out(`${i === approvalAt ? '❯' : ' '} ${i + 1}. ${label}\n`));
+  } else if (screen === 'asking') {
     out('Would you like to run the following command?\n\n  Reason: the tests need the new column\n\n  $ npm run migrate\n\n');
     APPROVAL.forEach(([label, key], i) => out(`${i === approvalAt ? '›' : ' '} ${i + 1}. ${label} (${key})\n`));
     out('\n  Press enter to confirm or esc to cancel\n');
@@ -173,7 +272,9 @@ function draw() {
     // Its rules in claude's grey, as statusd tells a rule from a row of dashes in a draft.
     const rule = `\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m`;
     out(`\n${rule}\n❯\u00a0${typed || hint('Try "fix lint errors"')}\n${rule}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`);
-  } else if (screen === 'idle') out(`\n\x1b[1m›\x1b[0m ${typed || hint('Ask anything')}\n\n  stand-in codex · /tmp/fx/repo\n`);
+  } else if (screen === 'idle' && format === 'opencode') out(`\n┃ ${typed || hint('Ask anything... "Fix a TODO in the codebase"')}\n┃\n┃ Build  stand-in/model\n\n  ${repo}                    tab agents  ctrl+p commands\n`);
+  else if (screen === 'idle' && format === 'grok') out(`\n❯ ${typed || hint('Ask Grok to build something')}\n\n  stand-in grok-build · ${repo}\n`);
+  else if (screen === 'idle') out(`\n\x1b[1m›\x1b[0m ${typed || hint('Ask anything')}\n\n  stand-in codex · /tmp/fx/repo\n`);
 }
 
 function after(ms, step) {
@@ -215,7 +316,8 @@ function submit(text) {
   said('user', text);
   if (/\bask\b/i.test(text)) {
     screen = 'asking';
-    approvalAt = 0;
+    // Grok Build's highlight starts on `Yes, proceed`, past its always-approve row.
+    approvalAt = format === 'grok' ? 1 : 0;
     draw();
     return;
   }
@@ -227,27 +329,41 @@ process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => {
   for (let i = 0; i < chunk.length; i++) {
     const c = chunk[i];
+    // Ctrl+C cancels Grok Build's turn (Esc never does); at a prompt, as anywhere else, it ends the stand-in.
+    if (c === '\x03' && format === 'grok' && screen !== 'idle') {
+      stop({ next: false });
+      continue;
+    }
     if (c === '\x03') process.exit(0);
     if (c === '\x1b') {
-      // A key's sequence (an arrow, a paste's bracket) is not a lone Esc. ↑ and ↓ move the approval's highlight.
+      // A key's sequence (an arrow, a paste's bracket) is not a lone Esc. ↑ and ↓ move the approval's highlight, ← and →
+      // OpenCode's.
       if (chunk[i + 1] === '[' || chunk[i + 1] === 'O') {
         i += 2;
         while (i < chunk.length && !/[A-Za-z~]/.test(chunk[i])) i++;
-        if (screen === 'asking' && (chunk[i] === 'A' || chunk[i] === 'B')) {
-          approvalAt = Math.max(0, Math.min(APPROVAL.length - 1, approvalAt + (chunk[i] === 'B' ? 1 : -1)));
+        const step = format === 'opencode' ? { C: 1, D: -1 }[chunk[i]] : { B: 1, A: -1 }[chunk[i]];
+        if (screen === 'asking' && step) {
+          approvalAt = Math.max(0, Math.min(approvalRows().length - 1, approvalAt + step));
           draw();
         }
         continue;
       }
+      if (format === 'grok' && screen === 'working') continue;
       if (screen !== 'idle') {
         if (format === 'claude') said('user', '[Request interrupted by user]');
+        if (format === 'opencode' && screen === 'working') ocMessage('assistant', { error: { name: 'MessageAbortedError', data: {} } });
         stop({ next: false });
       }
       continue;
     }
     if (screen === 'asking') {
-      const picked = c === '\r' ? approvalAt : c === 'y' ? 0 : c === 'a' ? 1 : c === 'n' ? 2 : null;
-      if (picked === 2) {
+      const rows = approvalRows();
+      const reject = rows.length - 1;
+      const picked = c === '\r' ? approvalAt
+        : format === 'grok' ? (/[1-9]/.test(c) && Number(c) <= rows.length ? Number(c) - 1 : null)
+          : format === 'opencode' ? null
+            : c === 'y' ? 0 : c === 'a' ? 1 : c === 'n' ? 2 : null;
+      if (picked === reject) {
         stop({ next: false });
       } else if (picked !== null) work('Run the migration');
       continue;
@@ -276,3 +392,6 @@ process.stdin.on('data', (chunk) => {
   }
 });
 draw();
+// The first message, as the real agents take it: the last word of the command line, after the flags and their values.
+const first = flags.length && !flags.at(-1).startsWith('-') && !['--session-id', '--model', '--effort', '--permission-mode', '-c', '--add-dir', '--sandbox', '--ask-for-approval'].includes(flags.at(-2)) ? flags.at(-1) : '';
+if (first.trim()) submit(first);

@@ -3,7 +3,10 @@
 // cannot tell (null); stateReader picks the ones a session has and puts them together.
 //
 //   claude  its own hooks (hookState.mjs), the transcript for a turn ended by Esc, the pane until the first hook
-//   codex   its pane alone (codexState.mjs): codex has no hooks
+//   codex   its pane alone (paneStates.mjs): codex has no hooks
+//   grok    Grok Build's own hooks (hookState.mjs, which it runs from /etc/grok/requirements.toml), its pane for an
+//           approval and until the first hook, and whether its program runs at all
+//   opencode  its pane alone (paneStates.mjs), and whether its program runs
 //   qa      the QA run's marker file: the run is a script, not an agent
 //   herdr   for an agent run in Herdr (its owner's Agent terminal on My settings): the status herdr-core keeps for its
 //           terminal (`hc get claude`), the agent's own word in an OSC 7501 record (claude sends them; codex 0.167
@@ -12,7 +15,7 @@
 // Kept apart from statusd.mjs, which starts a server on import, so each reader is tested on its own.
 
 import { classifyPane } from '../shared/sessionState.mjs';
-import { classifyCodexPane } from './codexState.mjs';
+import { classifyAgentPane, classifyCodexPane } from './paneStates.mjs';
 
 /** @typedef {'starting'|'working'|'needs-you'|'done'|'not-running'} AgentState */
 /** @typedef {{state: AgentState, source: string}} Reading */
@@ -20,7 +23,9 @@ import { classifyCodexPane } from './codexState.mjs';
  * What the readers read, gathered by statusd once per status read.
  * @typedef {{paneText: string, hook: {state: string, event: string, at: number}|null, interruptedAt: number|null,
  *   transcriptAt: number|null, openTools: number|null, now: number, startedAt: number, qaRunning?: boolean,
- *   herdrStatus?: {app?: string, state?: string}|null}} StateInput
+ *   herdrStatus?: {app?: string, state?: string}|null, agentOpen?: boolean|null}} StateInput
+ *   agentOpen: whether the agent's program runs in its terminal (agentPane.mjs, agentRunning); null when it could not be
+ *   told
  */
 
 // No hook yet and a shell on screen reads as starting for this long after the container started; after it, the agent
@@ -79,6 +84,37 @@ export function codexState({ paneText, now, startedAt }) {
   return { state: now - startedAt < STARTING_MS ? 'starting' : 'not-running', source: 'pane' };
 }
 
+// Starting while the agent has not opened yet, for a while; after that, it has exited.
+const notOpen = ({ now, startedAt }) => ({ state: now - startedAt < STARTING_MS ? 'starting' : 'not-running', source: 'pane' });
+
+/**
+ * Grok Build: its hooks say what it does, as claude's do; its pane says when it asks before a hook does, and whether it
+ * runs at all decides between that and starting or ended (a Grok that exited leaves its last hook behind).
+ * @param {StateInput} input
+ * @returns {Reading}
+ */
+export function grokState(input) {
+  if (input.agentOpen === false) return notOpen(input);
+  const pane = classifyAgentPane('grok', input.paneText);
+  if (pane === 'needs-you') return { state: 'needs-you', source: 'pane' };
+  if (input.hook?.state && input.hook.at >= input.startedAt) return { state: input.hook.state, source: 'hook' };
+  // No hook yet: what its screen shows, or, open and saying nothing, at its prompt with its first message on its way.
+  if (pane) return { state: pane, source: 'pane' };
+  return input.agentOpen ? { state: 'done', source: 'pane' } : notOpen(input);
+}
+
+/**
+ * OpenCode: its pane, while its program runs.
+ * @param {StateInput} input
+ * @returns {Reading}
+ */
+export function opencodeState(input) {
+  if (input.agentOpen === false) return notOpen(input);
+  const state = classifyAgentPane('opencode', input.paneText);
+  if (state) return { state, source: 'pane' };
+  return input.agentOpen ? { state: 'done', source: 'pane' } : notOpen(input);
+}
+
 /** @param {StateInput} input @returns {Reading} */
 export function qaState({ qaRunning }) {
   return { state: qaRunning ? 'working' : 'done', source: 'qa' };
@@ -116,15 +152,74 @@ export function withHerdr(herdr, own) {
   return (WEIGHT[own.state] ?? 0) > WEIGHT[herdr.state] ? own : herdr;
 }
 
+const READERS = { claude: claudeState, codex: codexState, grok: grokState, opencode: opencodeState };
+
 /**
  * The reader for this session's agent.
- * @param {{qa?: boolean, codex?: boolean, terminal?: 'tmux'|'herdr'}} session
+ * @param {{qa?: boolean, agent?: string, codex?: boolean, terminal?: 'tmux'|'herdr'}} session  codex: true is agent codex
  * @returns {(input: StateInput) => Reading}
  */
-export function stateReader({ qa = false, codex = false, terminal = 'tmux' } = {}) {
+export function stateReader({ qa = false, agent, codex = false, terminal = 'tmux' } = {}) {
   // A QA run is a script in tmux whatever the project file says, as a question and a review are.
   if (qa) return qaState;
-  const own = codex ? codexState : claudeState;
+  const own = READERS[agent ?? (codex ? 'codex' : 'claude')] ?? claudeState;
   if (terminal !== 'herdr') return own;
   return (input) => withHerdr(herdrState(input), own(input));
+}
+
+// What claude writes when Esc ends a turn, mid-turn ("…by user]") or on a dialog ("…by user for tool use]").
+const INTERRUPT_RECORD = '[Request interrupted by user';
+
+/**
+ * @param {string} tailText  the tail of a transcript
+ * @returns {number|null}  when the last turn was cut short with Esc, mid-turn or on a dialog, in ms
+ */
+export function lastInterruptAt(tailText) {
+  const lines = tailText.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes(INTERRUPT_RECORD)) continue;
+    let rec;
+    try {
+      rec = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    const content = rec?.message?.content;
+    const texts = typeof content === 'string' ? [content] : Array.isArray(content) ? content.map((b) => b?.text) : [];
+    const at = Date.parse(rec?.timestamp);
+    if (rec?.type === 'user' && !Number.isNaN(at) && texts.some((t) => typeof t === 'string' && t.startsWith(INTERRUPT_RECORD))) return at;
+  }
+  return null;
+}
+
+/**
+ * @param {string} tailText  the tail of a transcript
+ * @param {{partial: boolean}} opts  partial: the tail starts mid-file, so a walk that runs off its start has not
+ *   seen the whole turn
+ * @returns {number|null}  tool calls since the last prompt with no result yet: still running, in parallel with the
+ *   last one to finish, or a subagent at work. null when the tail ends before the prompt does: one large tool
+ *   result can fill it, and the call it ran beside may be further back
+ */
+export function openToolCalls(tailText, { partial }) {
+  const results = new Set();
+  let open = 0;
+  const lines = tailText.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let rec;
+    try {
+      rec = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    const content = rec?.message?.content;
+    if (rec?.type === 'user') {
+      if (!Array.isArray(content)) return open;
+      const resultIds = content.filter((b) => b?.type === 'tool_result').map((b) => b.tool_use_id);
+      if (!resultIds.length) return open;
+      resultIds.forEach((id) => results.add(id));
+    } else if (rec?.type === 'assistant' && Array.isArray(content)) {
+      open += content.filter((b) => b?.type === 'tool_use' && !results.has(b.id)).length;
+    }
+  }
+  return partial ? null : open;
 }

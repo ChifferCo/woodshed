@@ -1,7 +1,8 @@
 // readyGate: a PreToolUse hook (claudeHooks.json) that refuses to open or mark ready a pull request that changes an
 // app when that app was never started in this session, since nothing can have been checked in it (#26686 did this
-// with the proof rules in its prompt). A draft is always allowed: the session opens one, says under `## Proof` why
-// the change cannot be shown here, and asks for a person with a `Needs a human:` comment.
+// with the proof rules in its prompt). It asks for a try: once the app ran, even to fail, the session opens the pull
+// request ready with what failed under `## Proof` (prompt.md); one that cannot start at all opens a draft. A draft is
+// never gated.
 //
 // It only says no. Anything it cannot work out, such as git failing, lets the call through: a broken hook must not
 // stop a session's work. Exit code 2 is Claude Code's "block this call", and what goes to stderr is shown to claude.
@@ -59,8 +60,8 @@ function refusalText(app, appFiles, several) {
   return [
     `Not opened: this branch changes ${which} (${named}${appFiles.length > FILES_NAMED ? ', …' : ''}), but ${which} was never started in this session, so nothing was checked in it.`,
     `${app.howToProve} Put what you saw under \`## Proof\`, then run this again.`,
-    'If it really cannot be shown here, open the pull request as a draft (`gh pr create --draft`) with the reason under `## Proof`, '
-      + 'post a PR comment that opens with `Needs a human:`, tags the person on the PR body\'s `Started by @…` line and says what could not be proven and why, then stop.',
+    `If ${which} starts but the change cannot be shown in it, or the start fails after writing its logs, write what you tried and why it failed under \`## Proof\` `
+      + 'and run this again: it opens ready. Only when it cannot start at all, with nothing in its logs, open the pull request as a draft (`gh pr create --draft`) with the reason under `## Proof`.',
   ].join('\n\n');
 }
 

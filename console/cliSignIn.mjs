@@ -39,6 +39,7 @@
 import { AsyncResource } from 'node:async_hooks';
 import crypto from 'node:crypto';
 import { isSameOrigin } from '../shared/sameOrigin.mjs';
+import agents from '../shared/agents.cjs';
 import { clientAddress, clientKey, parseTrustedProxies } from './clientAddress.mjs';
 import { PAGE_HEADERS, PAGE_STYLE } from './desktopSignIn.mjs';
 
@@ -109,10 +110,11 @@ export function createCliDevices() {
 /**
  * Whether a token's person still has write access, asked of GitHub at first and then hourly.
  * @param {{canWrite: ((login: string) => Promise<boolean>)|null, revokeAll: (login: string, by: string) => void,
- *          now?: () => number}} deps  `canWrite` null where sign-in does not ask GitHub (no sign-in, or a hosting proxy)
+ *          now?: () => number, logAs?: string}} deps  `canWrite` null where sign-in does not ask GitHub (no sign-in, or a
+ *   hosting proxy); `logAs` the prefix of its log lines, the caller's: a session's start checks it too (sessionStarts)
  * @returns {{allowed: (login: string|null) => Promise<boolean>}}
  */
-export function createWriteAccess({ canWrite, revokeAll, now = Date.now }) {
+export function createWriteAccess({ canWrite, revokeAll, now = Date.now, logAs = 'cliSignIn' }) {
   const checkedAt = new Map();
   const retryAfter = new Map();
   const checking = new Map();
@@ -123,13 +125,13 @@ export function createWriteAccess({ canWrite, revokeAll, now = Date.now }) {
       still = await canWrite(login);
     } catch (err) {
       retryAfter.set(login, now() + WRITE_RETRY_MS);
-      console.warn('cliSignIn: write access not rechecked', { login, retryInMs: WRITE_RETRY_MS, message: String(err?.message ?? err).split('\n')[0] });
+      console.warn(`${logAs}: write access not rechecked`, { login, retryInMs: WRITE_RETRY_MS, message: String(err?.message ?? err).split('\n')[0] });
       return true;
     }
     retryAfter.delete(login);
     if (!still) {
       checkedAt.delete(login);
-      console.log('cliSignIn: refused, write access gone', { login });
+      console.log(`${logAs}: refused, write access gone`, { login });
       revokeAll(login, 'write access gone');
       return false;
     }
@@ -458,13 +460,15 @@ async function readJsonBody(req) {
 /**
  * Whether `login` has saved each personal agent sign-in, for `GET /api/cli/me`'s `sessionSignIns` (setup's agent step).
  * As on My settings, a sign-in saved directly to the store also counts: refresh re-reads it, and caches the check.
- * @returns {(login: string|null) => Promise<{claude: boolean, codex: boolean}>}
+ * Grok Build and OpenCode count only with their own sign-in saved (shared/agents.cjs).
+ * @returns {(login: string|null) => Promise<{claude: boolean, codex: boolean, grok: boolean, opencode: boolean}>}
  */
 export function sessionSignInsOf(userSettings) {
   return async (login) => {
     await userSettings?.refresh?.(login);
     const view = userSettings?.view(login);
-    return { claude: view?.claudeToken?.set === true, codex: view?.codexAuth?.set === true };
+    const own = Object.fromEntries(agents.OWN_SIGN_IN_AGENTS.map((id) => [id, view?.agentAuth?.[id]?.set === true]));
+    return { claude: view?.claudeToken?.set === true, codex: view?.codexAuth?.set === true, ...own };
   };
 }
 

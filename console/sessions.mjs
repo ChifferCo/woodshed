@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 
 import { ASK_DEFAULTS, spanText } from './consoleSettings.mjs';
 import { ENGINE_NAMES } from '../shared/databases/index.mjs';
+import agents from '../shared/agents.cjs';
 
 /** Sessions that still hold, or are waiting for, one of the slots. */
 export const ACTIVE_STATUSES = new Set(['queued', 'starting', 'running', 'stopping']);
@@ -83,6 +84,11 @@ export function parseCommand(body) {
   if (typeof body !== 'string') return null;
   const match = /^\s*\/woodshed(?:[ \t]+|\r?\n|$)([\s\S]*)$/i.exec(body);
   return match ? { text: match[1].trim() } : null;
+}
+
+/** @returns {string|null}  the `owner/name` of a pull request's URL on GitHub */
+export function pullRepo(prUrl) {
+  return /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/\d+$/.exec(String(prUrl ?? ''))?.[1] ?? null;
 }
 
 /** @returns {number|null}  the number of a pull request URL that ends at its number, and nothing else */
@@ -193,11 +199,13 @@ export const MODELS = ['', 'opus', 'sonnet', 'haiku', 'fable'];
 export const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 export const PERMISSION_MODES = ['auto', 'acceptEdits', 'plan', 'default'];
 
-// The agent a private session runs. Codex takes its model and reasoning effort as `codex --model` and
+// The agent a private session runs (shared/agents.cjs). Codex takes its model and reasoning effort as `codex --model` and
 // `-c model_reasoning_effort=`; its permission modes are the entrypoint's mapping onto codex's sandbox and approval flags.
 // Codex's models and efforts are OpenAI's catalog's (codexModels.mjs), which the console checks a start against: here
-// only their shape, since both end up on codex's command line.
-export const AGENTS = ['claude', 'codex'];
+// only their shape, since both end up on codex's command line. Grok Build and OpenCode take a model name of the
+// registry's shape (OpenCode's is `provider/model`), an effort from the registry's list, and the permission modes the
+// entrypoint maps onto each one's own flags.
+export const AGENTS = agents.AGENT_IDS;
 export const CODEX_MODEL_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 export const CODEX_EFFORT_RE = /^[a-z]{1,16}$/;
 export const CODEX_PERMISSION_MODES = ['auto', 'plan', 'default'];
@@ -220,6 +228,17 @@ export function sessionOptions({ agent = 'claude', model = '', effort = '', perm
     if (v && !re.test(v)) throw Object.assign(new Error(`${what} is not a Codex ${what.replace('the ', '')} name`), { shown: true });
     return v;
   };
+  if (chosen !== 'claude' && !codex) {
+    const a = agents.agent(chosen);
+    const m = String(model ?? '');
+    if (!agents.modelShapeOk(chosen, m)) throw Object.assign(new Error(`the model is not a name ${a.product} takes`), { shown: true });
+    return {
+      agent: chosen,
+      model: m,
+      effort: pick(effort, a.efforts ?? [''], 'the effort'),
+      permissionMode: pick(permissionMode || 'auto', a.permissionModes, 'the permission mode'),
+    };
+  }
   return {
     agent: chosen,
     model: codex ? shaped(model, CODEX_MODEL_RE, 'the model') : pick(model, MODELS, 'the model'),
@@ -396,6 +415,43 @@ const MAX_APP_LABEL = 60;
  * @returns {{name: string, label: string}[]|null}  the apps Start app can pick, as statusd listed them; null from a
  *   statusd from before several apps, which runs its one app
  */
+/** Whether the session runs codex: a Codex session, or a private one whose owner started a Codex agent in it
+ * (fleet.allowAgent): its owner's Codex sign-in and the team's OpenAI key are for it as for a Codex session. */
+export function runsCodex(session) {
+  // Never once the session has seen production data: a Codex session cannot, and a claude session's Codex agent stops.
+  return session.options?.agent === 'codex' || (Boolean(session.owner) && !session.taintedAt && (session.extraAgents ?? []).includes('codex'));
+}
+
+const AGENT_STATES = new Set(['starting', 'working', 'needs-you', 'done', 'not-running']);
+const MESSAGE_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
+const AGENT_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+
+/**
+ * The agents statusd says run beside the session's own (session/agents.mjs), as the page reads them: each one's id,
+ * agent, model, effort, permission mode, state, and the page's ids of the messages it holds or typed in. Null from a
+ * session that cannot start any (an older image, a shared session), which the page then offers none to.
+ * @param {unknown} agents  statusd's `agents`
+ * @returns {object[]|null}
+ */
+export function agentsFrom(agents) {
+  if (!Array.isArray(agents)) return null;
+  const ids = (list) => (Array.isArray(list) ? list.filter((id) => typeof id === 'string' && MESSAGE_ID_RE.test(id)).slice(-20) : []);
+  const name = (value) => (typeof value === 'string' && AGENT_NAME_RE.test(value) ? value : null);
+  return agents.filter((a) => /^agent-[2-9]$/.test(a?.id ?? '') && AGENTS.includes(a.agent)).slice(0, 3).map((a) => ({
+    id: a.id,
+    agent: a.agent,
+    model: name(a.model),
+    effort: name(a.effort),
+    permissionMode: name(a.permissionMode),
+    startedAt: typeof a.startedAt === 'string' && !Number.isNaN(Date.parse(a.startedAt)) ? a.startedAt : null,
+    state: AGENT_STATES.has(a.state) ? a.state : null,
+    heldIds: ids(a.heldIds),
+    deliveredIds: ids(a.deliveredIds),
+    refusedIds: ids(a.refusedIds),
+    leftInBox: typeof a.leftInBox?.id === 'string' && MESSAGE_ID_RE.test(a.leftInBox.id) ? { id: a.leftInBox.id } : null,
+  }));
+}
+
 export function appsFrom(apps) {
   if (!Array.isArray(apps)) return null;
   const valid = apps.slice(0, MAX_APPS).filter((a) => APP_NAME_RE.test(a?.name ?? ''));
@@ -422,23 +478,53 @@ function isoOrNull(v) {
   return typeof v === 'string' && v.length <= 40 && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : null;
 }
 
+// Grok Build names its one allowance a week or a month and how long that period is (session/grokPlanUsage.mjs).
+const PLAN_WINDOW_LABELS = new Set(['Week', 'Month']);
+const PLAN_WINDOW_SHORTS = new Set(['wk', 'mo']);
+const PLAN_SPAN_MAX_MS = 400 * 86400_000;
+
 function planWindowFrom(w) {
   if (typeof w?.usedPercent !== 'number' || !Number.isFinite(w.usedPercent)) return null;
-  return { usedPercent: Math.min(100, Math.max(0, w.usedPercent)), resetsAt: isoOrNull(w.resetsAt) };
+  const out = { usedPercent: Math.min(100, Math.max(0, w.usedPercent)), resetsAt: isoOrNull(w.resetsAt) };
+  if (PLAN_WINDOW_LABELS.has(w.label)) out.label = w.label;
+  if (PLAN_WINDOW_SHORTS.has(w.short)) out.short = w.short;
+  if (typeof w.spanMs === 'number' && Number.isFinite(w.spanMs) && w.spanMs > 0 && w.spanMs <= PLAN_SPAN_MAX_MS) out.spanMs = w.spanMs;
+  return out;
 }
 
 /**
- * @param {object} usage  statusd's `planUsage` (session/planUsage.mjs)
+ * @param {object} usage  statusd's `planUsage` (session/planUsage.mjs, codexPlanUsage.mjs, grokPlanUsage.mjs)
  * @returns {{asOf: string|null, fiveHour: object|null, sevenDay: object|null}|null}  in range, or null
  */
 export function planUsageFrom(usage) {
   if (!usage || typeof usage !== 'object') return null;
   const out = { asOf: isoOrNull(usage.asOf), fiveHour: planWindowFrom(usage.fiveHour), sevenDay: planWindowFrom(usage.sevenDay) };
-  if (usage.agent === 'codex') out.agent = 'codex';
+  // Claude's reading carries no agent; any other agent's says whose it is (the meter names it).
+  if (usage.agent !== 'claude' && agents.isAgent(usage.agent)) out.agent = usage.agent;
   return out.fiveHour || out.sevenDay ? out : null;
 }
 
 const MAX_PR_URLS = 20;
+
+/**
+ * Which of Woodshed's own runs are at work on each pull request now: a review or QA session the console started on
+ * it, waiting in line or running. A pull request's checks say nothing of them until they report, so its chip would
+ * show a tick while its review is still being written.
+ * @param {object[]} sessions  every session, whoever may see it: a run says only that it is at work
+ * @returns {(prUrl: string) => ('review'|'qa')[]}  the runs on that pull request, review first
+ */
+export function woodshedRunsOn(sessions) {
+  const runs = new Map();
+  for (const s of sessions) {
+    if (!ACTIVE_STATUSES.has(s.status) || !s.repo || !Number.isInteger(s.number) || !(isReview(s) || isQa(s))) continue;
+    const key = `https://github.com/${s.repo}/pull/${s.number}`.toLowerCase();
+    runs.set(key, { ...runs.get(key), [isReview(s) ? 'review' : 'qa']: true });
+  }
+  return (prUrl) => {
+    const found = runs.get(String(prUrl ?? '').toLowerCase());
+    return ['review', 'qa'].filter((kind) => found?.[kind]);
+  };
+}
 
 /** @returns {string[]}  the session's pull requests, oldest first; one from before the list is its only `prUrl` */
 export function prUrlsOf(session) {
@@ -446,9 +532,22 @@ export function prUrlsOf(session) {
   return session?.prUrl ? [session.prUrl] : [];
 }
 
-function withPrUrl(session, prUrl) {
-  const known = prUrlsOf(session);
-  return prUrl && !known.includes(prUrl) ? [...known, prUrl].slice(-MAX_PR_URLS) : known;
+/**
+ * The session's list with what its statusd reports now: the pull request of the branch checked out, and those of its
+ * other branches and those claude opened elsewhere (`prUrls`, from a statusd that reads them). Oldest first: on one
+ * repo the lowest number first, and one on another repo where it was first seen, since numbers of two repos say
+ * nothing of which came first. A new one on another repo is the newest.
+ */
+function withPrUrls(session, reported) {
+  const repoOf = (url) => (pullRepo(url) ?? '').toLowerCase();
+  const list = [];
+  // Each one found goes before the first of its repo with a higher number, else last.
+  for (const url of new Set([...prUrlsOf(session), ...reported.filter(Boolean)])) {
+    const at = list.findIndex((other) => repoOf(other) === repoOf(url) && pullNumber(other) > pullNumber(url));
+    if (at < 0) list.push(url);
+    else list.splice(at, 0, url);
+  }
+  return list.slice(-MAX_PR_URLS);
 }
 
 /**
@@ -464,11 +563,17 @@ function withPrUrl(session, prUrl) {
  * @param {string} nowIso
  * @returns {object}  the fields to update
  */
-export function statusUpdate(session, status, nowIso) {
+export function statusUpdate(session, status, nowIso, { repos = [] } = {}) {
   // statusd runs as the same user as claude, so its answer is only as trusted as the session.
   const prUrl = typeof status.prUrl === 'string' && status.prUrl.startsWith(`https://github.com/${session.repo}/pull/`)
     ? status.prUrl
     : null;
+  // The pull requests of its other branches, a worktree's included, and those claude opened from another clone, on
+  // its own repo or another of the console's projects (session/openedPulls.mjs): a repo the console has not is left
+  // out, since the console reads each one's state with its own token. `prUrl` stays the checked-out branch's alone.
+  const known = new Set([session.repo, ...repos].filter(Boolean).map((r) => r.toLowerCase()));
+  const otherPrUrls = (Array.isArray(status.prUrls) ? status.prUrls.slice(-MAX_PR_URLS) : [])
+    .filter((url) => typeof url === 'string' && known.has(pullRepo(url)?.toLowerCase()) && pullNumber(url));
   const update = {
     state: status.state,
     shells: Number.isInteger(status.shells) && status.shells > 0 ? Math.min(status.shells, 99) : 0,
@@ -484,9 +589,12 @@ export function statusUpdate(session, status, nowIso) {
     // Whether its statusd types only into a running agent when asked (`agentOnly`): an older image's would type into
     // the shell an exited agent leaves, so its private session's pull request is not watched.
     agentOnlySend: status.agentOnlySend === true,
-    // Every pull request the session has reported, oldest first: a session can open another after one merged.
-    prUrls: withPrUrl(session, prUrl),
+    // Every pull request the session has reported, oldest first: a session can open another after one merged, or
+    // several from branches of their own.
+    prUrls: withPrUrls(session, [...otherPrUrls, prUrl]),
     app: APP_STATES.has(status.app) ? status.app : null,
+    // The agents a person started beside its own, for the page's switch over Chat and TUI.
+    agents: agentsFrom(status.agents),
     // Claude's own id for the conversation, which Resume hands back to `claude --resume`.
     claudeSession: CLAUDE_SESSION_RE.test(status.claudeSession ?? '') ? status.claudeSession : session.claudeSession ?? null,
     appServers: appServersFrom(status.appServers),
@@ -524,7 +632,8 @@ export function statusUpdate(session, status, nowIso) {
  * @param {object} session
  * @returns {object}  the session as the browser sees it: no token, no endpoint
  */
-export function publicSession({ token, terminalToken, endpoint, pendingMessages, reportedPrUrl, agentOnlySend, ...rest }) {
+// The start token's hash too (sessionStarts.mjs): a page never needs it.
+export function publicSession({ token, terminalToken, startTokenHash, endpoint, pendingMessages, reportedPrUrl, agentOnlySend, ...rest }) {
   // A session whose image predates the Terminal tab has no shell ttyd to open.
   // The page's ids of the messages held, never their text: a send whose answer it lost can tell it is still held.
   const heldIds = (pendingMessages ?? []).filter((m) => m && typeof m === 'object' && m.id).map((m) => m.id);

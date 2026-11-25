@@ -2,23 +2,23 @@
 // to Claude Code, or a fresh one of the same kind), on the same branch. Each agent keeps its conversation in a format of
 // its own, which no other agent reads, so what goes across is agent-neutral: the branch, pushed by the old session's
 // stop, and the conversation as statusd's `GET /transcript` shapes it for the Chat tab (session/sessionTranscript.mjs),
-// written out here as a Markdown file the new session gets as an attachment. An agent added to AGENTS (sessions.mjs)
-// can be handed off to and from with nothing more here than its name in AGENT_NAMES.
+// written out here as a Markdown file the new session gets as an attachment. Every agent of shared/agents.cjs can be
+// handed off to and from, called by its product's name there.
 //
 // What goes across depends on why: the person picks whether the conversation goes (a fresh start on the branch alone
 // is often what a stuck agent needs), and may add a note of their own, which leads the new session's prompt.
 
-// The products' names, for the prompt and the file. One not listed is called by its id.
-export const AGENT_NAMES = { claude: 'Claude Code', codex: 'Codex' };
+import agents from '../shared/agents.cjs';
+
 // The file the new session gets, under /tmp/uploads (attachments.mjs names it `1-handoff.md`).
 export const HANDOFF_FILE = 'handoff.md';
 // The note the person adds, at most; the conversation file, at most, its oldest entries left out first.
 export const MAX_NOTE_CHARS = 4000;
 export const MAX_DOCUMENT_BYTES = 2 * 1024 * 1024;
 
-/** @returns {string} */
+/** @returns {string}  the product's name, for the prompt and the file: Claude Code for a session with no agent */
 export function agentName(agent) {
-  return AGENT_NAMES[agent] ?? String(agent || 'claude');
+  return agents.agent(agent).product;
 }
 
 /**

@@ -84,3 +84,22 @@ test('the hook prints nothing, since a UserPromptSubmit hook\'s output goes into
   const { stdout, stderr } = await child;
   assert.equal(stdout + stderr, '');
 });
+
+test('Grok Build\'s camelCase hooks read the same: a turn, an approval, an interrupt and its idle backstop', () => {
+  const grok = (hookEventName, extra = {}) => stateForHook({ hookEventName, sessionId: 's', promptId: 'p', ...extra });
+  assert.equal(grok('SessionStart'), 'done');
+  assert.equal(grok('UserPromptSubmit'), 'working');
+  assert.equal(grok('PreToolUse', { toolName: 'bash' }), 'working');
+  assert.equal(grok('Notification', { notificationType: 'permission_prompt' }), 'needs-you');
+  assert.equal(grok('PostToolUse', { toolName: 'bash' }), 'working');
+  assert.equal(grok('StopCancelled'), 'done');
+  assert.equal(grok('StopFailure'), 'done');
+  assert.equal(grok('Notification', { notificationType: 'idle_prompt' }), 'done');
+  assert.equal(grok('Notification', { notificationType: 'task_complete' }), null);
+  assert.equal(grok('Stop'), 'done');
+  // A subagent's events are not the session's.
+  assert.equal(grok('Stop', { subagentType: 'explore' }), null);
+  assert.equal(grok('PreToolUse', { subagentType: 'explore' }), null);
+  // claude's idle reminder still says nothing new.
+  assert.equal(stateForHook({ hook_event_name: 'Notification', notification_type: 'idle_prompt' }), null);
+});

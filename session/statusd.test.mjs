@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { isolatedEnv } from '../test/isolatedEnv.mjs';
-import { AGENT_PANE_FORMAT, sendNotAfter, sendWithinMs, stillThePull, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps, typeableText } from './statusd.mjs';
+import { AGENT_PANE_FORMAT, sendNotAfter, sendWithinMs, stillThePull, appState, branchPullsQuery, createBranchPulls, createPrLookup, githubRepoOf, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps, typeableText, changedLogin } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -1210,6 +1210,82 @@ test('the pull request lookup is kept for the branch, its upstream and its remot
   assert.equal((await prLookupKey(gitRun)).trim(), 'woodshed/joel-1', 'no upstream or remote: the branch alone');
 });
 
+test('the pull requests of every local branch are read, not only the one checked out', async () => {
+  const url = (n) => `https://github.com/o/r/pull/${n}`;
+  let clock = 0;
+  let reads = 0;
+  let local = [{ name: 'feature/docs', sha: 'c3' }, { name: 'feature/api', sha: 'b2' }, { name: 'woodshed/joel-1', sha: 'a1' }];
+  const asked = [];
+  const branchPulls = createBranchPulls({
+    branches: async () => local,
+    pullsOf: async (names) => {
+      reads += 1;
+      asked.push(names);
+      return [
+        { branch: 'feature/docs', url: url(14), headSha: 'c3', fork: false },
+        { branch: 'woodshed/joel-1', url: url(9), headSha: 'a1', fork: false },
+        { branch: 'feature/api', url: url(12), headSha: 'b2', fork: false },
+        // An older pull request that used the name, whose commits the branch does not have, and a fork's of that name.
+        { branch: 'feature/api', url: url(3), headSha: 'old', fork: false },
+        { branch: 'feature/api', url: url(13), headSha: 'b2', fork: true },
+      ];
+    },
+    isAncestor: async (sha, branch) => local.some((b) => b.name === branch && b.sha === sha),
+    now: () => clock,
+    cacheMs: 60_000,
+  });
+  assert.deepEqual(await branchPulls(), [url(9), url(12), url(14)], 'the lowest number first');
+  assert.deepEqual(asked[0], ['feature/docs', 'feature/api', 'woodshed/joel-1']);
+  await branchPulls();
+  assert.equal(reads, 1, 'kept while the branches are as they were');
+  local = [{ name: 'feature/more', sha: 'd4' }, ...local];
+  await branchPulls();
+  assert.equal(reads, 2, 'a new branch is read at once');
+  clock = 61_000;
+  await branchPulls();
+  assert.equal(reads, 3, 'and again after a minute');
+});
+
+test('a failed read of the branches\' pull requests is kept a minute, with the last good list', async () => {
+  let fail = true;
+  let reads = 0;
+  let clock = 0;
+  let local = [{ name: 'a', sha: '1' }];
+  const failing = createBranchPulls({
+    branches: async () => local,
+    pullsOf: async () => { reads += 1; if (fail) throw new Error('gh: HTTP 502'); return [{ branch: 'a', url: 'https://github.com/o/r/pull/2', headSha: local[0].sha, fork: false }]; },
+    isAncestor: async () => true,
+    now: () => clock,
+    cacheMs: 60_000,
+  });
+  assert.deepEqual(await failing(), []);
+  fail = false;
+  assert.deepEqual(await failing(), [], 'not asked again at the next status read');
+  assert.equal(reads, 1);
+  clock = 61_000;
+  assert.deepEqual(await failing(), ['https://github.com/o/r/pull/2'], 'asked again after its minute');
+  fail = true;
+  local = [{ name: 'a', sha: '2' }];
+  assert.deepEqual(await failing(), ['https://github.com/o/r/pull/2'], 'a later failure keeps the last good list');
+  assert.equal(reads, 3, 'a new commit asks at once');
+  await failing();
+  assert.equal(reads, 3);
+  const none = createBranchPulls({ branches: async () => [], pullsOf: async () => { reads += 1; return []; }, isAncestor: async () => true, now: () => 0 });
+  assert.deepEqual(await none(), []);
+  assert.equal(reads, 3, 'no branch asks nothing');
+});
+
+test('the branches\' pull requests are asked for in one query, of the repo the remote names', () => {
+  assert.deepEqual(githubRepoOf('https://github.com/o/r.git\n'), { owner: 'o', name: 'r' });
+  assert.deepEqual(githubRepoOf('git@github.com:o/r.name'), { owner: 'o', name: 'r.name' });
+  assert.equal(githubRepoOf('/srv/git/r.git'), null);
+  const { query, variables } = branchPullsQuery(['woodshed/joel-1', 'x"y']);
+  assert.deepEqual(variables, { b0: 'woodshed/joel-1', b1: 'x"y' }, 'names go as variables, never into the query');
+  assert.match(query, /^query\(\$owner: String!, \$name: String!, \$b0: String!, \$b1: String!\)/);
+  assert.match(query, /b1: pullRequests\(first: 5, [^)]*headRefName: \$b1\)/);
+  assert.ok(!query.includes('x"y'));
+});
+
 test('a send marked agentOnly types only while claude or codex runs in the pane', () => {
   assert.equal(sendAgentOnly('{"text":"hi","agentOnly":true}'), true);
   assert.equal(sendAgentOnly('{"text":"hi"}'), false);
@@ -1514,4 +1590,219 @@ test('a hand-off\'s checkpoint that fails turns the shared settings sync back on
   await call('POST', '/checkpoint');
   const sent = rounds.slice(seen).map((r) => r.changed?.['.claude/settings.json']).filter(Boolean);
   assert.ok(sent.some((v) => Buffer.from(v, 'base64').toString('utf8').includes('sonnet')), 'the stop after it sends the edit');
+});
+
+test('Grok Build and OpenCode get pastes, as codex does', () => {
+  for (const agent of ['grok', 'opencode']) {
+    assert.deepEqual(typingSteps('fix it\nplease', agent), [{ paste: 'fix it\nplease', pauseMs: 50 }], agent);
+  }
+});
+
+test('an agent\'s own login goes back only when this session refreshed it, and a key never does', () => {
+  const login = JSON.stringify({ openai: { type: 'oauth', refresh: 'r1', access: 'a1', expires: 1 } });
+  const refreshed = JSON.stringify({ openai: { type: 'oauth', refresh: 'r2', access: 'a2', expires: 2 } });
+  assert.equal(changedLogin(login, refreshed), true);
+  assert.equal(changedLogin(login, `${login}\n`), false, 'the same login, written again');
+  assert.equal(changedLogin('xai-abc', refreshed), false, 'a key');
+  assert.equal(changedLogin(null, refreshed), false, 'nothing given');
+  assert.equal(changedLogin(login, 'not json'), false);
+});
+
+test('tmux\'s test of the pane names every agent\'s program', () => {
+  for (const name of ['claude', 'codex', 'grok', 'opencode']) assert.ok(AGENT_PANE_FORMAT.includes(`#{==:#{pane_current_command},${name}}`), name);
+  assert.equal(isAgentCommand('opencode'), true);
+  assert.equal(isAgentCommand('bash'), false);
+});
+
+// An agent started beside the session's own (agents.mjs) through statusd's routes, in a real tmux: the stand-in picker
+// stands in for its claude, and is asked and answered on that agent's routes, never the session's own pane.
+test('an agent beside the session\'s own starts in its own tmux session, and its question is read and answered on its routes', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-agents-'));
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  t.after(async () => {
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const spec = { questions: [{ question: 'Which colour?', header: 'Colour', options: ['Red', 'Green', 'Blue'] }] };
+  await fs.writeFile(path.join(dir, 'spec.json'), JSON.stringify(spec));
+  const picker = fileURLToPath(new URL('../shared/__fixtures__/claudePicker.mjs', import.meta.url));
+  // The agent's `claude`, whatever flags it is given: the picker, which writes what was picked.
+  await fs.mkdir(path.join(dir, 'bin'));
+  await fs.writeFile(path.join(dir, 'bin', 'claude'), `#!/bin/sh\nexec '${process.execPath}' '${picker}' '${dir}/spec.json' '${dir}/answers.json'\n`, { mode: 0o755 });
+  await fs.writeFile(path.join(dir, 'flags'), '');
+  // The session's own pane, which nothing here may type into.
+  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '40', 'sleep 600');
+  const { call } = await statusdWithApp(t, { env: {
+    TMUX: '', TMUX_TMPDIR: dir, SESSION_KIND: 'private', SESSION_MODE: '', WOODSHED_AGENT_BIN: path.join(dir, 'bin'), WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'),
+    WOODSHED_CODEX_READY_FILE: path.join(dir, 'no-codex'), WOODSHED_AGENT_STATE_DIR: dir, WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'own-state.json'),
+  } });
+
+  assert.equal((await call('POST', '/agents', 'wrong', '{}')).status, 401);
+  const started = await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'claude', model: 'opus' }));
+  assert.equal(started.status, 200);
+  assert.equal(started.body.agent.id, 'agent-2');
+  assert.equal((await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'codex' }))).status, 409, 'no codex home in this session');
+  const shown = async () => (await tmux('capture-pane', '-p', '-t', '=agent-2:')).stdout;
+  for (let i = 0; i < 50 && !/Esc to cancel/.test(await shown()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok((await tmux('ls')).stdout.includes('agent-2:'), 'its own tmux session');
+
+  const prompt = (await call('GET', '/agents/agent-2/prompt', 'sess')).body.prompt;
+  assert.equal(prompt?.question, 'Which colour?');
+  assert.equal((await call('GET', '/prompt', 'sess')).body.prompt, null, 'the session\'s own pane asks nothing');
+  assert.equal((await call('GET', '/agents/agent-9/prompt', 'sess')).status, 404);
+  const options = ['Red', 'Green', 'Blue'];
+  const answer = { kind: 'question', questions: [{ question: 'Which colour?', options, descriptions: options.map((o) => `${o} is one of the options`), pick: 2 }] };
+  assert.deepEqual((await call('POST', '/agents/agent-2/answer', 'sess', JSON.stringify(answer))).body, { ok: true });
+  let picked = null;
+  for (let i = 0; i < 50 && !picked; i++) {
+    picked = JSON.parse(await fs.readFile(path.join(dir, 'answers.json'), 'utf8').catch(() => 'null'));
+    if (!picked) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.ok(JSON.stringify(picked).includes('Blue'), JSON.stringify(picked));
+
+  assert.deepEqual((await call('POST', '/agents/agent-2/stop', 'sess', '{}')).body, { stopped: 'agent-2' });
+  assert.deepEqual((await call('GET', '/agents', 'sess')).body, { agents: [] });
+  assert.ok((await tmux('ls')).stdout.includes('claude:'), 'the session\'s own is still there');
+});
+
+test('a private Grok Build or OpenCode session reports support for extra agents', async (t) => {
+  for (const agent of ['grok', 'opencode']) {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), `statusd-extra-agents-${agent}-`));
+    t.after(() => fs.rm(dir, { recursive: true, force: true }));
+    await fs.writeFile(path.join(dir, 'flags'), '');
+    await fs.writeFile(path.join(dir, 'codex-ready'), '');
+    const { call } = await statusdWithApp(t, { env: {
+      AGENT: agent, TMUX: '', TMUX_TMPDIR: dir, SESSION_KIND: 'private', SESSION_MODE: '', WOODSHED_AGENT_BIN: path.join(dir, 'bin'),
+      WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'), WOODSHED_CODEX_READY_FILE: path.join(dir, 'codex-ready'), WOODSHED_AGENT_STATE_DIR: dir,
+      WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'own-state.json'),
+      // The Plan chip reads this home's log. A test must not read the machine's.
+      GROK_HOME: dir,
+    } });
+    assert.deepEqual(await call('GET', '/agents', 'sess'), { status: 200, body: { agents: [] } }, agent);
+    const start = JSON.stringify({ agent: 'claude' });
+    assert.equal((await call('POST', '/agents', 'sess', start)).status, 409, agent + ' refuses the old Claude start route');
+    assert.equal((await call('POST', '/agents/with-claude-token', 'sess', start)).status, 409, agent + ' requires an owner token');
+    assert.deepEqual((await call('GET', '/status', 'sess')).body.agents, [], agent);
+  }
+});
+
+// A Codex agent beside claude on its owner's own sign-in (agents.mjs, codexBeside): written into codex's home as the
+// start brings it, and sent back at the stop's checkpoint once codex refreshed it, even after the agent was stopped.
+test('a Codex agent beside claude gets the sign-in its start brings, and the stop sends a refreshed one back', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-codex-beside-'));
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  const posted = [];
+  const consoleServer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      posted.push({ url: req.url, body });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    });
+  });
+  const consolePort = await listen(consoleServer);
+  t.after(async () => {
+    consoleServer.close();
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const home = path.join(dir, 'home');
+  const codexHome = path.join(home, '.codex');
+  await fs.mkdir(codexHome, { recursive: true });
+  await fs.mkdir(path.join(dir, 'bin'));
+  await fs.writeFile(path.join(dir, 'bin', 'codex'), '#!/bin/sh\nexec sleep 600\n', { mode: 0o755 });
+  await fs.writeFile(path.join(dir, 'codex-ready'), '');
+  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '40', 'sleep 600');
+  const { call } = await statusdWithApp(t, { env: {
+    TMUX: '', TMUX_TMPDIR: dir, HOME: home, CODEX_HOME: codexHome, SESSION_KIND: 'private', SESSION_MODE: '', AGENT: '',
+    WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consolePort}`, WOODSHED_AGENT_BIN: path.join(dir, 'bin'),
+    WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'), WOODSHED_CODEX_READY_FILE: path.join(dir, 'codex-ready'),
+    WOODSHED_AGENT_STATE_DIR: dir, WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'own-state.json'),
+  } });
+
+  const login = '{"last_refresh":"2026-11-23T10:00:00Z","tokens":{"refresh_token":"rt"}}';
+  const started = await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'codex', codexAuth: login }));
+  assert.equal(started.status, 200);
+  assert.equal(await fs.readFile(path.join(codexHome, 'auth.json'), 'utf8'), login, 'the sign-in the start brought');
+  assert.equal(((await fs.stat(path.join(codexHome, 'auth.json'))).mode & 0o777), 0o600);
+  assert.ok(!posted.some((p) => p.url === '/codex-sign-in'), 'nothing asked of the console for it');
+  // codex refreshes its ChatGPT login as it runs; then the person stops the agent.
+  const refreshed = '{"last_refresh":"2026-11-23T11:00:00Z","tokens":{"refresh_token":"rt2"}}';
+  await fs.writeFile(path.join(codexHome, 'auth.json'), refreshed);
+  assert.deepEqual((await call('POST', '/agents/agent-2/stop', 'sess', '{}')).body, { stopped: 'agent-2' });
+
+  await call('POST', '/checkpoint');
+  const back = posted.filter((p) => p.url === '/codex-auth');
+  assert.equal(back.length, 1, 'the refreshed sign-in goes back once');
+  assert.equal(back[0].body, refreshed);
+});
+
+// The same, where the session's agent runs in Herdr: the agent beside it is a Herdr terminal of its own on the session's
+// core (the test's scratch one, isolatedEnv), driven through hc, and gone once stopped.
+test('in Herdr, an agent beside the session\'s own is a Herdr terminal of its own, asked and answered through hc', { skip: spawnSync('hc', ['--version'], { env: isolatedEnv() }).status !== 0 && 'no hc here' }, async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-agents-hc-'));
+  const hc = (...args) => promisify(execFile)('hc', args, { env: isolatedEnv(), cwd: dir });
+  t.after(async () => {
+    await hc('kill', '--json', '--', 'agent-2').catch(() => {});
+    await hc('rm', '--json', '--', 'agent-2').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const spec = { questions: [{ question: 'Which colour?', header: 'Colour', options: ['Red', 'Green', 'Blue'] }] };
+  await fs.writeFile(path.join(dir, 'spec.json'), JSON.stringify(spec));
+  const picker = fileURLToPath(new URL('../shared/__fixtures__/claudePicker.mjs', import.meta.url));
+  await fs.mkdir(path.join(dir, 'bin'));
+  // Records the variable the start put before it, then is the picker.
+  await fs.writeFile(path.join(dir, 'bin', 'claude'), `#!/bin/sh\necho "$WOODSHED_CLAUDE_STATE_FILE" > '${dir}/state-file'\nexec '${process.execPath}' '${picker}' '${dir}/spec.json' '${dir}/answers.json'\n`, { mode: 0o755 });
+  await fs.writeFile(path.join(dir, 'flags'), '');
+  const { call } = await statusdWithApp(t, { env: {
+    WOODSHED_TERMINAL: 'herdr', SESSION_KIND: 'private', SESSION_MODE: '', WOODSHED_AGENT_BIN: path.join(dir, 'bin'),
+    WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'), WOODSHED_CODEX_READY_FILE: path.join(dir, 'no-codex'), WOODSHED_AGENT_STATE_DIR: dir,
+  } });
+
+  const started = await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'claude' }));
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  const terminal = JSON.parse((await hc('get', '--json', '--', 'agent-2')).stdout);
+  assert.equal(terminal.name, 'agent-2');
+  assert.equal(terminal.parent ?? null, null, 'no parent: it outlives nothing');
+  const shown = async () => JSON.parse((await hc('read', '--json', '--', 'agent-2')).stdout).text;
+  for (let i = 0; i < 80 && !/Esc to cancel/.test(await shown()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal((await fs.readFile(path.join(dir, 'state-file'), 'utf8')).trim(), path.join(dir, 'woodshed-agent-2-state.json'), 'its hooks write its own state file');
+
+  assert.equal((await call('GET', '/agents/agent-2/prompt', 'sess')).body.prompt?.question, 'Which colour?');
+  const options = ['Red', 'Green', 'Blue'];
+  const answer = { kind: 'question', questions: [{ question: 'Which colour?', options, descriptions: options.map((o) => `${o} is one of the options`), pick: 1 }] };
+  assert.deepEqual((await call('POST', '/agents/agent-2/answer', 'sess', JSON.stringify(answer))).body, { ok: true });
+  let picked = null;
+  for (let i = 0; i < 50 && !picked; i++) {
+    picked = JSON.parse(await fs.readFile(path.join(dir, 'answers.json'), 'utf8').catch(() => 'null'));
+    if (!picked) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.ok(JSON.stringify(picked).includes('Green'), JSON.stringify(picked));
+  assert.equal((await call('POST', '/scroll', 'sess', JSON.stringify({ steps: -3, pane: 'agent-2' }))).status, 409, 'Herdr\'s client scrolls it');
+
+  assert.deepEqual((await call('POST', '/agents/agent-2/stop', 'sess', '{}')).body, { stopped: 'agent-2' });
+  await assert.rejects(hc('get', '--json', '--', 'agent-2'), 'its terminal is gone');
+
+  // A message from Chat goes in through hc's own send, once the agent is at its prompt: the dev console's stand-in claude.
+  const standIn = fileURLToPath(new URL('../console/bin/devChatAgent.mjs', import.meta.url));
+  const records = path.join(dir, 'records');
+  await fs.writeFile(path.join(dir, 'bin', 'claude'), `#!/bin/sh
+exec '${process.execPath}' '${standIn}' claude '${records}' "$PWD" "$@"
+`, { mode: 0o755 });
+  assert.equal((await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'claude' }))).status, 200);
+  for (let i = 0; i < 80 && !/auto mode on/.test(await shown()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  const sent = await call('POST', '/agents/agent-2/send', 'sess', JSON.stringify({ text: 'hello from Chat', id: 'msg-00000001' }));
+  assert.equal(sent.status, 200, JSON.stringify(sent.body));
+  let typed = false;
+  for (let i = 0; i < 100 && !typed; i++) {
+    const files = await fs.readdir(records).catch(() => []);
+    for (const f of files) if ((await fs.readFile(path.join(records, f), 'utf8')).includes('hello from Chat')) typed = true;
+    if (!typed) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.ok(typed, 'the agent got the message');
+  assert.deepEqual((await call('GET', '/agents', 'sess')).body.agents[0].deliveredIds, ['msg-00000001']);
+  await call('POST', '/agents/agent-2/stop', 'sess', '{}');
 });

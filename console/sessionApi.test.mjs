@@ -5,10 +5,12 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
+import { createAsks } from './asks.mjs';
 import { MAX_QA_POSTER_BYTES } from './qaRecordings.mjs';
 import { MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES } from './qaSessions.mjs';
 import { createSessionApi, sessionForAuthorization } from './sessionApi.mjs';
 import { createUserSettings } from './userSettings.mjs';
+import agents from '../shared/agents.cjs';
 import { readRepoSettings, writeEnvFiles } from '../shared/project.mjs';
 
 const SESSIONS = [
@@ -644,6 +646,91 @@ test('a private Codex session needs no Claude token, gets its owner\'s Codex sig
   assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer claude-token', body: '{}' })).status, 404, 'not a Codex session');
 });
 
+test('a private Grok Build or OpenCode session runs on its owner\'s own sign-in alone, and can keep a refreshed login', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'running', token: 'grok-token', owner: 'joel', options: { agent: 'grok' } },
+    { id: 'bbbbbbbb', status: 'running', token: 'none-token', owner: 'mia', options: { agent: 'opencode' } },
+    { id: 'cccccccc', status: 'running', token: 'codex-token', owner: 'joel', options: { agent: 'codex' } },
+    { id: 'dddddddd', status: 'running', token: 'oc-token', owner: 'joel', options: { agent: 'opencode' } },
+  ];
+  const own = {
+    grok: JSON.stringify({ scope: { key: 'at', refresh_token: 'rt', expires_at: '2026-12-01T00:00:00Z' } }),
+    opencode: JSON.stringify({ openai: { type: 'oauth', refresh: 'r', access: 'a', expires: 2_000 } }),
+  };
+  const saved = [];
+  const userSettings = {
+    claudeToken: async () => { throw new Error('never asked for a Claude token'); },
+    agentAuth: async (login, id) => (login === 'joel' ? own[id] : null),
+    setAgentAuth: async (login, id, text) => { saved.push([login, id, text]); },
+    ownFiles: async () => ({}),
+    gitIdentity: () => null,
+  };
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  const grok = await request(port, { path: '/settings', authorization: 'Bearer grok-token' });
+  assert.equal(grok.status, 200);
+  assert.deepEqual([grok.body.agentAuth, grok.body.claudeToken, grok.body.codexAuth], [own.grok, null, undefined]);
+  assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer none-token' }),
+    { status: 409, body: { error: '@mia has no OpenCode sign-in saved on My settings' } });
+
+  const given = (text) => ({ 'x-woodshed-given-sign-in': agents.signInDigest(text) });
+  const newer = JSON.stringify({ scope: { key: 'at2', refresh_token: 'rt2', expires_at: '2026-12-02T00:00:00Z' } });
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: newer })).status, 409, 'a session that does not say which sign-in it was given keeps nothing');
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: newer, headers: given(` ${JSON.stringify(JSON.parse(own.grok), null, 2)}\n`) })).status, 200,
+    'the one it was given, whatever its spacing');
+  assert.deepEqual(saved, [['joel', 'grok', newer]]);
+  // A key saved on My settings while the session ran: a key has no expiry, so only which sign-in it was tells them apart.
+  const given0 = own.grok;
+  own.grok = 'xai-replacement-key-0123456789';
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: newer, headers: given(given0) })).status, 409, 'a sign-in saved since is never written over');
+  assert.equal(own.grok, 'xai-replacement-key-0123456789');
+  const older = JSON.stringify({ openai: { type: 'oauth', refresh: 'r0', access: 'a0', expires: 1_000 } });
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer oc-token', body: older, headers: given(own.opencode) })).status, 409, 'an older login never replaces a newer one');
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer codex-token', body: older })).status, 404, 'not an agent of its own sign-in');
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer none-token', body: older })).status, 409, 'no sign-in saved, nothing to replace');
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: 'x'.repeat(20_001) })).status, 413);
+  assert.equal(saved.length, 1, 'only the refresh of the sign-in it was given');
+});
+
+test('a Codex agent beside claude sends a refreshed sign-in back, and a tainted session never does', async (t) => {
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'running', token: 'beside', owner: 'joel', extraAgents: ['codex'] },
+    { id: 'bbbbbbbb', status: 'running', token: 'none-started', owner: 'joel', extraAgents: ['claude'] },
+    { id: 'cccccccc', status: 'running', token: 'tainted', owner: 'joel', extraAgents: ['codex'], taintedAt: '2026-11-23T10:00:00Z' },
+    { id: 'dddddddd', status: 'running', token: 'locking', owner: 'joel', extraAgents: ['codex'] },
+  ];
+  const saved = [];
+  const userSettings = {
+    claudeToken: async () => 'sk-ant',
+    codexAuth: async (login) => (login === 'joel' ? '{"tokens":{"refresh_token":"rt"}}' : null),
+    setCodexAuth: async (login, text) => { saved.push([login, text]); },
+    ownFiles: async () => ({}),
+    gitIdentity: () => null,
+  };
+  const fleet = { sessions: () => sessions, isLocked: (s) => s.id === 'dddddddd' };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({}) }, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const back = (token) => request(port, { path: '/codex-auth', authorization: `Bearer ${token}`, body: '{"tokens":{"refresh_token":"rt2"}}' });
+
+  assert.equal((await back('beside')).status, 200);
+  assert.deepEqual(saved, [['joel', '{"tokens":{"refresh_token":"rt2"}}']]);
+  assert.equal((await back('none-started')).status, 404);
+  assert.equal((await back('tainted')).status, 404, 'a tainted session sends nothing back to the owner\'s saved sign-in');
+  assert.equal((await back('locking')).status, 404, 'nor one whose lockdown is under way');
+  assert.equal(saved.length, 1);
+  assert.equal((await request(port, { path: '/codex-sign-in', authorization: 'Bearer beside' })).status, 404, 'a session never asks for the sign-in');
+  assert.equal((await request(port, { path: '/settings', authorization: 'Bearer beside' })).body.codexAuth, undefined, 'nor gets it with its settings');
+});
+
 test('a session gets the token of the project it runs on', async (t) => {
   const sessions = [
     { id: 'aaaaaaaa', status: 'running', token: 'on-app', project: 'app', repo: 'acme/app' },
@@ -949,4 +1036,100 @@ test('a review whose Codex runs on its author\'s sign-in is never handed that si
   assert.ok(!JSON.stringify(settings.body).includes('rt'), 'the console\'s proxy adds it to the calls instead');
   assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer review-own', body: '{"tokens":{"refresh_token":"x"}}' })).status, 404);
   assert.deepEqual(saved, []);
+});
+
+test('a save on My settings that lands while a session\'s refresh is being written back is never written over', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  // The real settings, on a store that holds back the write-back's save until the test lets it go: the save on My
+  // settings comes after the write-back read and compared, and before it wrote.
+  const values = new Map();
+  let held = null;
+  let wroteBack = () => {};
+  const reachedSave = new Promise((resolve) => { wroteBack = resolve; });
+  const secrets = {
+    read: async (name) => values.get(name) ?? null,
+    save: async (name, value) => {
+      if (value.includes('rt2')) { wroteBack(); await held; }
+      values.set(name, value);
+    },
+    remove: async (name) => { values.delete(name); },
+  };
+  const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets });
+  const login = JSON.stringify({ scope: { key: 'at', refresh_token: 'rt', expires_at: '2026-12-01T00:00:00Z' } });
+  await userSettings.setAgentAuth('joel', 'grok', login);
+  const sessions = [{ id: 'aaaaaaaa', status: 'running', token: 'grok-token', owner: 'joel', options: { agent: 'grok' } }];
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  let release;
+  held = new Promise((resolve) => { release = resolve; });
+  const refreshed = JSON.stringify({ scope: { key: 'at2', refresh_token: 'rt2', expires_at: '2026-12-02T00:00:00Z' } });
+  const back = request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: refreshed, headers: { 'x-woodshed-given-sign-in': agents.signInDigest(login) } });
+  await reachedSave;
+  // Read and compared, not yet written: a key saved on My settings now.
+  const saved = userSettings.setAgentAuth('joel', 'grok', 'xai-replacement-key-0123456789');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  release();
+  await saved;
+  assert.equal((await back).status, 200);
+  // The save waited for the write-back's turn and went after it: the key is what is kept, not the refresh.
+  assert.equal(await userSettings.agentAuth('joel', 'grok'), 'xai-replacement-key-0123456789');
+});
+
+test('an ask session opens issues through /issues with the console\'s App; every other refusal says why', async (t) => {
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'running', token: 'ask-token', kind: 'ask', slack: { channel: 'C1', threadTs: '1.1', user: 'U1' } },
+    { id: 'a2a2a2a2', status: 'running', token: 'stranger-token', kind: 'ask', slack: { channel: 'C1', threadTs: '2.2', user: 'U2' } },
+    { id: 'a3a3a3a3', status: 'running', token: 'reader-token', kind: 'ask', slack: { channel: 'C1', threadTs: '3.3', user: 'U3' } },
+    { id: 'bbbbbbbb', status: 'running', token: 'issue-token', kind: 'issue' },
+    { id: 'cccccccc', status: 'running', token: 'review-token', kind: 'pr', number: 7, review: { base: 'main' } },
+    { id: 'dddddddd', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } },
+  ];
+  const opened = [];
+  const replies = [];
+  const gh = {
+    async canWrite(login) { return login !== 'reader'; },
+    async labelNames() { return ['bug', 'Docs']; },
+    async createIssue(issue) { opened.push(issue); return { number: 40 + opened.length, url: `https://github.com/o/r/issues/${40 + opened.length}` }; },
+  };
+  const links = { U1: 'ana', U3: 'reader' };
+  const asks = createAsks({
+    store: { state: {}, save() {} }, fleet: { sessions: () => sessions }, slack: { reply: async (a) => { replies.push(a); return true; } }, publicUrl: 'https://console.test',
+    issues: { projectForRepo: (repo) => (repo.toLowerCase() === 'o/r' ? { repo: 'o/r' } : null), githubOf: () => gh, loginFor: (id) => links[id] ?? null },
+  });
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, asks });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const file = (token, body) => request(port, { path: '/issues', authorization: `Bearer ${token}`, body: JSON.stringify({ repo: 'o/r', title: 'Retry loops', body: 'It retries forever.', ...body }) });
+
+  const ok = await file('ask-token', { labels: ['BUG', 'nope'] });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.body, { number: 41, url: 'https://github.com/o/r/issues/41', labels: ['bug'], labelsIgnored: ['nope'] });
+  assert.equal(opened[0].body, 'It retries forever.');
+  assert.deepEqual(replies, [{ channel: 'C1', threadTs: '1.1', markdown: 'Opened [o/r#41](https://github.com/o/r/issues/41): Retry loops' }]);
+  assert.deepEqual(opened[0].labels, ['bug']);
+
+  // Not an ask session: refused with 404, and nothing opened.
+  for (const token of ['issue-token', 'review-token', 'qa-token']) assert.equal((await file(token, {})).status, 404);
+  // No link on People, no write access, a repo the console lacks.
+  const unlinked = await file('stranger-token', {});
+  assert.equal(unlinked.status, 403);
+  assert.match(unlinked.body.error, /not linked/);
+  assert.match((await file('reader-token', {})).body.error, /@reader has no write access to o\/r/);
+  assert.match((await file('ask-token', { repo: 'x/y' })).body.error, /x\/y is not one of this console's repos/);
+  assert.equal((await file('ask-token', { title: '' })).status, 403);
+  assert.equal(opened.length, 1);
+
+  // No limit: a fourth for the same question opens too.
+  for (let i = 0; i < 4; i++) assert.equal((await file('ask-token', {})).status, 200);
+  assert.equal(opened.length, 5);
+
+  // A session that has seen production data opens none.
+  sessions[0].taintedAt = '2026-11-24T10:00:00.000Z';
+  assert.match((await file('ask-token', {})).body.error, /production/);
 });

@@ -92,6 +92,8 @@ test('the command line allows only the session, config and review routes', () =>
     // woodshed config's: the choices on My settings, never a secret.
     ['GET', '/api/cli/config'], ['POST', '/api/my/terminal'], ['POST', '/api/my/reviews'], ['POST', '/api/my/codex-auth/reviews'],
     ['POST', '/api/my/claude-token/shared'], ['POST', '/api/my/projects/default'], ['POST', '/api/my/github/identity'],
+    // woodshed session agents and agent's: the agents beside a private session's own.
+    ['GET', '/api/sessions/0a1b2c3d/agents'], ['POST', '/api/sessions/0a1b2c3d/agents'], ['POST', '/api/sessions/0a1b2c3d/agents/agent-2/stop'],
   ]) assert.equal(cliMayCall(method, path), true, `${method} ${path}`);
   for (const [method, path] of [
     ['POST', '/api/sessions'], ['GET', '/api/my'], ['POST', '/api/my/claude-token'], ['POST', '/api/my/remove'], ['POST', '/api/my/tunnel-token'],
@@ -109,6 +111,10 @@ test('the command line allows only the session, config and review routes', () =>
     ['POST', '/api/my/claude-token/remove'], ['POST', '/api/my/codex-auth'], ['POST', '/api/my/codex-auth/remove'], ['POST', '/api/my/files/tmux-conf'],
     ['GET', '/api/my/files/tmux-conf'], ['POST', '/api/my/repos/app/env/api'], ['GET', '/api/my/repos/app/env/api'], ['POST', '/api/my/github/disconnect'],
     ['POST', '/api/my/limits'], ['POST', '/api/my/home/forget'], ['GET', '/api/my/reviews'], ['POST', '/api/cli/config'], ['GET', '/api/my/terminal/x'],
+    // An agent's Chat is the page's: what is typed into an agent never comes from the command line's token.
+    ['POST', '/api/sessions/0a1b2c3d/agents/agent-2/send'], ['POST', '/api/sessions/0a1b2c3d/agents/agent-2/answer'],
+    ['POST', '/api/sessions/0a1b2c3d/agents/agent-2/interrupt'], ['GET', '/api/sessions/0a1b2c3d/agents/agent-2/transcript'],
+    ['POST', '/api/sessions/0a1b2c3d/agents/agent-1/stop'], ['GET', '/api/sessions/0a1b2c3d/agents/agent-2/stop'],
   ]) assert.equal(cliMayCall(method, path), false, `${method} ${path}`);
   assert.equal(carriesCliToken({ authorization: `Bearer wsc_${'0'.repeat(64)}` }), true);
   assert.equal(carriesCliToken({ authorization: 'Bearer wt_abc' }), false, 'the tunnel\'s token is not the command line\'s');

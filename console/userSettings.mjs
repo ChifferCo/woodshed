@@ -6,6 +6,10 @@
 //   users/<login>/claude-token   from `claude setup-token`: the person's own Claude plan
 //   users/<login>/codex-auth     the person's own Codex sign-in: an OpenAI API key, or the ~/.codex/auth.json of `codex login`.
 //                                Handed to their private Codex sessions, which write a refreshed login back (sessionApi.mjs)
+//   users/<login>/grok-auth, opencode-auth   the person's own sign-in for Grok Build (an xAI key or ~/.grok/auth.json)
+//                                and OpenCode (its auth.json): those agents run on nothing else (shared/agents.cjs).
+//                                Handed to their private sessions of that agent alone; their logins rotate, so a session
+//                                writes the refreshed one back
 //   users/<login>/tmux-conf      ~/.tmux.conf, which their sessions write after the console's shared file, so a change to
 //                                that still reaches them. Readable by them, since their sessions hold the same text anyway
 //   users/<login>/gitconfig, inputrc, bash-aliases   their own lines for those files, the same way: only what
@@ -21,10 +25,15 @@ import { fileURLToPath } from 'node:url';
 import logins from './public/logins.cjs';
 import { DOTFILES, dotfileProblem } from '../shared/dotfiles.mjs';
 import { SETTINGS, settingProblem } from './consoleSettings.mjs';
+import agents from '../shared/agents.cjs';
 const { loginKey } = logins;
 
-// Who may review a person's pull requests, as reviewAgents.mjs reads it.
-const REVIEW_CHOICES = ['none', 'claude', 'codex', 'both'];
+// Who may review a person's pull requests, as reviewAgents.mjs reads it: a preset's name, or reviewers joined with `+`
+// (shared/agents.cjs, reviewersOf), kept as reviewChoiceOf writes it.
+const reviewChoice = (choice) => {
+  const reviewers = agents.reviewersOf(choice);
+  return reviewers ? agents.reviewChoiceOf(reviewers) : null;
+};
 // What the person's private sessions run their agent in (session/agentPane.mjs): tmux, as every session does, or Herdr's
 // terminal runtime, which their own Herdr can attach to. tmux is the default, and the only one for every other session.
 export const TERMINALS = Object.freeze(['tmux', 'herdr']);
@@ -185,8 +194,12 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     askedAt.set(key, now());
     let token;
     let codex;
+    let own;
     try {
-      [token, codex] = await Promise.all([secrets.read(userSecretName(login, CLAUDE_TOKEN)), secrets.read(userSecretName(login, CODEX_AUTH))]);
+      [token, codex, ...own] = await Promise.all([
+        secrets.read(userSecretName(login, CLAUDE_TOKEN)), secrets.read(userSecretName(login, CODEX_AUTH)),
+        ...agents.OWN_SIGN_IN_AGENTS.map((id) => secrets.read(userSecretName(login, agents.agent(id).signIn.secret))),
+      ]);
     } catch (err) {
       console.warn('userSettings: stored sign-ins not read', { login, message: String(err?.message ?? err).split('\n')[0] });
       return;
@@ -195,9 +208,20 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     const changes = {};
     if (Boolean(token) !== Boolean(record?.claudeTokenAt)) changes.claudeTokenAt = token ? at : null;
     if (Boolean(codex) !== Boolean(record?.codexAuthAt)) changes.codexAuthAt = codex ? at : null;
+    const ownAt = { ...record?.agentAuthAt };
+    let ownChanged = false;
+    agents.OWN_SIGN_IN_AGENTS.forEach((id, i) => {
+      if (Boolean(own[i]) === Boolean(ownAt[id])) return;
+      ownChanged = true;
+      if (own[i]) ownAt[id] = at;
+      else delete ownAt[id];
+    });
+    if (ownChanged) changes.agentAuthAt = ownAt;
     if (!Object.keys(changes).length) return;
     touch(login, changes);
-    console.log('userSettings: sign-ins follow the secret store', { login, claudeToken: Boolean(token), codexAuth: Boolean(codex) });
+    console.log('userSettings: sign-ins follow the secret store', {
+      login, claudeToken: Boolean(token), codexAuth: Boolean(codex), ...Object.fromEntries(agents.OWN_SIGN_IN_AGENTS.map((id, i) => [id, Boolean(own[i])])),
+    });
   }
 
   function requireSecrets() {
@@ -218,9 +242,14 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     return {
       claudeToken: { set: Boolean(record?.claudeTokenAt), savedAt: record?.claudeTokenAt ?? null },
       codexAuth: { set: Boolean(record?.codexAuthAt), savedAt: record?.codexAuthAt ?? null },
+      // Each agent that runs on its owner's own sign-in alone (shared/agents.cjs): whether one is saved.
+      agentAuth: Object.fromEntries(agents.OWN_SIGN_IN_AGENTS.map((id) => [id, { set: Boolean(record?.agentAuthAt?.[id]), savedAt: record?.agentAuthAt?.[id] ?? null }])),
       ownTokenForShared: record?.ownTokenForShared !== false,
       ownCodexForReviews: record?.ownCodexForReviews !== false,
-      reviewAgents: REVIEW_CHOICES.includes(record?.reviewAgents) ? record.reviewAgents : null,
+      // Whether reviews of their pull requests may run Grok Build and OpenCode on their own sign-in (reviewAgents.mjs).
+      ownAgentForReviews: Object.fromEntries(agents.OWN_SIGN_IN_AGENTS.filter((id) => agents.agent(id).reviews)
+        .map((id) => [id, usesOwnAgentForReviews(login, id)])),
+      reviewAgents: reviewChoice(record?.reviewAgents),
       terminal: terminal(login),
       limits: { ...record?.limits },
       github: { connected: Boolean(github?.connectedAt), connectedAt: github?.connectedAt ?? null, name: github?.name ?? null, email: github?.email ?? null },
@@ -369,6 +398,67 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     return secrets.read(userSecretName(login, CODEX_AUTH));
   }
 
+  function ownSignInAgent(id) {
+    if (!agents.OWN_SIGN_IN_AGENTS.includes(id)) throw Object.assign(new Error(`no own sign-in for ${id}`), { shown: true });
+    return agents.agent(id);
+  }
+
+  // One change at a time to each person's sign-in for each agent: My settings' save or remove, and a session's write-back
+  // of a refreshed login, which reads the saved one, compares, and writes (sessionApi.mjs, agentAuthReply). Without it a
+  // save landing between that read and that write would be written over.
+  const agentAuthTurns = new Map();
+  /**
+   * Runs `fn` with that sign-in to itself: no save or remove of it, nor another turn, runs until it is done.
+   * @param {string} login @param {string} id
+   * @param {(ops: {read: () => Promise<string|null>, save: (value: string) => Promise<void>}) => Promise<T>} fn
+   * @returns {Promise<T>}
+   * @template T
+   */
+  function agentAuthTurn(login, id, fn) {
+    const key = `${loginKey(login)}/${id}`;
+    const run = (agentAuthTurns.get(key) ?? Promise.resolve()).then(() => fn({ read: () => agentAuth(login, id), save: (value) => saveAgentAuth(login, id, value) }));
+    const settled = run.catch(() => {});
+    agentAuthTurns.set(key, settled);
+    settled.then(() => { if (agentAuthTurns.get(key) === settled) agentAuthTurns.delete(key); });
+    return run;
+  }
+
+  /** Saves the person's own sign-in for Grok Build or OpenCode (shared/agents.cjs, checkSignIn). */
+  function setAgentAuth(login, id, value) {
+    return agentAuthTurn(login, id, ({ save }) => save(value));
+  }
+
+  async function saveAgentAuth(login, id, value) {
+    requireSecrets();
+    const agent = ownSignInAgent(id);
+    const auth = agents.checkSignIn(id, value);
+    await secrets.save(userSecretName(login, agent.signIn.secret), auth, `Woodshed: @${login}'s ${agent.product} sign-in, for their My Woodshed ${agent.product} sessions only`);
+    touch(login, { agentAuthAt: { ...recordFor(login)?.agentAuthAt, [id]: new Date(now()).toISOString() } });
+    console.log(`userSettings: ${agent.product} sign-in saved`, { login, agent: id, apiKey: !auth.startsWith('{') });
+  }
+
+  function removeAgentAuth(login, id) {
+    return agentAuthTurn(login, id, () => deleteAgentAuth(login, id));
+  }
+
+  async function deleteAgentAuth(login, id) {
+    requireSecrets();
+    const agent = ownSignInAgent(id);
+    await secrets.remove(userSecretName(login, agent.signIn.secret));
+    const at = { ...recordFor(login)?.agentAuthAt };
+    delete at[id];
+    touch(login, { agentAuthAt: at });
+    console.log(`userSettings: ${agent.product} sign-in removed`, { login, agent: id });
+  }
+
+  /** @returns {Promise<string|null>}  the person's own sign-in for that agent, for their own session; null when none is saved */
+  async function agentAuth(login, id) {
+    const agent = ownSignInAgent(id);
+    await refresh(login);
+    if (!secrets || !recordFor(login)?.agentAuthAt?.[id]) return null;
+    return secrets.read(userSecretName(login, agent.signIn.secret));
+  }
+
   /**
    * The switch under the token: whether the shared sessions this person starts from GitHub run on their own plan.
    * On unless they turned it off: a record from before it defaulted on has no field, so it reads as on too.
@@ -406,20 +496,43 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   /**
-   * Who reviews this person's pull requests (reviewAgents.mjs): none, claude, codex or both, or null for the most this
-   * console can run, which is the default.
+   * The switch on the Grok Build and OpenCode cards: whether reviews of this person's pull requests may run that agent on
+   * their own sign-in, when they pick it on the Reviews card. On once a sign-in is saved, unless they turned it off, as
+   * Codex's is: picking the agent on the Reviews card is what makes it review. The sign-in never goes into the review
+   * session: the console's proxy adds it to the agent's calls (reviewAgentProxy.mjs).
+   * @throws {Error}  shown on the page, when it is turned on with no sign-in saved
+   */
+  function setOwnAgentForReviews(login, id, on) {
+    const agent = ownSignInAgent(id);
+    if (!agent.reviews) throw Object.assign(new Error(`${agent.product} does not review`), { shown: true });
+    if (on && !recordFor(login)?.agentAuthAt?.[id]) throw Object.assign(new Error(`save your ${agent.product} sign-in first`), { shown: true });
+    touch(login, { ownAgentForReviews: { ...recordFor(login)?.ownAgentForReviews, [id]: Boolean(on) } });
+    console.log(`userSettings: own ${agent.product} sign-in for reviews`, { login, agent: id, on: Boolean(on) });
+  }
+
+  /** @returns {boolean}  the switch is on and a sign-in is saved */
+  function usesOwnAgentForReviews(login, id) {
+    const record = recordFor(login);
+    return Boolean(agents.OWN_SIGN_IN_AGENTS.includes(id) && record?.ownAgentForReviews?.[id] !== false && record?.agentAuthAt?.[id]);
+  }
+
+  /**
+   * Who reviews this person's pull requests (reviewAgents.mjs): none, claude, codex or both, or any reviewers joined with
+   * `+` (claude+grok), or null for the most this console can run, which is the default.
    * @throws {Error}  shown on the page, for anything else
    */
   function setReviewAgents(login, choice) {
-    if (choice !== null && !REVIEW_CHOICES.includes(choice)) throw Object.assign(new Error(`reviews must be one of ${REVIEW_CHOICES.join(', ')}`), { shown: true, status: 400 });
-    touch(login, { reviewAgents: choice });
-    console.log('userSettings: reviews of my pull requests', { login, choice: choice ?? 'the most there is' });
+    const saved = choice === null ? null : reviewChoice(choice);
+    if (choice !== null && !saved) {
+      throw Object.assign(new Error(`reviews must be one of ${Object.keys(agents.REVIEW_PRESETS).join(', ')}, or reviewers joined with + (${agents.REVIEW_AGENT_IDS.join(', ')}), such as claude+grok`), { shown: true, status: 400 });
+    }
+    touch(login, { reviewAgents: saved });
+    console.log('userSettings: reviews of my pull requests', { login, choice: saved ?? 'the most there is' });
   }
 
   /** @returns {string|null}  the person's saved choice, or null for the default */
   function reviewAgents(login) {
-    const saved = recordFor(login)?.reviewAgents;
-    return REVIEW_CHOICES.includes(saved) ? saved : null;
+    return reviewChoice(recordFor(login)?.reviewAgents);
   }
 
   /**
@@ -468,7 +581,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
       // Own lines saved on My settings' env file tabs before Repo settings (`users/<login>/<env secret>`) are known only
       // by this record's `files`, which goes below: they go first, or nothing would know of them again.
       const old = Object.keys(recordFor(login)?.files ?? {}).filter((key) => !Object.hasOwn(FILES, key) && /^[a-z0-9-]+$/.test(key));
-      for (const key of [CLAUDE_TOKEN, CODEX_AUTH, GITHUB, OWN_FILES, 'database', ...Object.keys(FILES), ...old]) await secrets.remove(userSecretName(login, key));
+      for (const key of [CLAUDE_TOKEN, CODEX_AUTH, ...agents.OWN_SIGN_IN_AGENTS.map((id) => agents.agent(id).signIn.secret), GITHUB, OWN_FILES, 'database', ...Object.keys(FILES), ...old]) await secrets.remove(userSecretName(login, key));
     }
     delete people()[loginKey(login)];
     store.save();
@@ -476,7 +589,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setReviewAgents, reviewAgents, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, agentAuthTurn, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setOwnAgentForReviews, usesOwnAgentForReviews, setReviewAgents, reviewAgents, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }

@@ -19,26 +19,30 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - **Spacing and radius.** Gaps are `space-2` between cards and head controls, `space-3` for rail padding. Cards are `radius-lg`, rail buttons `radius-md`, form buttons `radius-sm`, the People filter and count chips `radius-pill`.
 - **Contrast.** Text meets 4.5:1 on the grounds named in its token note, in both themes. White on `action` is 4.8:1 in light; use `action-ink` in dark.
 - **Dark.** Dark follows the device unless My settings' Display card picked light. Both themes use the same token names.
-- **Motion.** None beyond the spinning ring on a PR chip while checks run, and the same ring on a control waiting on the console (Starting…). A checklist's marks stay still: it is drawn again every second.
+- **Motion.** None beyond the spinning ring on a PR chip while checks run or Woodshed's own review or QA is at work on it (then after the word `review` or `QA`, since a status is always a word), and the same ring on a control waiting on the console (Starting…). A checklist's marks stay still: it is drawn again every second.
 
 ## The rail
 
 - The rail head is one row: the Mine | Everyone switch, the People filter on Everyone only, and + New session on the right. The rail is 360px wide on a desktop, and 412px in the desktop app on macOS, where its head also holds the window's traffic lights (`desktop/windowChrome.mjs`, below). On a console one person uses there is no switch: the head reads My sessions, over one list of every session in Mine's groups.
-- The user menu sits in a footer and opens upward. Beside it, a square quiet button with a sidebar icon hides the rail (⌘.); while it is hidden, a strip down the left edge, on `ground` with a `line` border, holds the same button at the foot to show it again. Neither shows on a phone, where the rail is its own page.
+- The user menu sits in a footer and opens upward. In the desktop app a bell follows it there (`components/NotificationBell`), its list opening upward too. Beside them, a square quiet button with a sidebar icon hides the rail (⌘.); while it is hidden, a strip down the left edge, on `ground` with a `line` border, holds the same button at the foot to show it again. Neither shows on a phone, where the rail is its own page.
 - With more than one project, a row of filter chips sits under the head: All with its count, then one per project with its `proj-*` swatch, name and count. They are the legend of the cards' edges, and picking one shows only that project's sessions (the zone counts follow); the pick is kept in the browser.
-- A card has two lines. Line one: the title, an ownership tag, then the star and ⋯ marks. Line two: the status word first, then a name only when the card does not already say it, with the PR chips (at most two, older ones folded into a grey `+N` chip; RailCard) or the issue number and Resume or Take it at the right end. Resume is the only filled button on a card. How long a session ran is under its Details, not on the card. With more than one project, the card's left edge is 3px of its project's `proj-*` colour, and the project's name is in its tooltip and its link's accessible name.
+- A card has two lines. Line one: the title, an ownership tag, then the star and ⋯ marks. Line two: the status word first, then a name only when the card does not already say it, with the PR chips (at most two, older ones folded into a grey `+N` chip; RailCard) or the issue number and Resume or Take it at the right end. Resume is the only filled button on a card. How long a session ran is under its Details, not on the card. With more than one project, the card's left edge is 3px of its project's `proj-*` colour, and the project's name is in its hover card (or its tooltip without hover) and its link's accessible name.
 - A whole card is the click target. A button on it must stop the click from also opening the session.
+- Resting the pointer on a card, or focusing its name, shows its hover card beside it (`components/RailPeek`): the whole
+  title, the status word and when it next pauses or stops, the agent's last line, each pull request with its checks in
+  words, then the branch, agent, last activity, who started it and who has it. It replaces the card's tooltip, holds no
+  action, and never shows on a phone.
 - With several apps, Start app is **Start app ▾**, a menu of the apps' labels, and while one runs the button beside
   Open app carries its label (`Admin ▾`), which says which app runs and opens the same menu (`components/AppPicker`).
   One app: one Start app, no menu.
-- The pane bar is one row: the tabs (Chat, TUI, Terminal, Review), a smaller switch beside them for Terminal's and Review's two views while one shows, the session's name, its status word, issue and PR, Details ▾, then on the right Invite, the meter, **Open ▾**, in a session's last 15 minutes before it pauses or stops `Pauses in N min · Extend` (or `Stops in`; `pbtn pextend`, in `bar-amber` with a `bar-amber-line` border, the bar's one warning), on a My Woodshed session whose app can be shared **Share** (`pbtn pshare`, quiet; **Shared** in `bar-slate` with a `bar-well-line` border while members or a live link open the app, its title saying who; never orange), the app's button and **Stop**. Every button on it is `pbtn` type (Red Hat Display, 600); only numbers are mono. The session's name never shrinks to nothing: as the bar narrows the meter goes first (unless something runs high), then Invite, then Details, Open, Share and the PR chip fold into **⋯**, as on a phone, and narrower still the name and its status take a row of their own over the tabs and buttons. What it leaves out is never lost: Details ▾ (or ⋯) then holds the meter's readings and Invite. On a phone the countdown stays on the status line, in `bar-amber` mono (`ptimer`), and **Extend 1 hour** is in ⋯ with the card's actions.
-- CPU and memory, the Plan reading and Start app are in the pane bar, never on a card. The plan and the machine are one quiet meter (`pmeter`): `Plan 68% · CPU 41%` in `bar-sub` mono while all is well, a part in `bar-amber` as it runs high and red when it is out or nearly full, with an amber border then. It opens the bar's menu with each plan window and the machine (CPU, memory with its peak, the checkout's disk), each a bar against its limit, `slate` until `amber` (with `amber-ink` for the number) and `bad` when nearly full. On a phone the CPU and memory badge stays after the status word and opens the machine's dialog. **Editor ↗** and the databases' viewers are under **Open ▾**, never filled. The plan shows the private session's agent's plan (Claude or Codex); only sessions on that agent share its readings and running count, and no reading appears before that agent reports limits. Its detail colors a window from 70% `amber` with `amber-ink` for the number, never `wait`: the plan running low is not a session that needs a person.
+- The pane bar is one row: the tabs (Chat, TUI, Terminal, Review), a smaller switch beside them for Terminal's and Review's two views while one shows, while Chat or TUI shows on a private session with more than its own agent possible the agent switch (`components/AgentSwitch`: the agent shown, how many, and how many others need you in `bar-amber`, the status word's colour), the session's name, its status word, issue and PR, Details ▾, then on the right Invite, the meter, **Open ▾**, in a session's last 15 minutes before it pauses or stops `Pauses in N min · Extend` (or `Stops in`; `pbtn pextend`, in `bar-amber` with a `bar-amber-line` border, the bar's one warning), on a My Woodshed session whose app can be shared **Share** (`pbtn pshare`, quiet; **Shared** in `bar-slate` with a `bar-well-line` border while members or a live link open the app, its title saying who; never orange), the app's button and **Stop**. Every button on it is `pbtn` type (Red Hat Display, 600); only numbers are mono. The session's name never shrinks to nothing: as the bar narrows the meter goes first (unless something runs high), then Invite, then Details, Open, Share and the PR chip fold into **⋯**, as on a phone, and narrower still the name and its status take a row of their own over the tabs and buttons. What it leaves out is never lost: Details ▾ (or ⋯) then holds the meter's readings and Invite. On a phone the countdown stays on the status line, in `bar-amber` mono (`ptimer`), and **Extend 1 hour** is in ⋯ with the card's actions.
+- CPU and memory, the Plan reading and Start app are in the pane bar, never on a card. The plan and the machine are one quiet meter (`pmeter`): `Plan 68% · CPU 41%` in `bar-sub` mono while all is well, a part in `bar-amber` as it runs high and red when it is out or nearly full, with an amber border then. It opens the bar's menu with each plan window and the machine (CPU, memory with its peak, the checkout's disk), each a bar against its limit, `slate` until `amber` (with `amber-ink` for the number) and `bad` when nearly full. On a phone the CPU and memory badge stays after the status word and opens the machine's dialog. **Editor ↗** and the databases' viewers are under **Open ▾**, never filled. The plan shows the private session's agent's plan (Claude, Codex or Grok Build; OpenCode reports none, so its sessions show no plan); only sessions on that agent share its readings and running count, and no reading appears before that agent reports limits. Its detail colors a window from 70% `amber` with `amber-ink` for the number, never `wait`: the plan running low is not a session that needs a person.
 - A pull request row has two lines, as a card does: its title and its checks' dot, then (`meta`) the project's name and the number, the checks in their colour and how long since it moved, with Open, Resume or Start and a `slate` ↗ to GitHub at the right end. With more than one project it has its project's 3px edge, and the name is always on line two.
-- Group heads are `group-label` with a dot and a count. On Mine: Needs you (stopped sessions waiting on you), Active (every live session, those waiting on you first), Finished (shared sessions you started or have whose pull request is in Slack), Stopped, then Pull requests. On Everyone: Unassigned first (shared sessions nobody has, with a primary **Take it** on each card), then the console's groups. Both end with Reviews and QA (sessions the console started to review or QA a pull request), folded until opened: they run by themselves, so they are never Unassigned and carry no **Take it**, nor Assign to me, Hand over to or Unassign in their ⋯ menu. A status chip on the phone's Everyone shows those of that status in it.
+- Group heads are `group-label` with a dot and a count. On Mine: Needs you (stopped sessions waiting on you), Active (every live session, those waiting on you first), Finished (shared sessions you started or have whose pull request is in Slack), Stopped, then Pull requests. On Everyone: Unassigned first (shared sessions nobody has, with a primary **Take it** on each card), then the console's groups. Both end with Reviews and QA (sessions the console started to review or QA a pull request), folded until opened: they run by themselves, so they are never Unassigned and carry no **Take it**, nor Assign to me, Hand over… or Unassign in their ⋯ menu. A status chip on the phone's Everyone shows those of that status in it.
 - A session that has seen production data carries the Production tag (`prod`, `components/Tag`) on its card in place
   of Private, on every rail, and **Production data** on its pane bar after the status word. Its pane has no Share, Editor ↗ or Sign in for Remote Control, and its Details say since when. Never a status color: it is still
   Working, Needs you or Paused like any other.
-- A shared session someone has carries the Assigned tag: on Mine the word Assigned when it is yours, and the name of whoever has it for one you started and handed over; on Everyone the name of whoever has it. Line two names who started a session only where nothing else does: on Mine a shared session someone else started, on Everyone one nobody has (`from <person>`). Who started it is always under Details. The card's ⋯ menu has Assign to me, Hand over to and Unassign; only someone who can be assigned (People) sees them. Someone without Sessions from GitHub has no Mine | Everyone switch, nor has anyone on a console one person uses: the rail head reads My sessions. Mine holds the shared sessions you started as well as those assigned to you. **People** on Everyone filters by assignee. A resume keeps the assignee.
+- A shared session someone has carries the Assigned tag: on Mine the word Assigned when it is yours, and the name of whoever has it for one you started and handed over; on Everyone the name of whoever has it. Line two names who started a session only where nothing else does: on Mine a shared session someone else started, on Everyone one nobody has (`from <person>`). Who started it is always under Details. The card's ⋯ menu has Assign to me, Hand over… (one row, whose dialog picks the person from a dropdown) and Unassign; only someone who can be assigned (People) sees them. Someone without Sessions from GitHub has no Mine | Everyone switch, nor has anyone on a console one person uses: the rail head reads My sessions. Mine holds the shared sessions you started as well as those assigned to you. **People** on Everyone filters by assignee. A resume keeps the assignee.
 
 ## Settings pages
 
@@ -47,6 +51,14 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   it is now and its status word; several may be open at once. The groups show under My settings in the settings list
   while it is the page shown, as Settings' tabs do under Settings: each a link to its group, none ever marked, since
   all are on the one page.
+- Every settings page is groups of rows that open in place, a program's own pages too: never a column of cards. Only a
+  list read across, such as People's members or a ledger, stays a table, in a group's box. My settings is Sign-ins,
+  Sessions, Kept for you, Repos and files, Display, then Remove My Woodshed alone.
+- A program embedding the console draws its pages with the same components, rendered on its server
+  (`console/settingsMarkup.mjs`): in the settings frame, as groups on a repo's settings page, or as a page that stands
+  alone. It adds no component of its own; one it needs is added here first, for every page to have.
+- A group's totals (how many people, what is held, how full a pool is) are figures (`components/Figures`): label, value
+  in mono and a line under, in the group's box, never a column of cards. A list of records is still a table.
 - A few things each set on or off at once, such as who reviews your pull requests on My settings, are an on/off grid (`components/OnOffGrid`): radios under Off and On, a row each, saved as they are picked.
 - Two or three exclusive choices whose difference matters, such as an MCP server's Ordinary or Production, are choice
   cards (`components/ChoiceCards`): side by side, each a title and one line saying what it does, the picked one in the
@@ -79,7 +91,8 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 ## Menu groups
 
 - A program embedding the console may add a line under the person's name on the user button, in `meta` (mono, `meta`
-  color), and nowhere else on the rail.
+  color), and nowhere else on the rail. The settings pages' side head shows the avatar alone, neither the name nor that
+  line, so **‹ Back to sessions** is never cut.
 - The user menu, top to bottom (`components/MenuGroups`): the name and @handle; My settings, then the program's pages
   for the person, and a `line-soft` rule; the program's switcher groups; **Console**; the program's own sections; Sign
   out. With no program, My settings alone is under the name.
@@ -101,18 +114,20 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## Woodshed card
 
-- First on Console settings. The state is a sentence: "Up to date with …" in `green`, or "N commits behind …" in
+- First on Console settings, as a settings row (`components/SettingsRows`): closed, it says the running commit, when
+  it was checked and its pill (**Up to date** `is-ok`, **N commits behind** `is-warn`, Updating, Restarting, Failed),
+  and it stays open while an update runs. Opened, the state is a sentence: "Up to date with …" in `green`, or "N commits behind …" in
   `set-name` weight, the running commit as a mono `rref`. The newer commits are a list, newest first: mono `slate` sha,
   the title cut to one line, then the author and age in `meta`; it scrolls past about ten.
 - An update is a checklist (`components/Checklist`) under an Update head with its pill: Updating or Restarting
   (`is-work`), Failed (`is-bad`). Commands and a build's last lines are mono on `stopped`.
-- **Update to latest** is the card's one orange button; **Check now** is quiet.
+- **Update to latest** is the row's one orange button; **Check now** is quiet.
 
 ## Setup card
 
-- A member who has saved neither a Claude token nor a Codex sign-in (or whose databases are not ready) sees one card at the top of Mine: `amber-tint` fill, `amber` border, the steps as rows with a `green` check when done. The agent row, Choose your agent, has two outline buttons, Claude and Codex: equal choices that go to that box on My settings, so neither is orange. The databases row appears once either is saved: progress while it copies, and an outline Open My settings button when it failed or never started.
+- A member who has saved no Claude token and no agent's sign-in (or whose databases are not ready) sees one card at the top of Mine: `amber-tint` fill, `amber` border, the steps as rows with a `green` check when done. The agent row, Choose your agent, has one outline button per agent (Claude, Codex, Grok, OpenCode): equal choices that go to that box on My settings, so none is orange. The databases row appears once either is saved: progress while it copies, and an outline Open My settings button when it failed or never started.
 - Show only what a person can do or is waiting on: no "signed in" row, no step for something the console does by itself, and Connect GitHub stays on My settings.
-- The same card fills the pane when New session is pressed before a Claude token or a Codex sign-in is saved and the databases are ready.
+- The same card fills the pane when New session is pressed before a Claude token or an agent's sign-in is saved and the databases are ready.
 
 ## A repo that needs setup
 
@@ -123,8 +138,8 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   with Add a repo (admin) or a line saying an admin can connect another; a blocked repo stays in the list with
   `— needs setup`, and picking it puts the card in place of the prompt and Start. Nothing on the rail or the New
   session button changes for it.
-- Console settings' Repos card says **Ready** (`pill is-ok`) or **Needs setup** on each row, with the card's reason and
-  fix under a row that needs it.
+- Console settings' Repos group says **Ready** (`pill is-ok`) or **Needs setup** on each repo's row, with the card's
+  reason and fix inside a row that needs it.
 
 ## Checklists
 
@@ -155,9 +170,9 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   under the list names it.
 - Where Slack will not list them (an app without the scopes), the picker is the channel ID field, with a `cap-note`
   that says which scopes to add. It never shows an empty list as if the workspace had no channels.
-- The Slack card is one card in rows (Bot, Pull requests, Questions), each with its sentence and its action on the
-  right; a group's numbers fold under its row behind a quiet **Limits ▾**. Not set up, it is one sentence and the
-  orange **Set up Slack**, its primary action. The dialog's way to connect is a radio card list; an option not yet
+- Slack on Console settings is one group of settings rows (Bot, Pull requests, Questions), each saying what it is
+  now on its closed row; a row's numbers are in it under a **Limits** head, with no fold of their own. Not set up, it
+  is one line with its sentence and the orange **Set up Slack**, its primary action. The dialog's way to connect is a radio card list; an option not yet
   available is disabled, and its own description says why.
 
 ## Naming a session
@@ -167,13 +182,17 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   `btn-plain` **Rename** and a quiet ×. A 2px `slate` line along its foot runs down over 10 s, when it goes. A click
   anywhere on it keeps it and drops the line; **Rename** turns it into a field with a `btn-plain` Save and a quiet
   Cancel. Never orange: renaming is not the session's primary action.
+- To whoever may change when the session pauses and stops (its owner, or a shared one's assignee), the offer also asks
+  how long it waits for input and how long it runs: `Pauses after` and `Stops after`, each in `sub` with a small `field`
+  select, set off together by a `line` rule on their left (on their own row on a phone). Each one's first option is the
+  usual number, `1 h (usual)`; a pick is saved at once, with a toast, and a time the session is already past is greyed.
 
 ## Commands to copy
 
 - A command a person runs on their own computer is a `value-box` in mono, one argument a line, with its own **Copy**
   (`btn-plain`) beside it and a `meta` line above saying when to use it. Two commands never share a box: copying one
   must never run the other.
-- Steps a person follows to get something to paste (My settings' Claude and Codex cards) are a numbered list
+- Steps a person follows to get something to paste (My settings' Claude, Codex, Grok Build and OpenCode cards) are a numbered list
   (`cmd-steps`, its numbers in `meta`, 600): each step a line of `ink` text, its command in its own box under it. What
   the step does with the output ("Paste it below and press Save") is its own step, never folded into a sentence.
 - Commands a person needs again after the first time stay on the page under a fold (`<details>`, its summary in
@@ -181,13 +200,14 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## People
 
-- Members are a table: the person, one centred checkbox column per switch (Admin, Sessions from GitHub, Can be assigned),
-  Slack, and Remove. Head cells are uppercase `group-label` on `stopped`, with a `meta` note under each switch's name.
-  A thin `line` rule sets the feature columns apart from Admin. A switch that needs another is a disabled checkbox at
-  45% with a title saying what it needs. Checkboxes take `slate` as their accent. The table scrolls sideways on a phone.
-- Behind a hosting proxy whose program keeps who is in, People is a tab of Settings (below), titled Settings. The
-  Admin column is **Role**, a select of Owner and Member in its cell; adding is **Add someone**, the handle and a role
-  select (as wide as its words) beside it. There is no Asking to join card, no accept or decline, and no asking dot.
+- Members are a table: the person, a **Role** select (Owner, Member, Contributor, Private only), **What they can do**
+  (that role in one plain sentence, in `foot`), Slack, and Remove. A role stands for a set of switches, so there is one
+  control per person, never a checkbox per switch. Head cells are uppercase `group-label` on `stopped`. Invite someone
+  (Add someone) picks the role from a table under the handle: a row per role with a radio, a column per power (Private sessions,
+  which every role has, then Settings pages, Sessions from GitHub, Can be assigned) that says Yes or No (No in `meta`), and its sentence; the picked row is on `stopped`. Invite comes after the table. The table
+  scrolls sideways on a phone.
+- People is a tab of Settings (below), titled Settings. Behind a hosting proxy whose program keeps who is in, the
+  Role select is the same, Owner being the program's owner; adding is **Add someone**, with the same role table. There is no Asking to join card, no accept or decline, and no asking dot.
   The program's note about a person sits in their `meta` line under the name, where a console of its own says who
   added them; what it says it did on an add ends the hint under the field, in place of "Nothing is sent to them".
 
@@ -206,11 +226,16 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   `menu-sub`), the open one marked as any current entry; Settings is then `aria-current="true"`, its icon `amber-ink`,
   not its ground. The tab row under the title stays. On a phone the list is one row, so it keeps Settings as one entry,
   marked, and leaves the tabs to the row under the title.
-- People stays an entry of its own: it is who is in, not settings. Behind a hosting proxy whose program hands over its
-  list, People is the console's third tab instead, after Secrets & webhooks and before the program's: who is in is the
-  program's there, beside its own pages. Webhook events is a log, not a setting, and not a
+- People is the console's third tab, after Secrets & webhooks and before a program's, on every console: one place for
+  it, never an entry of its own. It shows wherever the console keeps a list of who is in (behind a hosting proxy, only
+  when the program hands over its own). Someone asking to join is counted on its tab, and on Settings with any Woodshed
+  update, as one `menu-count`. Webhook events is a log, not a setting, and not a
   navigation entry either: Secrets & webhooks links to it (in the GitHub webhook card, or the page's note when there is
   none), its page has a `‹ Secrets & webhooks` crumb above the title, and Settings is marked current in the list on it.
+  Its deliveries are plain rows of one box (Settings rows), never a table: when it came in `meta` mono, then what the
+  console did (`ink`, 600) over one mono line with the event, what it was on, who sent it and the delivery's id, then a
+  pill with the status word: Acted on (`green`), Ignored or Skipped (neutral), Failed (`bad`). On a phone the time
+  sits over the text and the pill under it.
 - Keyboard shortcuts is in the settings list's This browser group, not in the avatar menu: the menu holds pages, and
   `?` and the command palette open the sheet anywhere. The theme, review files and a session's default view are a group
   on My settings (Display, `⇧⌘,` from anywhere), not a sheet: one place for what is yours, and the group says which of
@@ -223,11 +248,13 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - A row of the Repos card is the repo's name, where it was set, its sessions and, with Slack, where its pull requests go
   (`PRs to C…` or `PRs to the console's channel`, a link to the Slack card), then **Settings** and, for an added repo,
   **Remove**. No field: the channel is set on the repo's page.
-- Three cards: **Env files** (a tab per env file, by path), **Instructions** and **Slack**. The first two are a layered file
+- Four groups of rows that open in place (`components/SettingsRows`): **Env files** (a row per env file, by path),
+  **Prompt** (Instructions), **Sessions from GitHub** (its two switches on their rows, then the label's name) and **Slack**
+  (the pull request channel). A closed row says what it holds. An env file and the instructions are a layered file
   (`components/LayeredFile`): the layers in the order a session writes them, the layer's word as a grey tag, and for an
   env file a table of which layer wins each key. Values never appear in the table, a log or a tooltip: only in their
   own layer's field, behind **Show and edit** once saved.
-- With no env files, the Env files card is a short how-to in the same box: numbered steps (`cmd-steps`), the YAML in a
+- With no env files, the Env files group's box holds a short how-to: numbered steps (`cmd-steps`), the YAML in a
   mono `stopped` block, a link to the project file on GitHub (↗), and where the docs are.
 - **Slack** is one box of the same shape: the channel ID field (mono), a `meta` mono line saying where the next pull
   request goes, Save and a quiet Clear (back to the console's channel), then a `sub` line on finding the ID and inviting
@@ -275,6 +302,9 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   the terminal in both themes: the image viewer's `bar` ground and outlined `bar-well` buttons, never orange.
 - Every match is washed `bar-amber-line` and the one shown `bar-amber`, with the terminal's ground as its text. The
   count says `3 of 12`, or `No match` in words, with the field's border `bar-amber-line`. Never a red.
+- A terminal whose connection dropped says so in words, centred over it (`public/terminalPage.js`): `Reconnecting…`,
+  `Reconnected`, `Connection closed. Press ⏎ to reconnect`. Dark like the terminal in both themes: light `ink` at 92%
+  as its ground and dark `ink` as its text, in the system sans. Never orange or red, and no spinner.
 
 ## The review page's Q&A
 
@@ -285,6 +315,17 @@ Ask again, Ask the questions) are quiet buttons, never orange. A question being 
 spinner, and opening one keeps the keyboard focus on it. The reader asks too: an open answer ends with a one-line box
 for a follow-up, and the tree with one for a question of their own, each the ask panel's field and a quiet **Ask**
 button, never orange. A question they asked says "you asked" in `meta`.
+
+Its **AI reviews** tab (`components/AiReviews`) shows what Claude Code and Codex posted on the pull request, newest
+first, each a Discussion `saidbox` whose head is a keyboard disclosure, with each finding as a card and the follow-ups
+asked about it under it. A resolved or outdated finding is dashed and labelled, never faded, so its text keeps 4.5:1.
+Its **Ask** buttons are quiet, like the Q&A's, never orange. Over the reviews, the pull request's **Merge risk** and **QA**
+checks sit as two smaller `saidbox`es, the tier or the QA verdict as a `verdictword` in its tone (`amber-ink` for
+`medium` and `running`), the check's title under it and its summary behind a **Details** disclosure.
+
+A session with more than one pull request has a review of each: the review switch (`components/ReviewSwitch`), a quiet
+row above the title, only with two or more, lists them as mono pills, the one on screen in `ink` with no link and the
+others links in `slate`, never orange.
 
 Its tab bar ends with **Submit review**, then, for an approved pull request, either **Squash and merge** or the merge
 hint (`components/MergeHint`): an Octicons info icon whose tip says why merging waits. The bar holds controls, never a

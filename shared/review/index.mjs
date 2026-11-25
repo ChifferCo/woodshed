@@ -23,9 +23,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { parseUnifiedDiff } from './diff.mjs';
+import { run } from './exec.mjs';
 import {
   originSlug, fetchPrMeta, submitPrReview, fetchViewedFiles, setFileViewed, ghAccount,
-  setPrTitle, fetchReviewState, addPendingComment, deletePendingComment, discardPendingReview,
+  setPrTitle, fetchReviewState, fetchPrChecks, addPendingComment, deletePendingComment, discardPendingReview,
   submitPendingReview, postLineComment, deletePostedComment, deleteIssueComment, hideComment,
 } from './github.mjs';
 import { parseTarget, prBranchFor, reviewBranchFor, describeTarget } from './target.mjs';
@@ -51,6 +52,8 @@ import {
   validateExplainRequest, explainArgv, buildExplainPrompt, extractAnswer,
 } from './explain.mjs';
 import { validateChatRequest, buildChatPrompt } from './chat.mjs';
+import { aboutFinding, findAiPoint } from './aiReviews.mjs';
+import { checkNamesOf, prChecksOf } from './prChecks.mjs';
 import {
   MAX_DEPTH as QA_MAX_DEPTH, juniorArgv, seniorArgv, buildTopQuestionsPrompt, buildFollowupsPrompt,
   buildAnswersPrompt, extractStructured, topQuestions, followupQuestions, applyAnswers,
@@ -251,7 +254,7 @@ export function reviewOwnsBranch(session) {
  *
  * @returns {Promise<{ok: true, review: object} | {ok: false, status: number, error: string, stderr?: string}>}
  */
-export async function createReviewSession({ ctx, sessionName, sessionId, target, worktreePath }) {
+export async function createReviewSession({ ctx, sessionName, sessionId, target, worktreePath, detach = false }) {
   const { log, reqId } = ctx;
   if (DISABLED) return { ok: false, status: 503, error: 'the review feature is disabled in this instance' };
 
@@ -269,13 +272,13 @@ export async function createReviewSession({ ctx, sessionName, sessionId, target,
 
   inflightCheckouts += 1;
   try {
-    return await prepareReview({ ctx, sessionName, sessionId, target, worktreePath });
+    return await prepareReview({ ctx, sessionName, sessionId, target, worktreePath, detach });
   } finally {
     inflightCheckouts -= 1;
   }
 }
 
-async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath }) {
+async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath, detach = false }) {
   const { log, repoRoot, reqId } = ctx;
 
   const slug = await originSlug(repoRoot);
@@ -302,10 +305,14 @@ async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath
   // The pull request's own branch when it can be, so the session pushes to the
   // pull request and the rail finds it like any other session's. A fork's pull
   // request, or a branch target, gets a private review/* branch instead.
-  const prBranch = prBranchFor(prMeta);
-  const branchName = prBranch || reviewBranchFor({ target, sessionId });
+  //
+  // `detach`: no branch at all, for a review beside a checkout that is someone's work (a Woodshed session's review of
+  // another of its pull requests): the pull request's branch may be checked out there, or held locally with commits of
+  // its own, and a review must neither take it nor move it.
+  const prBranch = detach ? null : prBranchFor(prMeta);
+  const branchName = detach ? null : prBranch || reviewBranchFor({ target, sessionId });
   const created = await createReviewWorktree({
-    repoRoot, sessionId, target, baseRef, worktreePath, branchName, onPrBranch: !!prBranch,
+    repoRoot, sessionId, target, baseRef, worktreePath, branchName, onPrBranch: !!prBranch, detach,
   });
   if (!created.ok) return created;
 
@@ -388,6 +395,13 @@ async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath
   return { ok: true, review };
 }
 
+/** The commit a checkout is on, or null when git cannot say. */
+async function checkoutHead(worktreePath) {
+  const got = await run('git', ['rev-parse', 'HEAD'], { cwd: worktreePath, timeoutMs: 30_000 });
+  const sha = got.status === 0 ? (got.stdout || '').trim() : '';
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
+
 /**
  * Review the work sitting in a session's own worktree, against the default branch.
  *
@@ -409,9 +423,14 @@ async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath
  * `pull` is a Re-review's: first fast-forward the checkout to what origin has on its branch (pullWorktreeBranch), so
  * commits pushed from elsewhere are read too. Opening the page never pulls.
  *
- * @returns {Promise<{ok: true, review: object} | {ok: false, status: number, error: string, stderr?: string}>}
+ * `follow` is the page's own Re-review, when it saw the pull request's head move on GitHub: after the pull, a checkout
+ * still at the commit the review read answers `unchanged` and takes nothing, so a GitHub that is behind the session (or
+ * a pull refused) never spends an analysis on the same commit again.
+ *
+ * @returns {Promise<{ok: true, review: object} | {ok: true, unchanged: true, headSha: string}
+ *   | {ok: false, status: number, error: string, stderr?: string}>}
  */
-async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = false }) {
+async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = false, follow = false }) {
   const { log, repoRoot, reqId } = ctx;
   if (DISABLED) return { ok: false, status: 503, error: 'the review feature is disabled in this instance' };
   if (!isSessionName(sessionName)) return { ok: false, status: 400, error: 'not a session name' };
@@ -429,13 +448,19 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
     };
   }
 
-  const baseRef = await defaultBranch(repoRoot);
+  // The branch's pull request's own base when its host names one (a pull request stacked on another branch), so the
+  // review shows what that pull request changes rather than the branches under it too; else the default branch.
+  const baseRef = await worktreeBaseRef(ctx) || await defaultBranch(repoRoot);
   const pulled = pull && fs.existsSync(worktreePath) ? await pullWorktreeBranch({ worktreePath }) : null;
   if (pulled && (pulled.pulled || pulled.refused)) {
     log('review.worktree_pulled', {
       reqId, session: sessionName, branch: pulled.branch, commits: pulled.pulled,
       from: pulled.from?.slice(0, 8), to: pulled.to?.slice(0, 8), refused: pulled.refused ?? null,
     });
+  }
+  if (follow && existing?.headSha && fs.existsSync(worktreePath)) {
+    const head = await checkoutHead(worktreePath);
+    if (head === existing.headSha) return { ok: true, unchanged: true, headSha: head };
   }
   // Unique per call, not per session. Its callers now take a session's review
   // one at a time (oneTakeAtATime), but this was written when two overlapping
@@ -558,6 +583,59 @@ export async function ensureWorktreeReview({ ctx, sessionName }) {
     const made = await createWorktreeReview({ ctx, sessionName, worktreePath: ctx.worktreePathFor(sessionName) });
     return made.ok ? { ok: true, created: true } : { ok: false, status: made.status, error: made.error };
   });
+}
+
+/**
+ * The base a host names for a worktree review (`ctx.worktreeBaseRef`), when it is a branch name a refspec can carry.
+ * @returns {Promise<string|null>}
+ */
+export async function worktreeBaseRef(ctx) {
+  if (typeof ctx.worktreeBaseRef !== 'function') return null;
+  let base = null;
+  try {
+    base = await ctx.worktreeBaseRef();
+  } catch (err) {
+    ctx.log?.('review.base_not_read', { reqId: ctx.reqId, error: err?.message });
+    return null;
+  }
+  // A branch name, as git checks one (`check-ref-format --branch`): a base named `123`, or `équipe/x`, is a branch.
+  // It becomes a refspec, so never one that starts with `-`, `@` or names a ref by `@{…}`.
+  if (typeof base !== 'string' || !base || base.length > 255 || /^[-@]|@\{|[\u0000-\u001f\u007f]/.test(base)) return null;
+  const checked = await run('git', ['check-ref-format', '--branch', base], { timeoutMs: 10_000 });
+  return checked.status === 0 && (checked.stdout || '').trim() === base ? base : null;
+}
+
+/**
+ * Take a review of one pull request if `sessionName` has none, in a detached worktree of its own at
+ * `ctx.worktreePathFor(sessionName)`, without starting the analysis: a Woodshed session's review of another pull
+ * request it opened (session/reviewShed/host.mjs). Nothing of the checkout it sits beside is touched, its branches
+ * included. A review already there is kept, whatever it is of: its Re-review (`/refresh`) moves it on.
+ *
+ * @returns {Promise<{ok: true, created: boolean} | {ok: false, status: number, error: string}>}
+ */
+export async function ensurePullRequestReview({ ctx, sessionName, pr }) {
+  if (readSessionReview(sessionName)) return { ok: true, created: false };
+  const target = parseTarget(pr);
+  if (!target.ok || target.kind !== 'pr') return { ok: false, status: 400, error: 'not a pull request number' };
+  return oneTakeAtATime(sessionName, async () => {
+    if (readSessionReview(sessionName)) return { ok: true, created: false };
+    const made = await createReviewSession({
+      ctx, sessionName, sessionId: sessionName.slice('claude-'.length), target,
+      worktreePath: ctx.worktreePathFor(sessionName), detach: true,
+    });
+    return made.ok ? { ok: true, created: true } : { ok: false, status: made.status, error: made.error };
+  });
+}
+
+/**
+ * The branch a session's own worktree review was taken on, for a host deciding whether that review is of the branch
+ * checked out now: `exists` false when there is none yet.
+ * @returns {{exists: boolean, branch: string|null}}
+ */
+export function worktreeReviewBranch({ sessionName }) {
+  const review = readSessionReview(sessionName);
+  if (!review || review.kind !== 'worktree') return { exists: Boolean(review), branch: null };
+  return { exists: true, branch: review.branch || review.meta?.headRefName || null };
 }
 
 /**
@@ -915,7 +993,7 @@ export async function handleReviewRequest(req, res, ctx) {
 
   // The askId tail is bounded: unbounded, a long segment produced
   // ENAMETOOLONG rather than a miss and echoed an absolute path back in a 500.
-  const match = /^\/reviews\/(claude-[0-9a-f]{8})(\/[a-z]+)?(\/[A-Za-z0-9-]{1,64})?$/.exec(pathname);
+  const match = /^\/reviews\/(claude-[0-9a-f]{8}(?:-pr[1-9][0-9]{0,8})?)(\/[a-z]+)?(\/[A-Za-z0-9-]{1,64})?$/.exec(pathname);
   if (!match) {
     json(res, 404, { ok: false, error: 'not found' });
     return true;
@@ -934,7 +1012,9 @@ export async function handleReviewRequest(req, res, ctx) {
   // it spends money, and the second press means "do it again with what I have
   // now", which is a request to act rather than to set a value.
   if (req.method === 'POST' && !section) {
-    await gated(res, ctx, 'worktree-review', () => handleWorktreeReview(res, ctx, session));
+    // ?follow=1 is the page keeping up with the pull request on its own: take it again only when the commit moved.
+    const follow = url.searchParams.get('follow') === '1';
+    await gated(res, ctx, 'worktree-review', () => handleWorktreeReview(res, ctx, session, { follow }));
     return true;
   }
   // Take this pull request or branch again at whatever origin has now. A
@@ -1273,8 +1353,38 @@ async function handleCommentsRead(res, ctx, session) {
     threads: draft.threads,
     outdated: draft.outdated,
     said: draft.said,
+    aiReviews: draft.aiReviews,
+    checks: await prChecksFor(ctx, got, draft),
     truncated: draft.truncated,
   });
+}
+
+/**
+ * The merge risk and QA for the AI reviews tab, read apart from the comments: null when GitHub refused the read, which
+ * leaves the tab its reviews and the page its comments and verdicts.
+ */
+async function prChecksFor(ctx, got, draft) {
+  const names = await baseCheckNames(ctx.repoRoot, draft.baseRef);
+  const read = await fetchPrChecks({ pr: got.live.number, slug: got.slug, names });
+  if (!read.ok) {
+    ctx.log('review.checks_unread', { reqId: ctx.reqId, pr: got.live.number, error: read.error });
+    return null;
+  }
+  return prChecksOf({ runs: read.runs, labels: draft.labels, headSha: draft.headSha, names, partial: read.partial });
+}
+
+/**
+ * The merge risk and QA check names the base branch's project file gives, as the console reads them from the default
+ * branch: the checkout's copy could be the pull request's own edit. The base as last fetched; none read gives the
+ * defaults (prChecks.mjs).
+ */
+async function baseCheckNames(repoRoot, baseRef) {
+  if (!baseRef || !/^[\w./-]+$/.test(baseRef) || baseRef.startsWith('-')) return checkNamesOf(null);
+  for (const ref of [`origin/${baseRef}`, baseRef]) {
+    const got = await run('git', ['-C', repoRoot, 'show', `${ref}:.woodshed/project.yaml`], { timeoutMs: 10_000 });
+    if (got.status === 0) return checkNamesOf(got.stdout);
+  }
+  return checkNamesOf(null);
 }
 
 async function handleCommentAdd(payload, res, ctx, session) {
@@ -1444,21 +1554,25 @@ async function handleViewedWrite(payload, res, ctx, session) {
   json(res, 200, { ok: true, path: filePath, viewed: !!payload.viewed });
 }
 
-function handleWorktreeReview(res, ctx, session) {
-  return oneTakeAtATime(session, () => takeWorktreeReview(res, ctx, session));
+function handleWorktreeReview(res, ctx, session, { follow = false } = {}) {
+  return oneTakeAtATime(session, () => takeWorktreeReview(res, ctx, session, { follow }));
 }
 
-async function takeWorktreeReview(res, ctx, session) {
+async function takeWorktreeReview(res, ctx, session, { follow = false } = {}) {
   const { json, log, reqId } = ctx;
   // No existence check here: worktreePathFor only computes a path, and whether
   // anything is at it is worktreeDiff's first question — which answers with a
   // 409 and a sentence rather than a bare 404.
   const worktreePath = ctx.worktreePathFor(session);
 
-  const made = await createWorktreeReview({ ctx, sessionName: session, worktreePath, pull: true });
+  const made = await createWorktreeReview({ ctx, sessionName: session, worktreePath, pull: true, follow });
   if (!made.ok) {
     log('review.worktree_failed', { reqId, session, status: made.status, error: made.error });
     return json(res, made.status, { ok: false, error: made.error, stderr: made.stderr });
+  }
+  if (made.unchanged) {
+    log('review.worktree_unchanged', { reqId, session, headSha: made.headSha.slice(0, 8) });
+    return json(res, 200, { ok: true, unchanged: true, headSha: made.headSha });
   }
 
   // Everything below is the re-review case, and the order is the point.
@@ -2080,6 +2194,23 @@ function handleChatRead(res, ctx, session) {
   return json(res, 200, { ok: true, messages: readChat(session), running: chatInFlight(session) });
 }
 
+/**
+ * The AI review point a follow-up is about, read live from the pull request:
+ * the review by `about.review`, and its finding by `about.finding` (none: the
+ * review as a whole).
+ *
+ * @returns {Promise<{ok: true, about: {id: string, label: string, text: string}} | {ok: false, status: number, error: string}>}
+ */
+async function aiReviewPoint(ctx, session, about) {
+  const got = await prContextFor(ctx, session);
+  if (!got.ok) return { ok: false, status: got.status, error: got.status === 409 ? 'this review has no pull request with AI reviews on it' : got.error };
+  const draft = await fetchReviewState({ pr: got.live.number, slug: got.slug });
+  if (!draft.ok) return { ok: false, status: draft.status, error: draft.error };
+  const found = findAiPoint(draft.aiReviews, about, { truncated: draft.truncated });
+  if (!found.ok) return { ok: false, status: 409, error: found.error };
+  return { ok: true, about: aboutFinding(found.review, found.finding) };
+}
+
 async function handleChat(payload, res, ctx, session) {
   const { json, log, reqId } = ctx;
   const review = readSessionReview(session);
@@ -2093,6 +2224,22 @@ async function handleChat(payload, res, ctx, session) {
   const inFlight = chatInFlight(session);
   if (inFlight) return json(res, 409, { ok: false, error: 'still answering the previous message' });
 
+  // A follow-up on an AI review's finding (or on the review as a whole): the
+  // point is read from GitHub here, by its ids, rather than taken from the
+  // page, so what the agent is told is what the review said.
+  let about = null;
+  if (valid.about) {
+    const found = await aiReviewPoint(ctx, session, valid.about);
+    if (!found.ok) {
+      log('review.chat_about_refused', { reqId, session, why: found.error });
+      return json(res, found.status, { ok: false, error: found.error });
+    }
+    about = found.about;
+    // Again after the read: a turn another client started meanwhile would
+    // otherwise run beside this one, and only one of them is kept in chatJobs.
+    if (chatInFlight(session)) return json(res, 409, { ok: false, error: 'still answering the previous message' });
+  }
+
   const prompt = buildChatPrompt({
     meta: review.meta,
     artifact: readArtifact(session),
@@ -2100,14 +2247,15 @@ async function handleChat(payload, res, ctx, session) {
     history: readChat(session),
     diffOnly: ctx.reviewAgent?.agent === 'codex',
     question: valid.question,
+    about,
   });
   const started = startReviewJob(ctx, {
     kind: 'chat',
     session,
     files: ctx.reviewAgent?.agent === 'codex'
       ? [
-        ...diff.files.filter((file) => valid.question.includes(file.path)),
-        ...diff.files.filter((file) => !valid.question.includes(file.path)),
+        ...diff.files.filter((file) => valid.question.includes(file.path) || about?.label.includes(file.path)),
+        ...diff.files.filter((file) => !valid.question.includes(file.path) && !about?.label.includes(file.path)),
       ]
       : undefined,
     argv: explainArgv({ prompt }),
@@ -2120,7 +2268,7 @@ async function handleChat(payload, res, ctx, session) {
   // Polled through the explain endpoint, which already knows how to turn a
   // finished job into an answer. The jobId is a valid askId by construction.
   explainJobs.set(job.jobId, job);
-  log('review.chat', { reqId, session, question: valid.question.slice(0, 80), jobId: job.jobId });
+  log('review.chat', { reqId, session, question: valid.question.slice(0, 80), jobId: job.jobId, about: about?.id });
 
   job.done
     .then(function settled(done) {
@@ -2139,8 +2287,8 @@ async function handleChat(payload, res, ctx, session) {
         appendChat({
           session,
           entries: [
-            { role: 'user', text: valid.question, at },
-            { role: 'assistant', text: answer.text, at, steps: answer.steps, durationMs, costUsd: answer.costUsd },
+            { role: 'user', text: valid.question, at, ...(about ? { about: { id: about.id, label: about.label } } : {}) },
+            { role: 'assistant', text: answer.text, at, steps: answer.steps, durationMs, costUsd: answer.costUsd, ...(about ? { about: { id: about.id, label: about.label } } : {}) },
           ],
         });
       }

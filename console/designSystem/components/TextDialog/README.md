@@ -27,3 +27,6 @@ when off), and **Note to the new agent**, an optional `field` textarea. Cancel q
 orange action (`btn-primary`; `Handing off…` while the console stops the session and starts the next, Cancel and
 Escape disabled meanwhile). A refusal is a `form-error` in the dialog, which stays open; a hand-off opens the new
 session's Chat.
+**Hand over…** on a shared session's ⋯ (`W.askChoice`) is the same dialog with a dropdown in place of the field: one
+row in the menu however many people can be assigned, never a row each. Heading **Hand over this session**, the label
+**To**, each person by name with the handle after it, sorted, the first picked. Cancel, then **Hand over**.

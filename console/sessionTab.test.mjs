@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 function common() {
-  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
+  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedAgents: require('../shared/agents.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
   const context = vm.createContext({
     window, console, fetch: () => new Promise(() => {}),
     document: { addEventListener() {}, querySelector() {}, createElement: () => ({}), createTextNode: () => ({}) },
