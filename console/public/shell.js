@@ -301,6 +301,8 @@
   // Read in the page and in every frame (bindFrame), with one count for all.
   const taps = K.doubleTap({ mac: MAC });
   const notATap = () => taps.reset();
+  // A key let go in another window is never seen let go here: leaving the window forgets the one held.
+  window.addEventListener('blur', () => { heldCode = null; });
   function onTapKeyDown(e) {
     taps.down(e, Date.now());
   }
@@ -373,6 +375,8 @@
         // A key of the mode's that has nothing to do here (4 on a bar of three tabs) is still the mode's: it ends it,
         // and types nothing into a field that has the focus still.
         if (id !== 'cancel') {
+          // Its repeats too, while it is held: none types into the field.
+          heldCode = e.code || null;
           e.preventDefault();
           e.stopPropagation();
         }
