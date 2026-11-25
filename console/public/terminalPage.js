@@ -134,7 +134,7 @@
         opened = true;
         hideOverlay();
       }
-      // Not while the page moves through the sessions by key (session.js, movingByKey): the next J would be typed here.
+      // Not while ⌘B's mode moves through the sessions (session.js, movingByKey): the terminal is not the keys' place.
       let moving = false;
       try {
         moving = Boolean(window.parent?.Woodshed?.movingByKey?.());

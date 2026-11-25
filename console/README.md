@@ -588,17 +588,18 @@ And what the shed shows about each session:
   the browser, and whether a session opens on Chat or TUI, one choice for a
   desktop and one for a phone, kept for you on every device; **⇧⌘O** (or **N**) is
   New session; **G** then **M**, **E** or **S** goes to My Woodshed, shared
-  sessions or My settings. On the session pages, as Herdr moves through its
-  panes: **J** and **K** (or **⌥⌘↓** and **⌥⌘↑**) open the next and previous
-  session in the rail as it is drawn, skipping folded zones; **1** to **4** (or
-  **⌥⌘1** to **⌥⌘4**) pick the pane bar's tabs by their place; **G** then **N**
-  opens the next session that needs you. **⌘B** first, as Herdr's prefix, makes
-  the next key one of those wherever the focus is, typing in Chat or in a
-  terminal (J, K, ↓, ↑, 1 to 4 or N; Esc cancels, and any other key goes where
-  it would have): off a Mac it is Ctrl+B, outside a terminal only, since Ctrl+B
-  is tmux's prefix there. The ⌥⌘ ones reach the page from a
-  terminal on a Mac; off a Mac they are Ctrl+Alt, never read while typing,
-  since that is AltGr on many keyboards. Ctrl works for ⌘ outside a terminal, and the pages
+  sessions or My settings. On the session pages, **⌘B** turns on a mode for
+  moving through the sessions, as Herdr's prefix and navigate mode, wherever
+  the focus is, typing in Chat or in a terminal: **J** and **K** (or **↓** and
+  **↑**) open the next and previous session in the rail as it is drawn,
+  skipping folded zones; **1** to **4** pick the pane bar's tabs by their place
+  and end the mode, the tab taking the keys; **N** opens the next session that
+  needs you. The mode stays on, the toast's place saying so, until Esc (which
+  goes no further, not to a terminal), a click, a toast, or any other key,
+  which then does what it would have. These keys do nothing without ⌘B. Off a
+  Mac it is Ctrl+B, outside a terminal only, since Ctrl+B is tmux's prefix
+  there; on a Mac, Ctrl+B in a text field stays macOS's back one character.
+  Ctrl works for ⌘ outside a terminal, and the pages
   write the keys as Ctrl on Windows and Linux. A key alone works only while
   nothing takes typing, and never inside a terminal or the Review, whose
   frame gets the ⌘ keys alone. Which key does what is

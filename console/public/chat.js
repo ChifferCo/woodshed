@@ -761,7 +761,7 @@
         drawThread(true);
         drawComposer();
         schedule(0);
-        // Not while J and K move through the sessions (session.js, movingByKey): the field would take the next J.
+        // Not while ⌘B's mode moves through the sessions (session.js, movingByKey): the field is not the keys' place.
         if (!narrow.matches) setTimeout(() => { if (session?.id === s.id && !el.hidden && !W.movingByKey?.()) field.focus({ preventScroll: true }); }, 0);
       } else if (was !== s.state) {
         // The state moved (a turn ended, or started): the live work log and the status line follow, and the thread is

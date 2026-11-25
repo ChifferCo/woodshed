@@ -16,7 +16,7 @@
   const DISPLAY_HREF = '/settings#my-display';
 
   // moveSession(step), nextNeedsYou() and showTab(n, onlyAsk) are the session page's (keys.cjs, `page`): a page without
-  // them leaves J, K, G N and the tab keys alone.
+  // them leaves ⌘B and its mode's keys alone.
   let page = { sessions: () => [], actions: () => [], toggleRail: null, railShown: () => true, moveSession: null, nextNeedsYou: null, showTab: null };
 
   function register(next) {
@@ -55,9 +55,8 @@
   let toastTimer = null;
   // `ms` keeps it up longer: an error needs time to be read on a phone.
   function toast(text, { ms = 2000 } = {}) {
-    // A toast in the hint's place (an upload's error, a tab's reason) ends the wait too: the next key is the page's.
-    prefixAt = 0;
-    prefixHint(false);
+    // A toast in the mode's place (an upload's error, a tab's reason) ends ⌘B's mode too: the next key is the page's.
+    stopMoving();
     toastEl ??= document.body.appendChild(h('div', { class: 'toast', role: 'status', hidden: true }));
     toastEl.textContent = text;
     toastEl.hidden = false;
@@ -224,6 +223,11 @@
     const mod = MAC ? shortcut.mod : shortcut.modOther || shortcut.mod;
     const combo = mod && K.caps(mod, MAC).map((k) => h('kbd', null, k));
     const bare = shortcut.bare && shortcut.bare.split(' ').map((k) => h('kbd', null, k));
+    // A key of ⌘B's mode: ⌘B, then the key, or the other key it names (J or ↓).
+    if (shortcut.then) {
+      const then = shortcut.then.split(' ').flatMap((k, i) => [i > 0 && h('span', { class: 'kor' }, 'or'), h('kbd', null, k)]).filter(Boolean);
+      return [...K.caps(K.byId.prefix.mod, MAC).map((k) => h('kbd', null, k)), h('span', { class: 'kor' }, 'then'), ...then];
+    }
     return [combo, combo && bare && h('span', { class: 'kor' }, 'or'), bare].filter(Boolean);
   }
   // Drawn as it opens, from what the page registered: a page with no rail (My settings) lists no session keys, and
@@ -234,41 +238,38 @@
     return [
       shown.map((s) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, keyCaps(s)), h('div', null, s.id === 'keys' ? 'This list' : s.what, s.where && h('span', { class: 'kwhere' }, ` on ${s.where}`)))),
       h('p', { class: 'sheet-note' }, MAC
-        ? `Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal's. A key alone works while you are not typing. ${moves ? 'J and K move through the rail, 1 to 4 pick a tab, and ⌘B before any of them works even while typing or in a terminal. ' : ''}⌘K, then a name, jumps to any session.`
-        : `A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal's: click outside it first. ${moves ? 'J and K move through the rail, 1 to 4 pick a tab, and Ctrl+B before any of them works while typing. ' : ''}Ctrl+K, then a name, jumps to any session.`),
+        ? `Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal's. A key alone works while you are not typing. ${moves ? '⌘B works even while typing or in a terminal, and its keys go on working until Esc, a click or another key. ' : ''}⌘K, then a name, jumps to any session.`
+        : `A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal's: click outside it first. ${moves ? 'Ctrl+B works while typing, and its keys go on working until Esc, a click or another key. ' : ''}Ctrl+K, then a name, jumps to any session.`),
     ];
   }
   const keys = sheet('Keyboard shortcuts', []);
   keys.onOpen = () => keys.dialog.querySelector('.sheet-body').replaceChildren(...keyRows().flat());
 
 
-  // ---- the prefix's word: what ⌘B waits for, until a key or its time is up ----
-  let prefixEl = null;
-  let prefixTimer = null;
-  function prefixHint(on) {
-    clearTimeout(prefixTimer);
-    if (!on) {
-      if (prefixEl) prefixEl.hidden = true;
-      return;
-    }
-    // One toast at a time: the hint takes the place of one still up (a tab's reason), which the key after it answers.
+  // ---- ⌘B's mode, as Herdr's navigate mode: on until Esc, a click, a toast or a key that is not one of its own ----
+  // The toast's place says it is on, and which keys it takes, for as long as it is.
+  let moving = false;
+  let movingEl = null;
+  function startMoving() {
+    moving = true;
+    // One toast at a time: the mode takes the place of one still up (a tab's reason).
     if (toastEl) {
       clearTimeout(toastTimer);
       toastEl.hidden = true;
     }
-    prefixEl ??= document.body.appendChild(h('div', { class: 'toast', role: 'status', hidden: true }));
-    prefixEl.replaceChildren(h('kbd', null, keyText('prefix')), ' then ', h('kbd', null, 'J'), ' ', h('kbd', null, 'K'), ' ', h('kbd', null, '1–4'), ' or ', h('kbd', null, 'N'));
-    prefixEl.hidden = false;
-    prefixTimer = setTimeout(() => { prefixEl.hidden = true; }, PREFIX_MS);
+    movingEl ??= document.body.appendChild(h('div', { class: 'toast', role: 'status', hidden: true }));
+    movingEl.replaceChildren(h('kbd', null, keyText('prefix')), ' ', h('kbd', null, 'J'), ' ', h('kbd', null, 'K'), ' ', h('kbd', null, '1–4'), ' ', h('kbd', null, 'N'), ' · ', h('kbd', null, 'esc'), ' to stop');
+    movingEl.hidden = false;
   }
-
-  // A click is the pointer's move, not the key ⌘B waits for: it cancels the prefix, as it ends J and K's moving.
-  function cancelPrefixOnClick() {
-    if (!prefixAt) return;
-    prefixAt = 0;
-    prefixHint(false);
+  function stopMoving() {
+    moving = false;
+    if (movingEl) movingEl.hidden = true;
   }
-  document.addEventListener('pointerdown', cancelPrefixOnClick, true);
+  // A click is the pointer's move, not the keyboard's: it ends the mode, in the page or in a frame (bindFrame).
+  function stopMovingOnClick() {
+    if (moving) stopMoving();
+  }
+  document.addEventListener('pointerdown', stopMovingOnClick, true);
 
   // ---- the keys ----
   // G waits this long for the second key of a sequence.
@@ -285,20 +286,17 @@
     prevSession: () => page.moveSession(-1),
     needsYou: () => page.nextNeedsYou(),
   };
-  // ⌘B waits this long for its key, as Herdr's prefix does (with a word on screen that it waits).
-  const PREFIX_MS = 2500;
-  let prefixAt = 0;
-  const PREFIX_IDS = new Set(['nextSession', 'prevSession', 'needsYou', 'tab', 'cancel']);
+  // The keys of ⌘B's mode (keys.cjs, AFTER_PREFIX and the tab keys), and its Esc.
+  const MOVING_IDS = new Set(['nextSession', 'prevSession', 'needsYou', 'tab', 'cancel']);
   const MODIFIERS = new Set(['Shift', 'Meta', 'Control', 'Alt', 'AltGraph', 'CapsLock']);
   function onKey(e, inFrame, modOnly = false) {
-    // Shift pressed on its way to a digit (AZERTY) is not the key after ⌘B or G.
+    // Shift pressed on its way to a digit (AZERTY) is not a key of the mode, nor the one after G.
     if (MODIFIERS.has(e.key)) return;
     hideHint();
-    // Esc after ⌘B cancels it, and goes no further: not to a terminal, whose agent would take it as its own Esc. With
-    // the palette or the sheet open, it also closes that, below.
-    if (e.key === 'Escape' && Date.now() - prefixAt < PREFIX_MS) {
-      prefixAt = 0;
-      prefixHint(false);
+    // Esc ends ⌘B's mode and goes no further: not to a terminal, whose agent would take it as its own Esc. With the
+    // palette or the sheet open, it also closes that, below.
+    if (e.key === 'Escape' && moving) {
+      stopMoving();
       if (palette.hidden && keys.el.hidden) {
         e.preventDefault();
         e.stopPropagation();
@@ -312,29 +310,28 @@
       return;
     }
     if (e.repeat || e.isComposing) return;
-    // A page framed in the pane (the Review) keeps its keys alone for itself: only ⌘ or Ctrl ones are the shell's.
-    const afterPrefix = Date.now() - prefixAt < PREFIX_MS;
-    prefixAt = 0;
-    if (afterPrefix) prefixHint(false);
-    if (modOnly && !e.metaKey && !e.ctrlKey && !afterPrefix) return;
+    // A page framed in the pane (the Review) keeps its keys alone for itself: only ⌘ or Ctrl ones are the shell's, and
+    // the mode's own while it is on.
+    if (modOnly && !e.metaKey && !e.ctrlKey && !moving) return;
     const afterG = Date.now() - gAt < SEQUENCE_MS;
     gAt = 0;
     // A key alone is for the page, never for an open palette or sheet, whose own keys come first.
     const overlayOpen = !palette.hidden || !keys.el.hidden || notifications().isOpen();
-    const id = K.match(e, { inFrame, afterG, afterPrefix, mac: MAC, typing: overlayOpen || K.takesTyping(e.composedPath?.()[0] ?? e.target) });
-    // In the Review, a key alone after ⌘B is the shell's only when it is one of the prefix's own: / there is the page's.
-    if (modOnly && !e.metaKey && !e.ctrlKey && !PREFIX_IDS.has(id)) return;
-    if (id === 'cancel') {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
+    const id = K.match(e, { inFrame, afterG, moving, mac: MAC, typing: overlayOpen || K.takesTyping(e.composedPath?.()[0] ?? e.target) });
+    // Any other key ends the mode and is what it would have been: / opens the palette, a letter types.
+    const movingKey = moving && MOVING_IDS.has(id);
+    if (moving && !movingKey) stopMoving();
+    if (modOnly && !e.metaKey && !e.ctrlKey && !movingKey) return;
     // A form's own key (⌘↵ on New session) is left to the form, which reads it from its fields.
     // A key the page does (K.byId[id].page) is nothing on a page that registered no such thing: no rail, no tabs.
     const pageHook = K.byId[id]?.page;
-    if (!id || K.byId[id]?.where || (pageHook && !page[pageHook]) || (id === 'rail' && !page.toggleRail) || (id === 'notifications' && !notifications().available)) return;
-    // 3 on a page with no third tab is left alone, so a field-less page loses no key it never used.
-    if (id === 'tab' && !page.showTab(K.tabOf(e), true)) return;
+    const nothing = !id || K.byId[id]?.where || (pageHook && !page[pageHook]) || (id === 'rail' && !page.toggleRail) || (id === 'notifications' && !notifications().available)
+      // 3 on a session with no third tab is no key of the mode's either.
+      || (id === 'tab' && !page.showTab(K.tabOf(e), true));
+    if (nothing) {
+      if (movingKey) stopMoving();
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
     if (id === 'g') {
@@ -342,14 +339,16 @@
       return;
     }
     if (id === 'prefix') {
-      prefixAt = Date.now();
-      prefixHint(true);
+      startMoving();
       return;
     }
     // A move or a tab picked with the palette or the sheet open closes it first, so the new session gets the keys.
-    if (PREFIX_IDS.has(id)) closeAll();
-    if (id === 'tab') page.showTab(K.tabOf(e));
-    else (ACTS[id] ?? go(K.byId[id].href))();
+    if (movingKey) closeAll();
+    // A tab ends the mode: the tab takes the keys from there, to be typed in.
+    if (id === 'tab') {
+      stopMoving();
+      page.showTab(K.tabOf(e));
+    } else (ACTS[id] ?? go(K.byId[id].href))();
   }
   document.addEventListener('keydown', (e) => onKey(e, false), true);
 
@@ -361,7 +360,7 @@
       if (!doc || doc.__woodshedShell) return;
       doc.__woodshedShell = true;
       doc.addEventListener('keydown', (e) => onKey(e, terminal, !terminal), true);
-      doc.addEventListener('pointerdown', cancelPrefixOnClick, true);
+      doc.addEventListener('pointerdown', stopMovingOnClick, true);
     } catch {
       // Not same-origin after all: the page's own keys still work.
     }

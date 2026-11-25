@@ -47,6 +47,7 @@ test('⌘J or Ctrl+J is the notifications, and Ctrl+J in a terminal is the termi
   assert.equal(match({ key: 'j', code: 'KeyJ', metaKey: true }, { inFrame: true }), 'notifications');
   assert.equal(match({ key: 'j', code: 'KeyJ', ctrlKey: true }, { inFrame: true }), null);
   assert.equal(match({ key: 'J', code: 'KeyJ', metaKey: true, shiftKey: true }), null);
+  assert.equal(match({ key: 'j', code: 'KeyJ' }), null, 'J alone is nothing: only ⌘B\'s mode reads it');
   assert.equal(byId.notifications.bell, true, 'left off the sheet where there is no list');
   assert.deepEqual(caps(byId.notifications.mod, false), ['Ctrl', 'J']);
 });
@@ -57,13 +58,14 @@ test('G, then a letter, goes to a page; anything else after G is nothing', () =>
   assert.equal(match({ key: 'e', code: 'KeyE' }, { afterG: true }), 'everyone');
   assert.equal(match({ key: 's', code: 'KeyS' }, { afterG: true }), 'mySettings');
   assert.equal(match({ key: 'x', code: 'KeyX' }, { afterG: true }), null);
+  assert.equal(match({ key: 'n', code: 'KeyN' }, { afterG: true }), null, 'G N is not a shortcut: ⌘B, then N is');
   for (const id of ['mine', 'everyone', 'mySettings']) assert.ok(byId[id].href.startsWith('/'));
 });
 
 test('every shortcut has words and at least one key', () => {
   for (const s of SHORTCUTS) {
     assert.ok(s.what, s.id);
-    assert.ok(s.mod || s.bare, s.id);
+    assert.ok(s.mod || s.bare || s.then, s.id);
   }
 });
 
@@ -97,68 +99,45 @@ test('find is written ⌘F on a Mac and Ctrl+Shift+F elsewhere, and left to the 
   assert.ok(byId.find.where);
 });
 
-test('J and K, or ⌥⌘ with an arrow, move through the rail, as Herdr moves through its panes', () => {
-  assert.equal(match({ key: 'j', code: 'KeyJ' }), 'nextSession');
-  assert.equal(match({ key: 'k', code: 'KeyK' }), 'prevSession');
-  assert.equal(match({ key: 'J', code: 'KeyJ', shiftKey: true }), null, 'Shift+J is not J');
-  for (const where of [{ typing: true }, { inFrame: true }]) assert.equal(match({ key: 'j', code: 'KeyJ' }, where), null);
-  assert.equal(match({ key: 'ArrowDown', code: 'ArrowDown', metaKey: true, altKey: true }, { inFrame: true }), 'nextSession', '⌥⌘↓ reaches the page from a terminal on a Mac');
-  assert.equal(match({ key: 'ArrowUp', code: 'ArrowUp', metaKey: true, altKey: true }, { typing: true }), 'prevSession');
-  assert.equal(match({ key: 'ArrowDown', code: 'ArrowDown', ctrlKey: true, altKey: true }), 'nextSession');
-  assert.equal(match({ key: 'ArrowDown', code: 'ArrowDown', ctrlKey: true, altKey: true }, { inFrame: true }), null, 'Ctrl+Alt is the terminal\'s');
-  assert.equal(match({ key: 'ArrowDown', code: 'ArrowDown', metaKey: true }), null, '⌘↓ is the text field\'s end');
-  assert.deepEqual(caps(byId.nextSession.mod, true), ['⌥', '⌘', '↓']);
-  assert.deepEqual(caps(byId.nextSession.mod, false), ['Ctrl', 'Alt', '↓']);
-  assert.equal(byId.nextSession.page, 'moveSession', 'left alone on a page with no rail');
-});
-
-test('1 to 4, or ⌥⌘ with one, pick a tab by its place, and AltGr typing a character is never one', () => {
-  assert.equal(match({ key: '2', code: 'Digit2' }), 'tab');
+test('no key alone moves through the sessions, and no ⌥⌘ or Ctrl+Alt key does: only ⌘B\'s mode', () => {
+  for (const [key, code] of [['j', 'KeyJ'], ['k', 'KeyK'], ['1', 'Digit1'], ['4', 'Digit4']]) {
+    assert.equal(match({ key, code }), null, key);
+  }
+  assert.equal(match({ key: 'ArrowDown', code: 'ArrowDown', metaKey: true, altKey: true }), null);
+  assert.equal(match({ key: '2', code: 'Digit2', ctrlKey: true, altKey: true }), null, 'Ctrl+Alt is AltGr on many keyboards');
   assert.equal(tabOf({ code: 'Digit2' }), 2);
   assert.equal(tabOf({ code: 'Digit5' }), 0);
-  assert.equal(match({ key: '5', code: 'Digit5' }), null);
-  assert.equal(match({ key: '2', code: 'Numpad2' }), null);
-  assert.equal(match({ key: '@', code: 'Digit2', shiftKey: true }), null);
-  assert.equal(match({ key: '2', code: 'Digit2', shiftKey: true }), 'tab', 'AZERTY types 2 with Shift');
-  assert.equal(match({ key: 'é', code: 'Digit2' }), null, 'AZERTY\'s é is not 2');
-  assert.equal(match({ key: '2', code: 'Digit2', shiftKey: true }, { typing: true }), null);
-  assert.equal(match({ key: '2', code: 'Digit2' }, { inFrame: true }), null, '2 in a terminal is typed');
-  assert.equal(match({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }, { inFrame: true }), 'tab', '⌥ turns the digit into another character on a Mac');
-  assert.equal(match({ key: '{', code: 'Digit7', ctrlKey: true, altKey: true }, { typing: true }), null, 'AltGr+7 types {');
-  assert.equal(match({ key: '²', code: 'Digit2', ctrlKey: true, altKey: true }, { typing: true }), null, 'AltGr+2 types ²');
-  assert.equal(match({ key: '2', code: 'Digit2', ctrlKey: true, altKey: true }), 'tab');
-  assert.deepEqual(caps(byId.tab.mod, false), ['Ctrl', 'Alt', '1–4']);
 });
 
-test('G, then N, is the next session that needs you', () => {
-  assert.equal(match({ key: 'n', code: 'KeyN' }, { afterG: true }), 'needsYou');
-  assert.equal(byId.needsYou.bare, 'G N');
-  assert.equal(byId.needsYou.page, 'nextNeedsYou');
-});
-
-test('⌘B, then J, K, 1–4 or N, works from anywhere, as Herdr\'s prefix: typing, or in a terminal on a Mac', () => {
+test('⌘B turns on a mode, as Herdr\'s navigate mode, whose keys move through the sessions from anywhere', () => {
   assert.equal(match({ key: 'b', code: 'KeyB', metaKey: true }, { inFrame: true }), 'prefix');
   assert.equal(match({ key: 'b', code: 'KeyB', metaKey: true }, { typing: true }), 'prefix');
   assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, { typing: true }), 'prefix', 'Ctrl+B off a Mac, while typing');
   assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, { inFrame: true }), null, 'Ctrl+B in a terminal is tmux\'s prefix');
-  assert.equal(match({ key: 'B', code: 'KeyB', metaKey: true, shiftKey: true }), null, '⇧⌘B is the browser\'s bookmarks bar');
   assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, { typing: true, mac: true }), null, 'Ctrl+B in a Mac\'s text field is back one character');
   assert.equal(match({ key: 'b', code: 'KeyB', metaKey: true }, { typing: true, mac: true }), 'prefix');
   assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, { mac: true }), 'prefix', 'Ctrl+B on a Mac, not typing');
+  assert.equal(match({ key: 'B', code: 'KeyB', metaKey: true, shiftKey: true }), null, '⇧⌘B is the browser\'s bookmarks bar');
   for (const where of [{ typing: true }, { inFrame: true }, {}]) {
-    const after = { ...where, afterPrefix: true };
-    assert.equal(match({ key: 'j', code: 'KeyJ' }, after), 'nextSession');
-    assert.equal(match({ key: 'k', code: 'KeyK' }, after), 'prevSession');
-    assert.equal(match({ key: 'ArrowDown', code: 'ArrowDown' }, after), 'nextSession');
-    assert.equal(match({ key: 'ArrowUp', code: 'ArrowUp' }, after), 'prevSession');
-    assert.equal(match({ key: 'n', code: 'KeyN' }, after), 'needsYou');
-    assert.equal(match({ key: '3', code: 'Digit3' }, after), 'tab');
-    assert.equal(match({ key: '3', code: 'Digit3', shiftKey: true }, after), 'tab', 'AZERTY');
-    assert.equal(match({ key: 'Escape', code: 'Escape' }, after), 'cancel');
-    assert.equal(match({ key: 'x', code: 'KeyX' }, after), null, 'any other key goes where it would have');
-    assert.equal(match({ key: '/', code: 'Slash' }, after), match({ key: '/', code: 'Slash' }, where), 'and is what it would have been');
+    const on = { ...where, moving: true };
+    assert.equal(match({ key: 'j', code: 'KeyJ' }, on), 'nextSession');
+    assert.equal(match({ key: 'k', code: 'KeyK' }, on), 'prevSession');
+    assert.equal(match({ key: 'ArrowDown', code: 'ArrowDown' }, on), 'nextSession');
+    assert.equal(match({ key: 'ArrowUp', code: 'ArrowUp' }, on), 'prevSession');
+    assert.equal(match({ key: 'n', code: 'KeyN' }, on), 'needsYou');
+    assert.equal(match({ key: '3', code: 'Digit3' }, on), 'tab');
+    assert.equal(match({ key: '3', code: 'Digit3', shiftKey: true }, on), 'tab', 'AZERTY types 3 with Shift');
+    assert.equal(match({ key: '"', code: 'Digit3' }, on), null, 'AZERTY\'s " is not 3');
+    assert.equal(match({ key: 'J', code: 'KeyJ', shiftKey: true }, on), null);
+    assert.equal(match({ key: 'Escape', code: 'Escape' }, on), 'cancel');
+    assert.equal(match({ key: 'x', code: 'KeyX' }, on), null, 'any other key ends the mode and goes where it would have');
+    assert.equal(match({ key: '/', code: 'Slash' }, on), match({ key: '/', code: 'Slash' }, where), 'and is what it would have been');
   }
-  assert.equal(match({ key: 'k', code: 'KeyK', metaKey: true }, { afterPrefix: true }), 'palette', 'a ⌘ key after ⌘B is itself');
+  assert.equal(match({ key: 'k', code: 'KeyK', metaKey: true }, { moving: true }), 'palette', 'a ⌘ key in the mode is itself');
   assert.deepEqual(caps(byId.prefix.mod, false), ['Ctrl', 'B']);
-  assert.equal(byId.prefix.page, 'moveSession', 'left alone on a page with no rail');
+  for (const id of ['nextSession', 'prevSession', 'tab', 'needsYou']) {
+    assert.ok(byId[id].then && !byId[id].bare && !byId[id].mod, `${id} is ⌘B's alone`);
+    assert.ok(byId[id].page, `${id} is left alone on a page with no rail`);
+  }
+  assert.equal(byId.prefix.page, 'moveSession');
 });

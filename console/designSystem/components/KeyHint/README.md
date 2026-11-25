@@ -9,6 +9,6 @@ scroll.
 - Keys are one cap each, outlined in the text color: `⇧` `⌘` `O` on a Mac, `Ctrl` `Shift` `O` elsewhere.
 - Placed under the control, centred and kept 8px inside the window; above it when there is no room below.
 
-The prefix's hint is the same caps in a toast: after ⌘B (Ctrl+B off a Mac) the toast's place says `⌘B then J K 1–4 or N`,
-with each key a cap outlined in the toast's text color, for 2.5 s or until the next key. It takes the place of a toast
-still showing, never sits over it, and a click or a toast after it takes it away.
+The prefix's mode is the same caps in a toast: while ⌘B's mode is on (Ctrl+B off a Mac), the toast's place says
+`⌘B J K 1–4 N · esc to stop`, each key a cap outlined in the toast's text color, for as long as the mode is on: until Esc,
+a click, a tab picked, another toast or any other key. It takes the place of a toast still showing, never sits over it.

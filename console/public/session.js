@@ -23,7 +23,7 @@
   // Which page: /, /all or a session's. They are one page, so moving between them changes these, not the document
   // (navigate, below). /?new=1 is New session as a screen of its own on a phone, where / is the list alone.
   let id = null;
-  // J, K and G N's moving mode (moveSession, below), and whether the navigate running now is one of theirs.
+  // ⌘B's moves (moveSession, below) keep focus out of the session they open, and whether the navigate running now is one.
   let movingByKey = false;
   let keyMove = false;
   let onMy = false;
@@ -366,7 +366,7 @@
   // and nothing flashes while a new document loads. The address changes as a link's would, and Back returns.
   const SHELL_PATH_RE = /^\/(all|s\/[0-9a-f]{8})?$/;
   function navigate(href) {
-    // Any move but J, K or G N's own ends their moving mode (moveTo), so a session opened from the palette or a card
+    // Any move but ⌘B's own (moveTo) lets a session take focus again, so a session opened from the palette or a card
     // focuses its Chat field as before.
     if (!keyMove) movingByKey = false;
     const url = new URL(href, window.location.href);
@@ -1784,8 +1784,8 @@
   // For a menu another module draws a button for, such as Start app's pick of several apps (common.js).
   W.openMenu = openCardMenu;
 
-  // The keys that move through the sessions (keys.cjs): J and K go down and up the rail as it is drawn, so a folded
-  // zone is skipped as the eye skips it, and G N goes to the next session after this one that needs you, in the same
+  // The keys of ⌘B's mode that move through the sessions (keys.cjs): J and K go down and up the rail as it is drawn, so a
+  // folded zone is skipped as the eye skips it, and N goes to the next session after this one that needs you, in the same
   // order, then any of the rail's folded zones hide. Each cycles round at the end.
   // A session is where its own card is; a copy (one asking its person, in Needs you) counts only when its own card is
   // not drawn, as when its group is folded.
@@ -1821,7 +1821,7 @@
     const next = after(railOrder(), step);
     if (next && next.id !== id) moveTo(next);
   }
-  // The sessions this rail lists (Mine or Everyone, on the project picked), so G N never opens one the other rail has:
+  // The sessions this rail lists (Mine or Everyone, on the project picked), so N never opens one the other rail has:
   // those drawn first, in their order, then the ones in folded zones.
   function nextNeedsYou() {
     const drawn = railOrder();

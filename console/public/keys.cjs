@@ -14,15 +14,17 @@
     { id: 'palette', mod: '⌘K', bare: '/', what: 'Jump to a session, or run a command' },
     { id: 'new', mod: '⇧⌘O', bare: 'N', what: 'New session' },
     { id: 'rail', mod: '⌘.', what: 'Show or hide the rail' },
-    // Herdr's prefix: ⌘B, then one key, from anywhere, typing or in a terminal (Ctrl+B off a Mac, outside a terminal,
-    // where Ctrl+B is tmux's own prefix). AFTER_PREFIX says which keys follow it.
-    { id: 'prefix', mod: '⌘B', what: 'Then J, K, 1–4 or N, even while typing', page: 'moveSession' },
-    // Moving through the sessions as Herdr moves through its panes: J and K alone, and ⌥⌘ with an arrow, which a
-    // terminal frame passes to the page on a Mac. Only where there is a rail (session.js registers them).
-    { id: 'nextSession', mod: '⌥⌘↓', bare: 'J', what: 'Next session in the rail', page: 'moveSession' },
-    { id: 'prevSession', mod: '⌥⌘↑', bare: 'K', what: 'Previous session in the rail', page: 'moveSession' },
-    // The pane bar's tabs by their place on it, as Herdr's prefix+1..9: Chat, TUI, Terminal, Review.
-    { id: 'tab', mod: '⌥⌘1–4', bare: '1–4', what: 'The session\'s tabs, in their order on its bar', page: 'showTab' },
+    // Herdr's prefix and its navigate mode: ⌘B (Ctrl+B off a Mac, outside a terminal, where Ctrl+B is tmux's own
+    // prefix) turns on a mode where the keys `then` names move through the sessions, wherever the focus is, typing or
+    // in a terminal, until Esc, a click, or a key that is none of them. Only where there is a rail (session.js).
+    { id: 'prefix', mod: '⌘B', what: 'Move through the sessions with the keys below, until Esc or a click', page: 'moveSession' },
+    { id: 'nextSession', then: 'J ↓', what: 'Next session in the rail', page: 'moveSession' },
+    { id: 'prevSession', then: 'K ↑', what: 'Previous session in the rail', page: 'moveSession' },
+    // The pane bar's tabs by their place on it, as Herdr's prefix+1..9: Chat, TUI, Terminal, Review. Picking one ends the
+    // mode, and the tab takes the keys.
+    { id: 'tab', then: '1–4', what: 'The session\'s tabs, in their order on its bar', page: 'showTab' },
+    // Herdr's goto picker filtered to the blocked: the next session, after the one shown, that waits on you.
+    { id: 'needsYou', then: 'N', what: 'Next session that needs you', page: 'nextNeedsYou' },
     // Only where there is a list (notificationBell.js): a page with no one signed in leaves it off the sheet.
     { id: 'notifications', mod: '⌘J', what: 'Notifications', bell: true },
     { id: 'settings', mod: '⇧⌘,', what: 'Display settings: theme, review files, Chat or TUI' },
@@ -35,15 +37,13 @@
     { id: 'mine', bare: 'G M', what: 'Go to My Woodshed', href: '/' },
     { id: 'everyone', bare: 'G E', what: 'Go to shared sessions', href: '/all' },
     { id: 'mySettings', bare: 'G S', what: 'Go to My settings', href: '/settings' },
-    // Herdr's goto picker filtered to the blocked: the next session, after the one shown, that waits on you.
-    { id: 'needsYou', bare: 'G N', what: 'Next session that needs you', page: 'nextNeedsYou' },
   ];
   const byId = Object.fromEntries(SHORTCUTS.map((s) => [s.id, s]));
   // The second key of a G sequence.
-  const AFTER_G = { m: 'mine', e: 'everyone', s: 'mySettings', n: 'needsYou' };
-  // What a key after ⌘B is: the session keys alone, read whatever has the focus. Arrows too, as Herdr's navigate mode.
+  const AFTER_G = { m: 'mine', e: 'everyone', s: 'mySettings' };
+  // What a key is while ⌘B's mode is on: the session keys alone, read whatever has the focus. Arrows too, as Herdr's.
   const AFTER_PREFIX = { j: 'nextSession', k: 'prevSession', n: 'needsYou', arrowdown: 'nextSession', arrowup: 'prevSession' };
-  // The tab keys: 1 to 4, read from the key's place (⌥ on a Mac turns the digit into another character).
+  // The tab keys: 1 to 4, read from the key's place.
   const TAB_CODES = ['Digit1', 'Digit2', 'Digit3', 'Digit4'];
 
   /** @returns {number}  which tab a tab key names, from 1, or 0 for none */
@@ -92,29 +92,24 @@
   /**
    * Which shortcut a key press is.
    * @param {{key: string, code?: string, metaKey?: boolean, ctrlKey?: boolean, altKey?: boolean, shiftKey?: boolean}} e
-   * @param {{inFrame?: boolean, typing?: boolean, afterG?: boolean, afterPrefix?: boolean, mac?: boolean}} where  inFrame: pressed in a
-   *   terminal, where Ctrl and every key alone are the terminal's; typing: focus takes text; afterG: G was the last key
-   *   alone; afterPrefix: ⌘B was the last key, so the next one is ours wherever it is pressed; mac: on an Apple computer
-   * @returns {string|null}  a shortcut's id, 'g' or 'prefix' for the start of a sequence, 'cancel' for Esc after ⌘B, or
-   *   null when the key is not ours
+   * @param {{inFrame?: boolean, typing?: boolean, afterG?: boolean, moving?: boolean, mac?: boolean}} where  inFrame:
+   *   pressed in a terminal, where Ctrl and every key alone are the terminal's; typing: focus takes text; afterG: G was
+   *   the last key alone; moving: ⌘B's mode is on, so its keys are ours wherever they are pressed; mac: on a Mac
+   * @returns {string|null}  a shortcut's id, 'g' for the start of a sequence, 'prefix' for ⌘B, 'cancel' for Esc in
+   *   ⌘B's mode, or null when the key is not ours
    */
   function match(e, where = {}) {
     const code = e.code || '';
-    if (where.afterPrefix && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    if (where.moving && !e.metaKey && !e.ctrlKey && !e.altKey) {
       if (e.key === 'Escape') return 'cancel';
+      // By the character it types, Shift or not: on AZERTY the digit row needs Shift for 1 to 4, and Shift+1 is ! here.
       if (tabOf(e) && String(e.key) === String(tabOf(e))) return 'tab';
-      const after = e.shiftKey ? null : AFTER_PREFIX[String(e.key || '').toLowerCase()];
+      const move = e.shiftKey ? null : AFTER_PREFIX[String(e.key || '').toLowerCase()];
       // Any other key is what it would have been without ⌘B: / still opens the palette.
-      if (after) return after;
+      if (move) return move;
     }
     if (e.metaKey || (e.ctrlKey && !where.inFrame)) {
-      if (e.altKey) {
-        // Ctrl+Alt is AltGr on many keyboards, which types { or @ with a digit: never ours while typing.
-        if (e.shiftKey || (!e.metaKey && where.typing)) return null;
-        if (code === 'ArrowDown') return 'nextSession';
-        if (code === 'ArrowUp') return 'prevSession';
-        return tabOf(e) ? 'tab' : null;
-      }
+      if (e.altKey) return null;
       if (e.key === '?' || (e.shiftKey && code === 'Slash')) return 'keys';
       if (code === 'KeyK' && !e.shiftKey) return 'palette';
       if (code === 'KeyJ' && !e.shiftKey) return 'notifications';
@@ -131,12 +126,8 @@
     if (where.afterG) return AFTER_G[k.toLowerCase()] && !e.shiftKey ? AFTER_G[k.toLowerCase()] : null;
     if (k === '?') return 'keys';
     if (k === '/') return 'palette';
-    // By the character it types, Shift or not: on AZERTY the digit row needs Shift for 1 to 4, and on QWERTY Shift+1 is !.
-    if (tabOf(e) && k === String(tabOf(e))) return 'tab';
     if (e.shiftKey) return null;
     if (k === 'n' || k === 'N') return 'new';
-    if (k === 'j' || k === 'J') return 'nextSession';
-    if (k === 'k' || k === 'K') return 'prevSession';
     if (k === 'g' || k === 'G') return 'g';
     return null;
   }
