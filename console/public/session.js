@@ -1853,6 +1853,17 @@
       requestAnimationFrame(() => {
         if (tab === 'chat') chat.focus();
         else if (tab === 'tui' || tab === 'terminal') shownTerminal()?.contentWindow?.term?.focus();
+        else {
+          // Review is a framed page: the frame takes the keys. Diff and App log are this page's panels: the panel does,
+          // so the arrows and Page Down scroll it.
+          const frame = tab === 'review' ? slots.review.querySelector('iframe') : null;
+          const panel = frame ? null : ({ diff: slots.diff, applog: slots.applog })[tab];
+          if (frame) frame.focus();
+          else if (panel) {
+            panel.tabIndex = -1;
+            panel.focus({ preventScroll: true });
+          }
+        }
       });
     }
     return true;

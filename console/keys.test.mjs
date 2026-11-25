@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import keys from './public/keys.cjs';
 
-const { SHORTCUTS, byId, isMac, isTap, caps, label, takesTyping, match, tabOf } = keys;
+const { SHORTCUTS, byId, isMac, isTap, doubleTap, caps, label, takesTyping, match, tabOf } = keys;
 
 test('a key is written the Mac way on a Mac and with Ctrl elsewhere', () => {
   assert.equal(isMac({ platform: 'MacIntel' }), true);
@@ -152,4 +152,64 @@ test('in the mode its keys move through the sessions from anywhere, and any othe
     assert.ok(byId[id].page, `${id} is left alone on a page with no rail`);
   }
   assert.equal(byId.prefix.page, 'moveSession');
+});
+
+test('a double tap is two quick taps of the key alone, by a clock the test holds', () => {
+  const ctrl = (code = 'ControlLeft', extra = {}) => ({ key: 'Control', code, ctrlKey: true, ...extra });
+  const tap = (t, at, code) => {
+    t.down(ctrl(code), at);
+    return t.up(ctrl(code), at + 50);
+  };
+  let t = doubleTap({ mac: false });
+  assert.equal(tap(t, 0), false, 'one tap is not yet');
+  assert.equal(tap(t, 200), true, 'a second within 400 ms is');
+  assert.equal(tap(t, 400), false, 'and the count starts again after it');
+
+  t = doubleTap({ mac: false });
+  tap(t, 0);
+  assert.equal(tap(t, 600), false, 'too slow: the second is a first again');
+  assert.equal(tap(t, 800), true);
+
+  t = doubleTap({ mac: false });
+  t.down(ctrl(), 0);
+  t.up(ctrl(), 900);
+  assert.equal(tap(t, 1000), false, 'a key held 0.9 s is no tap, and no first one either');
+
+  t = doubleTap({ mac: false });
+  t.down(ctrl(), 0);
+  t.down({ key: 'c', code: 'KeyC', ctrlKey: true }, 20);
+  t.up(ctrl(), 60);
+  t.down(ctrl(), 100);
+  t.down({ key: 'c', code: 'KeyC', ctrlKey: true }, 120);
+  assert.equal(t.up(ctrl(), 160), false, 'Ctrl+C twice is never one');
+
+  t = doubleTap({ mac: false });
+  t.down(ctrl(), 0);
+  t.down(ctrl(), 30);
+  t.down({ ...ctrl(), repeat: true }, 60);
+  t.up(ctrl(), 100);
+  assert.equal(tap(t, 200), true, 'a held key\'s repeats do not break a tap');
+
+  // The left Ctrl held, the right pressed and let go, then the left: two keys, not a tap.
+  t = doubleTap({ mac: false });
+  t.down(ctrl('ControlLeft'), 0);
+  t.down(ctrl('ControlRight'), 40);
+  assert.equal(t.up(ctrl('ControlLeft'), 80), false);
+  t.up(ctrl('ControlRight'), 100);
+  assert.equal(tap(t, 200), false, 'so the next single tap is a first');
+  assert.equal(tap(t, 400), true);
+
+  t = doubleTap({ mac: false });
+  tap(t, 0);
+  t.reset();
+  assert.equal(tap(t, 100), false, 'a click or the wheel between (reset) is no double tap');
+
+  t = doubleTap({ mac: true });
+  tap(t, 0);
+  assert.equal(tap(t, 100), false, 'Ctrl on a Mac is not the key');
+  const cmd = { key: 'Meta', code: 'MetaLeft', metaKey: true };
+  t.down(cmd, 200);
+  t.up(cmd, 250);
+  t.down(cmd, 300);
+  assert.equal(t.up(cmd, 350), true, '⌘ twice on a Mac is');
 });

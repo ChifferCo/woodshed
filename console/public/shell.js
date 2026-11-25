@@ -294,41 +294,15 @@
   // The keys of the mode (keys.cjs, AFTER_PREFIX and the tab keys), and its Esc.
   const MOVING_IDS = new Set(['nextSession', 'prevSession', 'needsYou', 'tab', 'cancel']);
   const MODIFIERS = new Set(['Shift', 'Meta', 'Control', 'Alt', 'AltGraph', 'CapsLock']);
-  // ---- the double tap: ⌘ (Ctrl off a Mac) pressed and let go twice, alone, within TAP_MS ----
-  // A tap is a press and a release with nothing else pressed between, so ⌘K or Ctrl+C twice is never one. Held down
-  // (its repeats) it is not one either. Read in the page and in every frame (bindFrame), with one state for all.
-  const TAP_MS = 400;
-  let tapDown = false;
-  let tapDownAt = 0;
-  let lastTapAt = 0;
-  function notATap() {
-    tapDown = false;
-    lastTapAt = 0;
-  }
+  // ---- the double tap: ⌘ (Ctrl off a Mac) pressed and let go twice, alone (keys.cjs, doubleTap) ----
+  // Read in the page and in every frame (bindFrame), with one count for all.
+  const taps = K.doubleTap({ mac: MAC });
+  const notATap = () => taps.reset();
   function onTapKeyDown(e) {
-    if (K.isTap(e, MAC)) {
-      if (!e.repeat) {
-        tapDown = true;
-        tapDownAt = Date.now();
-      }
-      return;
-    }
-    notATap();
+    taps.down(e, Date.now());
   }
   function onTapKeyUp(e) {
-    if (!K.isTap(e, MAC) || !tapDown) return;
-    tapDown = false;
-    const now = Date.now();
-    // Held longer than a tap (Ctrl kept down while thinking) is no tap, and no first one for the next either.
-    if (now - tapDownAt > TAP_MS) {
-      lastTapAt = 0;
-      return;
-    }
-    if (now - lastTapAt > TAP_MS) {
-      lastTapAt = now;
-      return;
-    }
-    lastTapAt = 0;
+    if (!taps.up(e, Date.now())) return;
     // Only where the page moves through sessions (session.js): elsewhere a double tap is nothing.
     if (!page.moveSession) return;
     if (moving) stopMoving();
@@ -389,7 +363,15 @@
       // 3 on a session with no third tab is no key of the mode's either.
       || (id === 'tab' && !page.showTab(K.tabOf(e), true));
     if (nothing) {
-      if (movingKey) stopMoving();
+      if (movingKey) {
+        stopMoving();
+        // A key of the mode's that has nothing to do here (4 on a bar of three tabs) is still the mode's: it ends it,
+        // and types nothing into a field that has the focus still.
+        if (id !== 'cancel') {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }
       return;
     }
     e.preventDefault();

@@ -62,6 +62,49 @@
     return !e.shiftKey && !e.altKey && !(mac ? e.ctrlKey : e.metaKey);
   }
 
+  /**
+   * The double tap's count, kept apart from the page so its timing can be tested with any clock. A tap is the key
+   * pressed and let go within `ms`, with nothing else pressed between: not another key, a click, the wheel, nor the
+   * other ⌘ or Ctrl (it is read by its place, `code`). Two taps within `ms` of each other are a double tap. A key held
+   * longer than a tap is no first tap either.
+   * @param {{ mac: boolean, ms?: number }} opts
+   * @returns {{ down(e, now: number): void, up(e, now: number): boolean, reset(): void }}  up says a double tap ended
+   */
+  function doubleTap({ mac, ms = 400 }) {
+    let downCode = null;
+    let downAt = 0;
+    let lastTapAt = null;
+    const reset = () => {
+      downCode = null;
+      lastTapAt = null;
+    };
+    return {
+      reset,
+      down(e, now) {
+        if (!isTap(e, mac)) return reset();
+        if (e.repeat) return;
+        // The other ⌘ or Ctrl pressed while one is down is two keys held, not a tap.
+        if (downCode !== null && downCode !== (e.code || '')) return reset();
+        downCode = e.code || '';
+        downAt = now;
+      },
+      up(e, now) {
+        if (!isTap(e, mac) || downCode === null || downCode !== (e.code || '')) return false;
+        downCode = null;
+        if (now - downAt > ms) {
+          lastTapAt = null;
+          return false;
+        }
+        if (lastTapAt === null || now - lastTapAt > ms) {
+          lastTapAt = now;
+          return false;
+        }
+        lastTapAt = null;
+        return true;
+      },
+    };
+  }
+
   /** @returns {boolean}  whether this browser is on an Apple computer, where ⌘ is the key */
   function isMac(nav) {
     return /Mac|iPhone|iPad/.test(String(nav?.platform || nav?.userAgent || ''));
@@ -141,5 +184,5 @@
     return null;
   }
 
-  return { SHORTCUTS, byId, isMac, isTap, caps, label, takesTyping, match, tabOf };
+  return { SHORTCUTS, byId, isMac, isTap, doubleTap, caps, label, takesTyping, match, tabOf };
 });
