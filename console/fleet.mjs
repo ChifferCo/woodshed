@@ -1911,10 +1911,6 @@ export function createFleet({
       }
       // A lockdown that won the race before the hand-off was taken: nothing read from it goes anywhere.
       if (isLocked(from)) throw shown('it has seen production data: nothing it holds goes to another session');
-      // A Stop pressed during the read is an ordinary stop, which removes the checkout even when its push is refused.
-      // Stopped or still stopping, the hand-off's own stop would find nothing left to push, and the new session would
-      // start from the branch's old remote commit: the case requireCheckpoint is there to prevent.
-      if (from.status !== 'running') throw shown('it was stopped meanwhile: nothing was handed off');
       // Stopped only once its work is pushed: a push refused (a branch moved on remotely) leaves it running, its work
       // in its checkout, and nothing handed off.
       try {
@@ -2617,7 +2613,7 @@ export function createFleet({
     // The author's choice and own sign-ins only for someone who passed the same checks as their Claude plan; never a
     // bot's. Anyone else's review runs the most the team keys can.
     const ownLogin = teamKeyWhy || login.endsWith('[bot]') ? null : login;
-    const { agents, choice = null, codexLogin = null, codexVia = null, codexAccount = null, ownSignIns = null, why: agentsWhy, keysUnread = false } = reviewAgents
+    const { agents, choice = null, codexLogin = null, codexVia = null, codexAccount = null, ownSignIns = null, why: agentsWhy, keysUnread = false, expanded = true } = reviewAgents
       ? await reviewAgents.forReview({ login: ownLogin }) : { agents: ['claude'], why: null };
     if (agentsWhy) console.warn('fleet: review runs other than the author chose', { number, login, choice, agents, why: agentsWhy, ...projectField(project) });
     if (!agents.length && choice !== 'none' && keysUnread) {
@@ -2647,7 +2643,7 @@ export function createFleet({
       },
     });
     console.log('fleet: review session started', {
-      id: session.id, number, login, base: pull.base.ref, agents, choice: choice ?? 'the most there is',
+      id: session.id, number, login, base: pull.base.ref, agents, choice: choice ?? (expanded ? 'every reviewer that can run' : 'Claude Code and Codex, as before'),
       codex: agents.includes('codex') ? (codexLogin ? `own ${codexVia === 'chatgpt' ? 'ChatGPT login' : 'key'}` : 'team key') : null,
       ...(ownSignIns?.grok ? { grok: `own ${ownSignIns.grok.via === 'login' ? 'login' : 'key'}` } : {}),
       ...(ownSignIns?.opencode ? { opencode: `own ${ownSignIns.opencode.provider} key` } : {}),

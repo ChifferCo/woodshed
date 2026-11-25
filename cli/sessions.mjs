@@ -1248,9 +1248,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
     if (!ID_RE.test(String(next.id))) throw fail(`${origin} answered with no session id`);
     const shown = summary(next, { origin, login, appsOn });
     if (json) emit({ event: 'handed-off', from: id, session: shown });
-    // The agent the console started, as its answer says; the one asked for when the answer does not name one.
-    const handedTo = next.options?.agent ? agentOfSession(next) : opts.agent;
-    say(`Handed session ${id} off to ${agentInfo(handedTo).product}: session ${shown.id}${shown.title ? `: ${shown.title}` : ''}`);
+    say(`Handed session ${id} off to ${opts.agent === 'codex' ? 'Codex' : 'Claude Code'}: session ${shown.id}${shown.title ? `: ${shown.title}` : ''}`);
     say(`  ${shown.url}`);
     if (opts.wait === false) return EXIT.done;
     return follow(shown.id);
