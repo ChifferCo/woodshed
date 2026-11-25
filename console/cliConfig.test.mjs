@@ -16,7 +16,7 @@ const KEYS = ['terminal', 'reviews', 'codex-reviews', 'grok-reviews', 'opencode-
 
 // A console with the real My settings (userSettings.mjs) over a secret store that keeps nothing: mia-dev has a Claude
 // token saved and GitHub connected, octocat has neither. A command line token for each.
-async function consoleFor(t, { writers = null, rememberSecrets = false } = {}) {
+async function consoleFor(t, { writers = null, rememberSecrets = false, saves = null } = {}) {
   const values = new Map();
   const store = {
     state: {
@@ -25,7 +25,7 @@ async function consoleFor(t, { writers = null, rememberSecrets = false } = {}) {
         octocat: { terminal: 'herdr', codexAuthAt: '2026-11-01T00:00:00.000Z' },
       },
     },
-    save() {},
+    save() { if (saves) saves.push(structuredClone(this.state)); },
   };
   const secrets = rememberSecrets
     ? { read: async (name) => values.get(name) ?? null, save: async (name, value) => { values.set(name, value); }, remove: async (name) => { values.delete(name); }, configured: () => true }
@@ -66,7 +66,7 @@ async function consoleFor(t, { writers = null, rememberSecrets = false } = {}) {
     });
     return { status: res.status, body: await res.json().catch(() => null) };
   }
-  return { origin, call, tokens, userSettings, cli };
+  return { origin, call, tokens, userSettings, cli, secrets };
 }
 
 test('GET /api/cli/config answers its person\'s choices, exactly these keys and no secret', async (t) => {
@@ -137,12 +137,22 @@ test('a config write runs the page\'s own route and checks, and answers with the
 });
 
 test('a first command-line sign-in stays out of reviews until that person turns it on', async (t) => {
-  const c = await consoleFor(t, { rememberSecrets: true });
+  const saves = [];
+  const c = await consoleFor(t, { rememberSecrets: true, saves });
   const reviews = createReviewAgents({ userSettings: c.userSettings, connected: async () => ({ claude: true, codex: true }) });
   const grok = 'xai-made-up-key-0123456789';
   const pushed = await c.call('/api/my/agent-auth/grok', { method: 'POST', body: { value: grok } });
   assert.equal(pushed.status, 200);
   assert.equal(c.userSettings.usesOwnAgentForReviews('mia-dev', 'grok'), false, 'a first upload does not turn the reviews switch on');
+  // The first settings write that records the sign-in is what a restart reads if the console stops there. It has to
+  // already say reviews are off: a later write never runs.
+  const first = saves.find((state) => state.people['mia-dev']?.agentAuthAt?.grok);
+  assert.equal(first.people['mia-dev'].ownAgentForReviews?.grok, false, 'the sign-in and the reviews-off flag are one settings update');
+  assert.equal(first.reviewDefaultKept, true, 'the one-time mark has already run, so a restart does not apply it again');
+  const restarted = createUserSettings({ store: { state: structuredClone(first), save() {} }, secrets: c.secrets });
+  assert.equal(restarted.usesOwnAgentForReviews('mia-dev', 'grok'), false);
+  const afterRestart = createReviewAgents({ userSettings: restarted, connected: async () => ({ claude: true, codex: true }) });
+  assert.deepEqual((await afterRestart.forReview({ login: 'mia-dev' })).agents, ['claude', 'codex'], 'the restored snapshot does not put Grok Build in the default');
   assert.equal(c.userSettings.usesExpandedReviewDefault('mia-dev'), true, 'the person stays on the wider default; only this sign-in is left out');
   assert.equal((await c.call('/api/cli/config')).body['grok-reviews'], 'off');
   assert.deepEqual((await reviews.forReview({ login: 'mia-dev' })).agents, ['claude', 'codex']);

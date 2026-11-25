@@ -451,25 +451,33 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
    */
   function agentAuthTurn(login, id, fn) {
     const key = `${loginKey(login)}/${id}`;
-    const run = (agentAuthTurns.get(key) ?? Promise.resolve()).then(() => fn({ read: () => agentAuth(login, id), save: (value) => saveAgentAuth(login, id, value) }));
+    const run = (agentAuthTurns.get(key) ?? Promise.resolve()).then(() => fn({ read: () => agentAuth(login, id), save: (value, opts) => saveAgentAuth(login, id, value, opts) }));
     const settled = run.catch(() => {});
     agentAuthTurns.set(key, settled);
     settled.then(() => { if (agentAuthTurns.get(key) === settled) agentAuthTurns.delete(key); });
     return run;
   }
 
-  /** Saves the person's own sign-in for Grok Build or OpenCode (shared/agents.cjs, checkSignIn). */
-  function setAgentAuth(login, id, value) {
-    return agentAuthTurn(login, id, ({ save }) => save(value));
+  /**
+   * Saves the person's own sign-in for Grok Build or OpenCode (shared/agents.cjs, checkSignIn).
+   * `opts.reviews: false` is a first save from the command line: the reviews switch is written off in the same settings
+   * update as the sign-in, so a stop between two writes cannot leave it on.
+   */
+  function setAgentAuth(login, id, value, opts) {
+    return agentAuthTurn(login, id, ({ save }) => save(value, opts));
   }
 
-  async function saveAgentAuth(login, id, value) {
+  async function saveAgentAuth(login, id, value, opts) {
     requireSecrets();
     const agent = ownSignInAgent(id);
     const auth = agents.checkSignIn(id, value);
+    if (opts?.reviews === false && !agent.reviews) throw Object.assign(new Error(`${agent.product} does not review`), { shown: true });
     await secrets.save(userSecretName(login, agent.signIn.secret), auth, `Woodshed: @${login}'s ${agent.product} sign-in, for their My Woodshed ${agent.product} sessions only`);
-    touch(login, { agentAuthAt: { ...recordFor(login)?.agentAuthAt, [id]: new Date(now()).toISOString() } });
+    const fields = { agentAuthAt: { ...recordFor(login)?.agentAuthAt, [id]: new Date(now()).toISOString() } };
+    if (opts?.reviews === false) fields.ownAgentForReviews = { ...recordFor(login)?.ownAgentForReviews, [id]: false };
+    touch(login, fields);
     console.log(`userSettings: ${agent.product} sign-in saved`, { login, agent: id, apiKey: !auth.startsWith('{') });
+    if (opts?.reviews === false) console.log(`userSettings: own ${agent.product} sign-in for reviews`, { login, agent: id, on: false });
   }
 
   function removeAgentAuth(login, id) {
@@ -533,8 +541,8 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   /**
    * The switch on the Grok Build and OpenCode cards: whether reviews of this person's pull requests may run that agent on
    * their own sign-in. On once a sign-in is saved on My settings, unless they turned it off, as Codex's is. A first save
-   * from the command line sets it off (server.mjs, myWrite), so that sign-in stays out of reviews until they turn it on;
-   * replacing one already saved leaves it as it was. With no reviewer choice
+   * from the command line sets it off in that same settings update (setAgentAuth's `reviews: false`), so that sign-in
+   * stays out of reviews until they turn it on; replacing one already saved leaves it as it was. With no reviewer choice
    * saved, the default includes it (reviewAgents.mjs), except a sign-in already saved when that default shipped, or
    * found in the secret store without a save on My settings since (usesExpandedReviewDefault). A saved choice that
    * leaves it out does not, unless none of that choice can run, in which case the same default runs. The sign-in never
