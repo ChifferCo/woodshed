@@ -153,6 +153,7 @@ test('⌘B, then J, K, 1–4 or N, works from anywhere, as Herdr\'s prefix: typi
     assert.equal(match({ key: '3', code: 'Digit3', shiftKey: true }, after), 'tab', 'AZERTY');
     assert.equal(match({ key: 'Escape', code: 'Escape' }, after), 'cancel');
     assert.equal(match({ key: 'x', code: 'KeyX' }, after), null, 'any other key goes where it would have');
+    assert.equal(match({ key: '/', code: 'Slash' }, after), match({ key: '/', code: 'Slash' }, where), 'and is what it would have been');
   }
   assert.equal(match({ key: 'k', code: 'KeyK', metaKey: true }, { afterPrefix: true }), 'palette', 'a ⌘ key after ⌘B is itself');
   assert.deepEqual(caps(byId.prefix.mod, false), ['Ctrl', 'B']);

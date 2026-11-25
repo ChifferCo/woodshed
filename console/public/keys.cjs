@@ -103,7 +103,9 @@
     if (where.afterPrefix && !e.metaKey && !e.ctrlKey && !e.altKey) {
       if (e.key === 'Escape') return 'cancel';
       if (tabOf(e) && String(e.key) === String(tabOf(e))) return 'tab';
-      return e.shiftKey ? null : AFTER_PREFIX[String(e.key || '').toLowerCase()] ?? null;
+      const after = e.shiftKey ? null : AFTER_PREFIX[String(e.key || '').toLowerCase()];
+      // Any other key is what it would have been without ⌘B: / still opens the palette.
+      if (after) return after;
     }
     if (e.metaKey || (e.ctrlKey && !where.inFrame)) {
       if (e.altKey) {

@@ -1826,7 +1826,10 @@
   function nextNeedsYou() {
     const drawn = railOrder();
     const onProject = railProject();
-    const listed = data ? railListing().filter((s) => !onProject || s.project === onProject) : [];
+    // As railBody draws it: on a phone, Everyone's status chip leaves out the other statuses (Unassigned stays).
+    const status = !railMine() && narrow.matches ? railStatus() : 'all';
+    const inStatus = (s) => status === 'all' || W.group(s) === status || (!railMine() && W.isUnassigned(s) && !W.isPullCheck(s));
+    const listed = data ? railListing().filter((s) => (!onProject || s.project === onProject) && inStatus(s)) : [];
     const order = [...drawn, ...listed.filter((s) => !drawn.includes(s))];
     // The one shown stays in the list, so the next is the one after it, and it alone is "nothing else".
     const waiting = order.filter((s) => W.needsYou(s) || s.id === id);
