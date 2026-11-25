@@ -93,14 +93,14 @@ function removePullWorktree(repoDir, pullWorktreesDir) {
 async function loadShed(repoDir) {
   // The shed reads this when its store module loads.
   process.env.WOODSHED_REVIEWS ??= REVIEWS_DIR;
-  const [{ handleReviewRequest, ensureWorktreeReview, ensurePullRequestReview, worktreeReviewBranch, startReviewAnalysisIfNone, startReviewQaIfNone, warmLivePr }, { ghAccount }, { configurePrStatus }] = await Promise.all([
+  const [{ handleReviewRequest, ensureWorktreeReview, ensurePullRequestReview, worktreeReviewBranch, startReviewAnalysisIfNone, startReviewQaIfNone, warmLivePr }, { ghAccount, personalPrImageReader }, { configurePrStatus }] = await Promise.all([
     import('../../shared/review/index.mjs'),
     import('../../shared/review/github.mjs'),
     import('../../shared/prStatus.mjs'),
   ]);
   // Without the checkout, the shed cannot name the repo, so its pull request lookup finds nothing and the page gets no PR.
   configurePrStatus({ repoRoot: repoDir, log: (event, fields) => console.log(`review: ${event}`, fields) });
-  return { handleReviewRequest, ensureWorktreeReview, ensurePullRequestReview, worktreeReviewBranch, startReviewAnalysisIfNone, startReviewQaIfNone, warmLivePr, ghAccount };
+  return { handleReviewRequest, ensureWorktreeReview, ensurePullRequestReview, worktreeReviewBranch, startReviewAnalysisIfNone, startReviewQaIfNone, warmLivePr, ghAccount, personalPrImageReader };
 }
 
 /**
@@ -177,10 +177,14 @@ export function createReviewHost({
     }
     shed ??= await load(repoDir);
     const reqId = randomBytes(4).toString('hex');
-    if (req.method === 'GET' && sectionOf(pathname) === 'image' &&
-        !writesAllowed({ sessionKind, account: await accountNow() })) {
-      json(res, 403, { ok: false, error: 'review images require a My Woodshed session with GitHub connected' });
-      return true;
+    let readPrImage;
+    if (req.method === 'GET' && sectionOf(pathname) === 'image') {
+      readPrImage = sessionKind === 'private' ? await shed.personalPrImageReader() : null;
+      if (!readPrImage) {
+        console.log('review: image read refused', { reqId, sessionKind: sessionKind ?? null });
+        json(res, 403, { ok: false, error: 'review images require a My Woodshed session with GitHub connected' });
+        return true;
+      }
     }
     let writable = null;
     if (isGithubWrite({ method: req.method, pathname }) || (req.method === 'GET' && pathname.startsWith('/reviews/') && !sectionOf(pathname))) {
@@ -206,7 +210,7 @@ export function createReviewHost({
     }
     const withReviews = (body) => (reviews && body && typeof body === 'object' && body.ok !== false ? { ...body, reviews } : body);
     const ctx = {
-      reqId, repoRoot: repoDir,
+      reqId, repoRoot: repoDir, readPrImage,
       reviewAgent: { agent, model, effort },
       json: (r, status, body) => json(r, status, withReviews(writable === false ? withoutPullRequest(body) : body)),
       log: (event, fields) => console.log(`review: ${event}`, fields),

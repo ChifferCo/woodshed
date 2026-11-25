@@ -1,7 +1,7 @@
 // Everything that talks to GitHub, via the `gh` CLI already installed and
 // authenticated on the box.
 //
-// Every call is spawn(binary, [argv]) via exec.mjs — no shell is constructed
+// Calls pass argv directly to the executable — no shell is constructed
 // anywhere here, which is why server.mjs's `shQuote` is deliberately
 // unused here. `shQuote` exists for tmux's `new-session <command>` string,
 // which really is handed to /bin/sh; there is no equivalent on this path.
@@ -28,7 +28,7 @@ const REVIEW_IMAGE_TYPES = new Map([
 
 // prAssets.sh links to a commit, including for private repositories where the
 // browser's cross-site request to github.com may have no GitHub cookie.
-export async function fetchPrImage({ slug, src }) {
+async function fetchPrImage({ slug, src }, env) {
   const match = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/blob\/([a-f0-9]{40})\/([^?#]+)\?raw=true$/i.exec(src || '');
   if (!match || match[1].toLowerCase() !== slug.toLowerCase()) return null;
   const [, , sha, rawPath] = match;
@@ -38,13 +38,26 @@ export async function fetchPrImage({ slug, src }) {
     const type = REVIEW_IMAGE_TYPES.get(path.extname(parts.at(-1)).toLowerCase());
     if (!type) return null;
     const file = parts.map(encodeURIComponent).join('/');
+    // exec.mjs decodes stdout as text. The raw contents response is binary.
     const { stdout } = await execFileAsync('gh', [
       'api', `repos/${slug}/contents/${file}?ref=${sha}`, '-H', 'Accept: application/vnd.github.raw',
-    ], { encoding: 'buffer', timeout: GH_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 });
+    ], { env, encoding: 'buffer', timeout: GH_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 });
     return stdout.length ? { type, bytes: stdout } : null;
   } catch {
     return null;
   }
+}
+
+// Snapshot the credential once. The session's gh wrapper honors GH_TOKEN, so
+// validation and the contents request use the same token even during a refresh.
+export async function personalPrImageReader() {
+  const token = await run('gh', ['auth', 'token', '--hostname', 'github.com'], { timeoutMs: GH_TIMEOUT_MS });
+  const value = token.stdout.trim();
+  if (token.status !== 0 || !value || /\s/.test(value)) return null;
+  const env = { ...process.env, GH_HOST: 'github.com', GH_TOKEN: value };
+  const user = await run('gh', ['api', 'user', '--jq', '.login'], { env, timeoutMs: GH_TIMEOUT_MS });
+  if (user.status !== 0 || !/^[A-Za-z0-9-]{1,39}$/.test(user.stdout.trim())) return null;
+  return (image) => fetchPrImage(image, env);
 }
 // The three things a review can say, and nothing else reaches argv. A map
 // rather than a check-then-interpolate, so an unknown action cannot become a

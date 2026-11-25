@@ -5,7 +5,7 @@ import http from 'node:http';
 import { createReviewHost } from './host.mjs';
 
 // A stand-in for the shed's module: it answers what the host passes its ctx, which is the host's whole contract.
-function fakeShed({ account, created = false, hasAnalysis = false, qaThrows = false, checkoutReview = { exists: false, branch: null } }) {
+function fakeShed({ account, imageAccount = () => account, created = false, hasAnalysis = false, qaThrows = false, checkoutReview = { exists: false, branch: null } }) {
   const calls = [];
   const analyses = [];
   const qas = [];
@@ -15,6 +15,7 @@ function fakeShed({ account, created = false, hasAnalysis = false, qaThrows = fa
     qas,
     load: async () => ({
       ghAccount: async () => account,
+      personalPrImageReader: async () => imageAccount() ? async () => null : null,
       ensureWorktreeReview: async () => ({ ok: true, created }),
       worktreeReviewBranch: () => checkoutReview,
       ensurePullRequestReview: async ({ sessionName, pr, ctx }) => {
@@ -97,6 +98,18 @@ test('the review image request reaches the shed only in a private session with G
       { url: path, method: 'GET', repoRoot: '/w', worktree: '/w' },
     ]);
   }
+});
+
+test('a running private session refuses image reads after its credential switches to the App', async (t) => {
+  let connected = true;
+  const shed = fakeShed({ account: 'octocat', imageAccount: () => connected });
+  const call = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'private', load: shed.load }));
+  const review = '/shed-review/reviews/claude-0a1b2c3d';
+  assert.equal((await (await call('GET', review)).json()).ghAccount, 'octocat');
+  assert.equal((await call('GET', review + '/image')).status, 200);
+  connected = false;
+  assert.equal((await call('GET', review + '/image')).status, 403);
+  assert.equal(shed.calls.length, 2, 'the refused image request never reached the contents handler');
 });
 
 test('another session\'s review, and a path outside the prefix, are not answered', async (t) => {

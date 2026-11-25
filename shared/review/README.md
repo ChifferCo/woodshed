@@ -218,8 +218,9 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
 
 When a commit-pinned GitHub `blob/…?raw=true` image fails in the browser, the
 page retries through `GET /reviews/<session>/image`. The route reads raster
-images up to 10 MiB from the pull request's repository via `gh api`. Woodshed
-allows that read in a My Woodshed session with GitHub connected.
+images up to 10 MiB from the pull request's repository via `gh api`. In a My
+Woodshed session, each image request verifies a personal GitHub credential
+and uses that same credential for the contents read.
 
 ## Things that are the way they are on purpose
 
