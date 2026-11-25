@@ -2900,7 +2900,11 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
    cost, tool errors and last words) goes to `POST /qa-log` after each pass and before the report, the latest replacing
    the last, so a run stopped before its report still leaves why. The console keeps it on the session (`fleet: QA run log
    kept`), and an ended QA session's page shows it under **Run log** (`GET /api/sessions/<id>/qa-log`). A run with no
-   report says in its verdict why when a pass ran out of turns, was cut off or hit an error.
+   report says in its verdict why when a pass ran out of turns, was cut off or hit an error. The log is scrubbed before it
+   leaves the session: by value (the session's own secret variables and the install secrets), by pattern, and by a model's
+   second look (`screenLog` in `session/qa.sh`, a haiku call that names the lines holding a secret, which are blanked;
+   `the model check for secrets did not run` in the log when it could not). It is the run's own output, so it may still
+   quote what the app printed.
 5. The fleet writes the report into the QA comment, with the still linking to the first video at `/qa/<session id>/video/1` and a link to each
    (on a repo whose project file says `pullRequests.qa.recordings: public`, at `/qa-video/<session id>/<secret>/<n>.webm`,
    which plays with no sign-in: the session got its secret, `qa.share`, when it started, and pages never see it), posts the QA check on the commit tested with the verdict and the

@@ -13,6 +13,11 @@ const QA_MJS = path.join(HERE, '../shared/qa/qa.mjs');
 
 // A fake claude: the planner writes the plan (or SKIP.md), the tests write the report, and each ends with its cost.
 const FAKE_CLAUDE = `#!/bin/bash
+# The secret screen over the run log: it answers with the line numbers FAKE_SCREEN names, or fails with FAKE_SCREEN=fail.
+case " $* " in *" haiku "*)
+  [ "\${FAKE_SCREEN:-}" = fail ] && exit 1
+  echo "\${FAKE_SCREEN:-NONE}"; exit 0 ;;
+esac
 if [ -n "\${FAKE_NO_REPORT:-}" ] && [ -f .qa/plan/plan.md ]; then
   echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Opening the app"},{"type":"tool_use","name":"x"}]}}'
   echo '{"type":"result","subtype":"error_max_turns","is_error":false,"num_turns":200,"total_cost_usd":2}'
@@ -22,6 +27,7 @@ if [ ! -f .qa/plan/plan.md ]; then
   if [ -n "\${FAKE_SKIP:-}" ]; then echo 'Docs only' > .qa/plan/SKIP.md; else echo '# Plan' > .qa/plan/plan.md; fi
   echo '{"type":"result","total_cost_usd":0.5}'
   [ -n "\${FAKE_LEAK:-}" ] && echo 'npm ERR! _authToken=abcdef1234567890'
+  [ -n "\${FAKE_OPAQUE:-}" ] && echo 'registry said the credential is zzOpaque7788 for this user'
 else
   printf '## TC-1: signs in ✅\\n## TC-2: saves ❌\\n' > .qa/report.md
   # The browser's recording, where the MCP config claude was given says to write it.
@@ -39,7 +45,7 @@ function listen(handler) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runQa(t, { skip = false, app = 'running', noReport = false, leak = false } = {}) {
+async function runQa(t, { skip = false, app = 'running', noReport = false, leak = false, screen = null, opaque = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-sh-'));
   const sessionDir = path.join(dir, 'session');
   const bin = path.join(dir, 'fakebin');
@@ -88,7 +94,7 @@ async function runQa(t, { skip = false, app = 'running', noReport = false, leak 
   const env = {
     ...isolatedEnv(), PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', QA_BASE: 'stacked-base',
     SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`,
-    STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_FFMPEG: ffmpeg, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}), ...(noReport ? { FAKE_NO_REPORT: '1' } : {}), ...(leak ? { FAKE_LEAK: '1' } : {}),
+    STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_FFMPEG: ffmpeg, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}), ...(noReport ? { FAKE_NO_REPORT: '1' } : {}), ...(leak ? { FAKE_LEAK: '1' } : {}), ...(screen ? { FAKE_SCREEN: screen } : {}), ...(opaque ? { FAKE_OPAQUE: '1' } : {}),
   };
   const output = await new Promise((resolve, reject) => {
     const child = spawn('bash', [QA_SH], { env });
@@ -166,4 +172,18 @@ test('a credential a pass printed is taken out of the log the console keeps', as
   assert.ok(logs.length > 0);
   for (const l of logs) assert.doesNotMatch(l.text, /abcdef1234567890/);
   assert.match(logs.at(-1).text, /_authToken=\[redacted\]/);
+});
+
+test('the model\'s secret screen blanks the lines it names, and a screen that cannot run leaves a note', async (t) => {
+  // An opaque value in prose, which no pattern knows: the screen names its line, and it is blanked.
+  const first = await runQa(t, { opaque: true, screen: 'NONE' });
+  assert.match(first.logs.at(-1).text, /zzOpaque7788/, 'a pattern cannot know it: only the screen can');
+  const lineOf = (text) => text.split('\n').findIndex((l) => l.includes('zzOpaque7788')) + 1;
+  const line = lineOf(first.logs.at(-1).text);
+  assert.ok(line > 0);
+  const second = await runQa(t, { opaque: true, screen: `${line}` });
+  assert.doesNotMatch(second.logs.at(-1).text, /zzOpaque7788/);
+  assert.match(second.logs.at(-1).text, /\[line removed: the secret screen found a secret in it\]/);
+  const failed = await runQa(t, { screen: 'fail' });
+  assert.match(failed.logs.at(-1).text, /model check for secrets did not run/);
 });
