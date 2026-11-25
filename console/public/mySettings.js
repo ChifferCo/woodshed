@@ -834,7 +834,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       h('p', { class: 'sub' }, 'When your sessions pause or stop. Work is pushed first, and Resume picks it up. An empty box uses the console\'s number. Running sessions pick up a change within seconds. Shared sessions use the numbers on ', W.isAdmin() ? h('a', { href: '/console-settings#card-sessions' }, 'Settings') : 'Settings (admins)', '.'),
       h('div', { class: 'lgrid2' },
         h('label', { class: 'field-label', for: 'limit-idle' }, h('span', null, 'Pause when waiting for input (hours, 0.25 to 24)'), limitInputs.idleHours),
-        h('label', { class: 'field-label', for: 'limit-lifetime' }, h('span', null, 'Stop when working (hours, 1 to 24)'), limitInputs.lifetimeHours)),
+        h('label', { class: 'field-label', for: 'limit-lifetime' }, h('span', null, 'Stop a working session after (hours, 1 to 24)'), limitInputs.lifetimeHours)),
       h('div', { class: 'set-actions' },
         h('button', { type: 'button', class: 'btn btn-open', disabled: busy.has('limits'), onclick: () => saveLimits({ idleHours: limitInputs.idleHours.value, lifetimeHours: limitInputs.lifetimeHours.value }, 'Saved.') }, 'Save'),
         custom && h('button', { type: 'button', class: 'btn btn-quiet', disabled: busy.has('limits'), onclick: () => saveLimits({}, 'Back to the console\'s numbers.') }, 'Use the console\'s')),

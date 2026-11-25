@@ -707,7 +707,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     return [
       h('div', { class: 'set-rows' },
         mcpField(f, 'name', 'Name', 'What Claude calls it. Lowercase letters, digits and dashes.', 'name', { disabled: f.editing ? true : null }),
-        mcpField(f, 'url', 'URL', 'The console calls this address, so it must answer from here.', 'url', { placeholder: 'https://' }),
+        mcpField(f, 'url', 'URL', 'Its Streamable HTTP endpoint, such as https://mcp.example.com/mcp. The console calls this address, so it must answer from here.', 'url', { placeholder: 'https://' }),
         mcpKind(f),
         !f.production && mcpSelect(f, 'shared', 'Shared sessions', 'Whether shared sessions get it too. Never a QA run or a review.', 'shared',
           [['false', 'No'], ['true', 'Yes']], (v) => { f.shared = v === 'true'; }),
