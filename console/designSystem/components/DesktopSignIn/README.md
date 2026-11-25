@@ -6,7 +6,7 @@ line** (a box to type the code), **Sign in the woodshed command line?** and **Th
 
 - One `ground` card, `line` border, 12px radius and 32px padding, 440px wide at most, centred on the `stopped` ground,
   with 16px at the screen's edges on a phone. No shadow.
-- A `title` heading (Merriweather) that says where the person stands, as a sentence: **Sign in to the Woodshed app?**,
+- A `title` heading (Red Hat Display, bold) that says where the person stands, as a sentence: **Sign in to the Woodshed app?**,
   **You're signed in**, **Finish signing in in your browser**, **Open your Woodshed console**. Then one `sub` paragraph
   that says what happens next and what to say yes to.
 - One orange button, the one thing to do: **Sign in to the app**, **Open the Woodshed app**, **Open the browser
@@ -16,7 +16,7 @@ line** (a box to type the code), **Sign in the woodshed command line?** and **Th
   in the app: it is what keeps another program from signing itself in, so its words are not to be cut.
 - An error is a `bad` line under the paragraph, in words (`That sign-in has expired or was already used. Sign in again
   from the app.`), and the button stays, to try again.
-- The command line's code is shown as the terminal shows it, in JetBrains Mono at 24px, 600, with a `meta` line under
+- The command line's code is shown as the terminal shows it, in Red Hat Mono at 24px, 600, with a `meta` line under
   it (mono, `sub`) saying when it was asked. Its consent card names the computer and the account in
   bold, and says to sign in only if the terminal shows that code. Deny is a quiet underlined button beside the orange
   one, as Cancel is beside the app's.

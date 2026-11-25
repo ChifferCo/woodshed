@@ -59,7 +59,6 @@ function consoleOverride() {
   }
 }
 let consoleUrl = null;
-let appDomain = null;
 let mainWindow = null;
 
 // --- Windows ---
@@ -67,14 +66,14 @@ let mainWindow = null;
 const webPreferences = { contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: true };
 
 function where(url) {
-  return consoleUrl ? destination(url, { consoleUrl, appDomain }) : 'external';
+  return consoleUrl ? destination(url, { consoleUrl }) : 'external';
 }
 
 function openExternal(url) {
   if (/^(https?|mailto):/i.test(url)) shell.openExternal(url);
 }
 
-// Every window the app makes keeps the console's and its apps' pages in the app, signs in to GitHub where it started,
+// Every window the app makes keeps the console's pages in the app, signs in to GitHub where it started,
 // and sends everything else to the browser.
 function guard(win) {
   const contents = win.webContents;
@@ -96,20 +95,18 @@ function guard(win) {
       return;
     }
     const to = where(url);
-    if (to === 'console' || to === 'signIn' || (to === 'app' && win !== mainWindow)) return;
+    if (to === 'console' || to === 'signIn') return;
     event.preventDefault();
-    if (to === 'app') {
-      const child = new BrowserWindow({ width: 1200, height: 860, icon, backgroundColor: '#1b2232', webPreferences });
-      guard(child);
-      child.loadURL(url);
-      return;
-    }
     openExternal(url);
     // A window the page opened blank and then sent away (`window.open('about:blank')`, then its location) has nothing
     // to show once its address went to the browser.
     if (win !== mainWindow && ['', 'about:blank'].includes(contents.getURL())) win.close();
   });
-  // A redirect (sign-in's callback, an app's /auth/app) is checked as a navigation is.
+  // Whether the window has shown a page yet: one the page opened on the console's /auth/app (an app with no port lent
+  // yet) is redirected to the app before it shows anything.
+  let shown = false;
+  contents.on('did-navigate', (_event, url) => { if (url && url !== 'about:blank') shown = true; });
+  // A redirect (sign-in's callback, /auth/app's to the app) is checked as a navigation is.
   contents.on('will-redirect', (event, url) => {
     // A signed-out page sent to sign in by a redirect (the hosted console's /login): the browser too, but only for a
     // console that said it hands sign-ins back, so the window's own sign-in, when it falls back to it, is never caught.
@@ -122,6 +119,8 @@ function guard(win) {
     if (where(url) === 'external') {
       event.preventDefault();
       openExternal(url);
+      // A window that has shown nothing has nothing to show once its address went to the browser.
+      if (win !== mainWindow && !shown) win.close();
     }
   });
 }
@@ -271,7 +270,6 @@ ipcMain.handle('console:connect', async (event, typed) => {
   }
   writeSettings({ consoleUrl: url });
   consoleUrl = url;
-  appDomain = null;
   // A sign-in started on the console before is not this one's.
   pending.take();
   signInAttempt += 1;
@@ -725,7 +723,6 @@ async function poll() {
     return;
   }
   if (!result) return;
-  appDomain = body.appDomain || null;
   const { badge, now, notify } = result;
   seen = now;
   firstRead = false;
@@ -764,16 +761,14 @@ async function poll() {
   logChanged();
 }
 
-// --- Permissions: the console's page may use the microphone (dictation), notifications and the clipboard; an app's
-// page only the clipboard and full screen; anything else is refused. ---
+// --- Permissions: the console's page may use the microphone (dictation), notifications and the clipboard; anything else
+// is refused. ---
 
 const CONSOLE_PERMISSIONS = new Set(['media', 'notifications', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen']);
-const APP_PERMISSIONS = new Set(['clipboard-sanitized-write', 'fullscreen']);
 function permitted(permission, origin, details) {
   const to = origin ? where(origin) : 'external';
   if (permission === 'media' && details?.mediaTypes?.some((t) => t !== 'audio')) return false;
   if (to === 'console') return CONSOLE_PERMISSIONS.has(permission);
-  if (to === 'app') return APP_PERMISSIONS.has(permission);
   return false;
 }
 

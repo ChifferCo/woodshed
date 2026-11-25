@@ -418,10 +418,18 @@ const people = process.env.DEV_CONSOLE_PEOPLE === '1' ? {
   members: {
     local: { addedBy: null, addedAt: '2026-10-01T09:00:00.000Z', how: 'first to sign in', admin: true, adminBy: 'local', adminAt: '2026-10-01T09:00:00.000Z', githubSessions: true, githubSessionsBy: 'local', githubSessionsAt: '2026-10-01T09:00:00.000Z', assignable: true, assignableBy: 'local', assignableAt: '2026-10-01T09:00:00.000Z' },
     octocat: { addedBy: null, addedAt: '2026-10-01T09:00:00.000Z', how: 'already using the console', githubSessions: true, githubSessionsBy: 'local', githubSessionsAt: '2026-10-02T09:00:00.000Z', assignable: true, assignableBy: 'local', assignableAt: '2026-10-02T09:00:00.000Z' },
+    'zed-qa': { addedBy: 'local', addedAt: '2026-11-04T09:00:00.000Z', how: 'invited', githubSessions: true, githubSessionsBy: 'local', githubSessionsAt: '2026-11-04T09:00:00.000Z', assignable: true, assignableBy: 'local', assignableAt: '2026-11-04T09:00:00.000Z' },
+    'ana-k': { addedBy: 'local', addedAt: '2026-11-05T09:00:00.000Z', how: 'invited', githubSessions: true, githubSessionsBy: 'local', githubSessionsAt: '2026-11-05T09:00:00.000Z', assignable: true, assignableBy: 'local', assignableAt: '2026-11-05T09:00:00.000Z' },
     'mia-dev': { addedBy: 'local', addedAt: '2026-11-03T09:00:00.000Z', how: 'invited', githubSessions: true, githubSessionsBy: 'local', githubSessionsAt: '2026-11-03T09:00:00.000Z' },
     'sam-ops': { addedBy: 'local', addedAt: '2026-11-12T09:00:00.000Z', how: 'accepted' },
   },
   memberRequests: { 'lee-new': { askedAt: '2026-11-20T08:00:00.000Z' }, 'kim-design': { askedAt: '2026-11-18T15:30:00.000Z' } },
+  // When each saved a personal token on My settings, for People's Personal tokens column: the values are never here.
+  people: {
+    local: { claudeTokenAt: '2026-10-01T09:00:00.000Z', codexAuthAt: '2026-10-05T09:00:00.000Z', github: { connectedAt: '2026-10-01T09:00:00.000Z' } },
+    octocat: { claudeTokenAt: '2026-10-02T09:00:00.000Z', agentAuthAt: { grok: '2026-11-01T09:00:00.000Z', opencode: '2026-11-02T09:00:00.000Z' } },
+    'mia-dev': { github: { connectedAt: '2026-11-03T09:00:00.000Z' } },
+  },
 } : {};
 // DEV_CONSOLE_EXEC_PORT=<port> adds a running My Woodshed session of @local's, 55aa55aa, for `woodshed tunnel`
 // (console/execPipe.mjs): its statusd is a session container you started yourself, with its 7682 published on that

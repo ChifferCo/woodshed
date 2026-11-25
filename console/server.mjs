@@ -352,6 +352,20 @@ const STATIC_FILES = {
   // The agents a session can run, which the session image and the command line read too (shared/agents.cjs).
   'agents.cjs': 'text/javascript; charset=utf-8',
 };
+// The design system's two faces (public/fonts/README.md), served here rather than by Google Fonts: Red Hat Display for
+// text and titles, Red Hat Mono for meta lines, counts, chips and code. Each is one variable file per subset, holding
+// every weight, in the Latin and Latin Extended subsets with the ranges Google gives them, so a browser downloads a
+// file only for text that needs it. fontFaces writes their rules into each page's head.
+const FONT_RANGES = {
+  latin: 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD',
+  'latin-ext': 'U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF',
+};
+const FONT_FACES = [
+  { family: 'Red Hat Display', slug: 'red-hat-display', weight: '300 900' },
+  { family: 'Red Hat Mono', slug: 'red-hat-mono', weight: '300 700' },
+].flatMap(({ family, slug, weight }) => Object.keys(FONT_RANGES)
+  .map((subset) => ({ family, weight, subset, file: `fonts/${slug}-${subset}-wght-normal.woff2` })));
+for (const face of FONT_FACES) STATIC_FILES[face.file] = 'font/woff2';
 // The page behind the TUI and Terminal tabs, made here rather than kept as a file so that it names each of its files
 // by hash: /static/term.html, the same for every session (its fragment names which), kept by the browser.
 const TERMINAL_PAGE = 'term.html';
@@ -575,6 +589,17 @@ function staticUrl(file) {
 }
 
 /**
+ * The console's fonts (FONT_FACES), for a page's head: each file named by hash, so the browser keeps it, and drawn in
+ * the system's font until it comes (`font-display: swap`), as Google's stylesheet asked before.
+ * @returns {string}
+ */
+export function fontFaces() {
+  const rules = FONT_FACES.map(({ family, weight, subset, file }) => `@font-face { font-family: '${family}'; font-style: normal; `
+    + `font-weight: ${weight}; font-display: swap; src: url(${staticUrl(file)}) format('woff2'); unicode-range: ${FONT_RANGES[subset]}; }`);
+  return `<style>\n${rules.join('\n')}\n</style>`;
+}
+
+/**
  * The terminal page (public/terminalPage.js): xterm.js, filling the frame, and a line for the connection's state. Its
  * background is the session's terminal ground (session/entrypoint.sh's theme), so a frame never shows white or grey
  * before the terminal draws.
@@ -646,8 +671,7 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="${name}">
 <script src="${staticUrl('theme.js')}"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Red+Hat+Display:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+${fontFaces()}
 <link rel="stylesheet" href="${staticUrl('style.css')}">${styles.map((href) => `\n<link rel="stylesheet" href="${escapeHtml(href)}">`).join('')}
 </head>
 <body>
@@ -749,8 +773,7 @@ export function standalonePage({ title, body, brand, groups = [], current = null
 <title>${escapeHtml(title)}</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <script src="${staticUrl('theme.js')}"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Red+Hat+Display:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+${fontFaces()}
 <link rel="stylesheet" href="${staticUrl('style.css')}">${own(styles, (h) => `\n<link rel="stylesheet" href="${escapeHtml(h)}">`)}
 </head>
 <body>
@@ -1146,10 +1169,21 @@ export function createHandler({
     const view = members.view();
     const logins = [...view.members, ...view.requests].flatMap((p) => [p.login, p.addedBy]).filter(Boolean);
     // Each member's role, named from their switches, and the roles People offers with what each gives.
-    view.members = view.members.map((m) => ({ ...m, access: roleOf(m), accessDiffers: roleDiffers(m) }));
+    view.members = view.members.map((m) => ({ ...m, access: roleOf(m), accessDiffers: roleDiffers(m), ...(userSettings && { signIns: signInsOf(m.login) }) }));
     return reply(res, 200, {
       ...view, roles: ROLES.map(({ id, label, explain, privateSessions, admin, githubSessions, assignable }) => ({ id, label, explain, privateSessions, admin, githubSessions, assignable })), hosted: Boolean(members.hosted), names: namesFor(logins), slack: slackPeople ? slackPeople.links(view.members.map((m) => m.login)) : null, ...extra,
     });
+  }
+
+  // Which of a member's own sign-ins (personal tokens) My settings has saved, by name: never a value.
+  function signInsOf(login) {
+    const v = userSettings.view(login);
+    return [
+      v.claudeToken.set && 'Claude',
+      v.codexAuth?.set && 'Codex',
+      ...Object.entries(v.agentAuth ?? {}).filter(([, a]) => a.set).map(([id]) => agentsRegistry.agent(id).product),
+      v.github?.connected && 'GitHub',
+    ].filter(Boolean);
   }
 
   async function slackSearchReply(res, query) {

@@ -4569,3 +4569,23 @@ test('a Stop pressed while a hand-off pushes is carried out when the push fails'
   assert.equal(first.stoppedBy, 'joel');
   assert.ok(!alive.has(`c-${first.id}`));
 });
+
+test('a message between two sessions is kept on both, newest first, the last 20, each cut to a line', async () => {
+  const { fleet } = setup();
+  const main = await fleet.startPrivate({ owner: 'joel', prompt: 'Plan the billing page' });
+  const child = await fleet.startPrivate({ owner: 'joel', prompt: 'Write NOTES.md', startedFrom: main.id });
+  fleet.noteMessage({ from: main, to: child, text: 'Use cents,\n\nnot floats.' });
+  fleet.noteMessage({ from: child, to: main, text: 'Developers or customers?', question: true });
+  assert.deepEqual(child.messages.map((m) => [m.dir, m.with, m.question, m.text]), [
+    ['out', main.id, true, 'Developers or customers?'],
+    ['in', main.id, false, 'Use cents, not floats.'],
+  ]);
+  assert.deepEqual(main.messages.map((m) => m.dir), ['in', 'out']);
+  fleet.noteMessage({ from: main, to: child, text: 'Maybe.', unconfirmed: true });
+  assert.equal(child.messages[0].unconfirmed, true);
+  assert.equal(child.messages[1].unconfirmed, undefined);
+  for (let i = 0; i < 25; i++) fleet.noteMessage({ from: main, to: child, text: `x${i} ${'y'.repeat(300)}` });
+  assert.equal(child.messages.length, 20);
+  assert.match(child.messages[0].text, /^x24 /);
+  assert.equal(child.messages[0].text.length, 200);
+});
