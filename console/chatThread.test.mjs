@@ -462,3 +462,16 @@ test('the Chat tab keeps the conversations shown last, at most as many as it may
   assert.deepEqual(kept.keys(), ['c', 'a', 'd']);
   assert.deepEqual(kept.get('a'), { id: 'a', writtenAt: 2 }, 'a newer read takes the place of the older');
 });
+
+test('a message sent on a kept copy of the record is not settled by the same words sent from elsewhere since', () => {
+  // The Chat tab draws a kept copy at once when it comes back to a session (chat.js): as the record stood when it left.
+  // The same words reached the session from elsewhere three minutes ago, then this one is sent before the first read.
+  const now = Date.parse(at) + 10 * 60_000;
+  const kept = [{ role: 'user', text: 'yes', at: new Date(now - 5 * 60_000).toISOString() }];
+  const record = [...kept, { role: 'user', text: 'yes', at: new Date(now - 3 * 60_000).toISOString() }];
+  const sent = (extra) => [{ id: 'm1', text: 'yes', sentAt: now, state: 'sent', after: chat.lastUserAt(kept), ...extra }];
+  assert.deepEqual(chat.stillPending(sent({}), record, now), [], 'with the copy trusted, taken for this one though it never arrived');
+  assert.equal(chat.stillPending(sent({ stale: true }), record, now).length, 1, 'stale: it must be recent too');
+  const arrived = [...record, { role: 'user', text: 'yes', at: new Date(now + 2000).toISOString() }];
+  assert.deepEqual(chat.stillPending(sent({ stale: true }), arrived, now), [], 'and its own words settle it');
+});

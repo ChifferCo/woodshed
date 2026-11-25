@@ -109,6 +109,8 @@
     let record = null;
     // Each conversation's last answer, by keyOf.
     const kept = T.keptRecords(KEPT);
+    // Whether `record` is as the session's record stands now: false for a kept copy until its first read answers.
+    let current = false;
     // A session's own conversation by its id and start: a Resume's is another, and an agent's id already holds its start.
     const keyOf = (s) => `${s.id}~${s.startedAt ?? ''}`;
     let readError = null;
@@ -277,7 +279,9 @@
       // `after`: the last message of the person's in the record now, by the session's clock; only a later one can be
       // this one arriving. Unknown while the record was never read.
       // `id`: the page's own, which the console gives back once it sends a message it held.
-      const sent = { id: crypto.randomUUID(), text, sentAt: Date.now(), state: 'sending', ...(record?.id === id && { after: T.lastUserAt(record.entries) }) };
+      // From a kept copy not read again yet, `stale`: the same words sent from elsewhere since must also be recent to
+      // read as this one (chatThread.cjs, stillPending).
+      const sent = { id: crypto.randomUUID(), text, sentAt: Date.now(), state: 'sending', ...(record?.id === id && { after: T.lastUserAt(record.entries), ...(!current && { stale: true }) }) };
       pending.set(id, [...pendingOf(id), sent]);
       field.value = '';
       keepDraft(id, '');
@@ -670,6 +674,7 @@
         const answer = await W.getJson(`${apiOf(session)}/transcript?limit=${LIMIT}${since}`);
         if (id !== session?.id) return;
         readError = null;
+        current = true;
         if (answer.unchanged && record?.id === id) return;
         record = { id, ...answer };
         kept.keep(keyOf(session), record);
@@ -745,6 +750,7 @@
         // The conversation as it was last read, drawn now: the read below only asks whether it changed since.
         record = kept.get(keyOf(s)) ?? null;
         if (record) kept.keep(keyOf(s), record);
+        current = false;
         readError = null;
         const label = `Message ${agent()}`;
         field.placeholder = label;

@@ -332,9 +332,11 @@
       const want = squash(typeable(p.text));
       // After the last message of the person's the record held when this one was sent (`after`, the session's own
       // clock): an earlier prompt that starts the same is never taken for it. A message from before `after` was kept
-      // falls back on the page's clock, with room for the two clocks to differ.
-      const later = (e) => (p.after !== undefined ? !!e.at && (p.after === null || Date.parse(e.at) > Date.parse(p.after))
-        : !e.at || Date.parse(e.at) >= p.sentAt - 30_000);
+      // falls back on the page's clock, with room for the two clocks to differ. One sent while the record was a copy
+      // kept from earlier (`stale`), not read again yet, needs both: the same words may have reached the session since.
+      const byClock = (e) => !e.at || Date.parse(e.at) >= p.sentAt - 30_000;
+      const byRecord = (e) => !!e.at && (p.after === null || Date.parse(e.at) > Date.parse(p.after));
+      const later = (e) => (p.after === undefined ? byClock(e) : byRecord(e) && (!p.stale || byClock(e)));
       const found = entries.findIndex((e, i) => !used.has(i) && e.role === 'user' && later(e) && sameMessage(e.text, want));
       if (found === -1) {
         left.push(p);
