@@ -151,8 +151,9 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     return act({ card: id, note: agentStatus[id], working, done, call: async () => { me = await W.postJson(path, body); agentInputs[id].value = ''; loadReviews(); } });
   }
 
-  // Whether reviews of your pull requests may run this agent on your sign-in. On once a sign-in is saved, unless turned
-  // off; the default then includes it (console/reviewAgents.mjs). A sign-in already saved when that default shipped,
+  // Whether reviews of your pull requests may run this agent on your sign-in. On once a sign-in is saved here, unless
+  // turned off; a first save from the command line starts it off until they turn it on. The default then includes it
+  // (console/reviewAgents.mjs). A sign-in already saved when that default shipped,
   // or found in the secret store without a save on My settings since,
   // stays out until Reviews of my pull requests is set back to the default. A saved choice that leaves it out does
   // not, unless none of that choice can run, in which case the same default runs. The console adds the sign-in to the

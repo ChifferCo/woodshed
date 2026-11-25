@@ -4,6 +4,7 @@ import http from 'node:http';
 
 import { answerWithView } from './cliConfig.mjs';
 import { createCliSignIn } from './cliSignIn.mjs';
+import { createReviewAgents } from './reviewAgents.mjs';
 import { createHandler } from './server.mjs';
 import { createUserSettings } from './userSettings.mjs';
 
@@ -15,7 +16,8 @@ const KEYS = ['terminal', 'reviews', 'codex-reviews', 'grok-reviews', 'opencode-
 
 // A console with the real My settings (userSettings.mjs) over a secret store that keeps nothing: mia-dev has a Claude
 // token saved and GitHub connected, octocat has neither. A command line token for each.
-async function consoleFor(t, { writers = null } = {}) {
+async function consoleFor(t, { writers = null, rememberSecrets = false } = {}) {
+  const values = new Map();
   const store = {
     state: {
       people: {
@@ -25,7 +27,9 @@ async function consoleFor(t, { writers = null } = {}) {
     },
     save() {},
   };
-  const secrets = { read: async () => null, save: async () => {}, remove: async () => {}, configured: () => true };
+  const secrets = rememberSecrets
+    ? { read: async (name) => values.get(name) ?? null, save: async (name, value) => { values.set(name, value); }, remove: async (name) => { values.delete(name); }, configured: () => true }
+    : { read: async () => null, save: async () => {}, remove: async () => {}, configured: () => true };
   const userSettings = createUserSettings({ store, secrets });
   // GitHub's answer on write access, which cliSignIn.mjs's authenticate asks for every call a token makes.
   const cli = createCliSignIn({ store: { state: {}, save() {} }, canWrite: async (login) => !writers || writers.has(login) });
@@ -130,6 +134,53 @@ test('a config write runs the page\'s own route and checks, and answers with the
     const out = await c.call(path, { method: 'POST', body });
     assert.equal(out.status, 403, `${path}: a secret is never set from the command line`);
   }
+});
+
+test('a first command-line sign-in stays out of reviews until that person turns it on', async (t) => {
+  const c = await consoleFor(t, { rememberSecrets: true });
+  const reviews = createReviewAgents({ userSettings: c.userSettings, connected: async () => ({ claude: true, codex: true }) });
+  const grok = 'xai-made-up-key-0123456789';
+  const pushed = await c.call('/api/my/agent-auth/grok', { method: 'POST', body: { value: grok } });
+  assert.equal(pushed.status, 200);
+  assert.equal(c.userSettings.usesOwnAgentForReviews('mia-dev', 'grok'), false, 'a first upload does not turn the reviews switch on');
+  assert.equal(c.userSettings.usesExpandedReviewDefault('mia-dev'), true, 'the person stays on the wider default; only this sign-in is left out');
+  assert.equal((await c.call('/api/cli/config')).body['grok-reviews'], 'off');
+  assert.deepEqual((await reviews.forReview({ login: 'mia-dev' })).agents, ['claude', 'codex']);
+
+  const replaced = await c.call('/api/my/agent-auth/grok', { method: 'POST', body: { value: 'xai-made-up-mia-0123456789' } });
+  assert.equal(replaced.status, 200);
+  assert.equal(c.userSettings.usesOwnAgentForReviews('mia-dev', 'grok'), false, 'replacing it does not turn the switch on');
+
+  assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { choice: 'claude+grok' } })).status, 200);
+  const named = await reviews.forReview({ login: 'mia-dev' });
+  assert.deepEqual(named.agents, ['claude'], 'a choice that names it still leaves it out while the switch is off');
+  assert.match(named.why, /Grok Build left out/);
+
+  const on = await c.call('/api/my/agent-auth/grok/reviews', { method: 'POST', body: { on: true } });
+  assert.equal(on.body['grok-reviews'], 'on');
+  assert.deepEqual((await reviews.forReview({ login: 'mia-dev' })).agents, ['claude', 'grok']);
+  assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { choice: null } })).body.reviews, 'default');
+  assert.deepEqual((await reviews.forReview({ login: 'mia-dev' })).agents, ['claude', 'codex', 'grok']);
+
+  await c.userSettings.setAgentAuth('mia-dev', 'opencode', '{"openai":{"type":"api","key":"sk-x"}}');
+  assert.equal(c.userSettings.usesOwnAgentForReviews('mia-dev', 'opencode'), true, 'a save through My settings still starts the switch on');
+  const kept = await c.call('/api/my/agent-auth/opencode', { method: 'POST', body: { value: '{"anthropic":{"type":"api","key":"sk-ant-api03"}}' } });
+  assert.equal(kept.status, 200);
+  assert.equal(c.userSettings.usesOwnAgentForReviews('mia-dev', 'opencode'), true, 'replacing a sign-in already on for reviews leaves the switch on');
+
+  const firstOpen = await c.call('/api/my/agent-auth/opencode', { method: 'POST', token: c.tokens.octocat, body: { value: '{"openai":{"type":"api","key":"sk-x"}}' } });
+  assert.equal(firstOpen.status, 200);
+  assert.equal(c.userSettings.usesOwnAgentForReviews('octocat', 'opencode'), false);
+  const page = await c.call('/api/my/agent-auth/grok', {
+    method: 'POST', token: null,
+    headers: { cookie: 'woodshed_session=octocat', 'x-woodshed': '1' },
+    body: { value: grok },
+  });
+  assert.equal(page.status, 200);
+  assert.equal(c.userSettings.usesOwnAgentForReviews('octocat', 'grok'), true, 'My settings\' Save of a first sign-in still turns the switch on');
+  const octo = await reviews.forReview({ login: 'octocat' });
+  assert.deepEqual(octo.agents, ['claude', 'codex', 'grok']);
+  assert.equal(JSON.stringify(pushed).includes(grok), false, 'the answer never carries the sign-in');
 });
 
 test('the config routes check a token as every other route does: a person who lost write access is refused, and changes nothing', async (t) => {

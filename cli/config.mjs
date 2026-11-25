@@ -36,14 +36,14 @@ export const CONFIG_KEYS = Object.freeze({
   },
   'grok-reviews': {
     values: ['on', 'off'],
-    about: 'reviews of your pull requests may run Grok Build on your own sign-in (saved on My settings); the default includes it while this is on, except a sign-in saved before that default, or found in the secret store without a save on My settings since, which stays out until reviews is set to default. A saved choice that leaves it out does not unless none of that choice can run',
+    about: 'reviews of your pull requests may run Grok Build on your own sign-in (saved on My settings); the default includes it while this is on, except a sign-in saved before that default, or found in the secret store without a save on My settings since, which stays out until reviews is set to default. A sign-in first saved with woodshed sign-in push starts this off until you set it on. A saved choice that leaves it out does not unless none of that choice can run',
     path: '/api/my/agent-auth/grok/reviews',
     body: (value) => ({ on: value === 'on' }),
     after: 'It applies to the next review.',
   },
   'opencode-reviews': {
     values: ['on', 'off'],
-    about: 'reviews of your pull requests may run OpenCode on your own API key (saved on My settings); the default includes it while this is on, except a sign-in saved before that default, or found in the secret store without a save on My settings since, which stays out until reviews is set to default. A saved choice that leaves it out does not unless none of that choice can run',
+    about: 'reviews of your pull requests may run OpenCode on your own API key (saved on My settings); the default includes it while this is on, except a sign-in saved before that default, or found in the secret store without a save on My settings since, which stays out until reviews is set to default. A sign-in first saved with woodshed sign-in push starts this off until you set it on. A saved choice that leaves it out does not unless none of that choice can run',
     path: '/api/my/agent-auth/opencode/reviews',
     body: (value) => ({ on: value === 'on' }),
     after: 'It applies to the next review.',

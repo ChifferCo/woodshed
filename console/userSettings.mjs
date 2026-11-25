@@ -532,7 +532,9 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
 
   /**
    * The switch on the Grok Build and OpenCode cards: whether reviews of this person's pull requests may run that agent on
-   * their own sign-in. On once a sign-in is saved, unless they turned it off, as Codex's is. With no reviewer choice
+   * their own sign-in. On once a sign-in is saved on My settings, unless they turned it off, as Codex's is. A first save
+   * from the command line sets it off (server.mjs, myWrite), so that sign-in stays out of reviews until they turn it on;
+   * replacing one already saved leaves it as it was. With no reviewer choice
    * saved, the default includes it (reviewAgents.mjs), except a sign-in already saved when that default shipped, or
    * found in the secret store without a save on My settings since (usesExpandedReviewDefault). A saved choice that
    * leaves it out does not, unless none of that choice can run, in which case the same default runs. The sign-in never

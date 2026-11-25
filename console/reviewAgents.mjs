@@ -14,7 +14,8 @@
 // two already saved when that default shipped, or found in the secret store afterwards without a save on My settings,
 // stays out of it (userSettings.mjs, reviewDefault `legacy`) until the author sets reviews back to the default: the
 // switch was already on, and it used to mean "when you pick this agent". Saving a different sign-in first does not
-// cover one this console has not looked up yet.
+// cover one this console has not looked up yet. A sign-in first saved from the command line starts that switch off
+// (server.mjs), so it stays out until they turn it on; replacing one already saved leaves the switch as it is.
 // A saved choice that can no longer run (a key removed, a sign-in turned off or expired since) keeps what of it can,
 // else falls back the same way, and says why. Either way the console's proxies add the credential to each call
 // (anthropicProxy.mjs, openaiProxy.mjs, reviewAgentProxy.mjs): no sign-in enters the review session. The choice itself is kept with the person's settings

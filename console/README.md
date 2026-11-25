@@ -822,7 +822,9 @@ sign-in is `users/<login>/grok-auth` (an xAI key, `xai-…`, or `~/.grok/auth.js
 (`~/.local/share/opencode/auth.json` from `opencode auth login`), saved with `POST /api/my/agent-auth/<agent>` and
 removed with `…/remove`. The save also takes the command line's token, for `woodshed setup` and `woodshed sign-in push`,
 which send the file from the person's computer after checking it there (cli/README.md, setup's step 4): as the token's
-own person only, through the same `setAgentAuth`, and answered with `{agent, set, savedAt}`, never the page's view. It is
+own person only, through the same `setAgentAuth`, and answered with `{agent, set, savedAt}`, never the page's view. A
+first save from the command line leaves that agent's reviews switch off until they turn it on; My settings' Save turns
+it on, and replacing a sign-in already saved leaves the switch as it is. It is
 handed to that person's private sessions of that agent alone (`/settings`'s `agentAuth`), never to a shared session, a
 question, QA or a review, and a resume needs it saved as a start does. A review of the person's own pull request may
 still run them on it, through the console, which never hands it over ("Who reviews", below). Their logins rotate their
@@ -1322,8 +1324,9 @@ Grok Build and OpenCode review the same way, on the author's own sign-in alone, 
 (`reviewAgentProxy.mjs`) adds to each call; the session holds only its `SESSION_TOKEN`, as the agent's API key:
 
 - **The switch.** On My settings' Grok Build and OpenCode cards, **Also use it for reviews of my pull requests** is on
-  once a sign-in is saved, unless the person turns it off (`POST /api/my/agent-auth/<agent>/reviews`, `woodshed config
-  set grok-reviews|opencode-reviews`). It needs the same checks as Codex's (`teamKeyReason`; never a bot). With no
+  once a sign-in is saved there, unless the person turns it off (`POST /api/my/agent-auth/<agent>/reviews`, `woodshed config
+  set grok-reviews|opencode-reviews`). A first save from the command line (`woodshed sign-in push`) leaves it off until
+  they turn it on; replacing a sign-in already saved leaves it as it is. It needs the same checks as Codex's (`teamKeyReason`; never a bot). With no
   reviewer choice saved, the default includes it, except a sign-in already saved when that default shipped, or found in the secret store without a save on My settings since, which stays out until they set reviews back to the default; a saved choice that leaves it out does not, unless none of that choice can run, in which case the same default runs. The review keeps `review.ownSignIns`: whose sign-in and how
   (`{grok: {login, via: 'key'|'login'}, opencode: {login, provider}}`), never the sign-in itself.
 - **Grok Build** runs with `XAI_API_KEY` set to the session's token and `GROK_MODELS_BASE_URL` at the console's

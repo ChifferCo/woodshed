@@ -1991,7 +1991,14 @@ export function createHandler({
         }
         if (agentMatch[2]) await userSettings.removeAgentAuth(login, agentMatch[1]);
         else {
-          await userSettings.setAgentAuth(login, agentMatch[1], body.value);
+          // A first save from the command line (woodshed sign-in push, and setup's send of the same file) is a sign-in
+          // for private sessions. The reviews switch would otherwise come on with it, and with no reviewer choice saved
+          // the next review of a private pull request would run that agent. Leave the switch off until they turn it on.
+          // My settings' Save still comes on with the sign-in, and replacing one already saved leaves the switch as it is.
+          const id = agentMatch[1];
+          const had = Boolean(userSettings.view(login).agentAuth?.[id]?.set);
+          await userSettings.setAgentAuth(login, id, body.value);
+          if (!had && carriesCliToken(req.headers) && agentsRegistry.agent(id).reviews) userSettings.setOwnAgentForReviews(login, id, false);
           await firstDatabases(login);
         }
         // As for Codex: the Grok models list was read on the sign-in that is gone.
@@ -2919,7 +2926,7 @@ export function createHandler({
   }
   function cliWrite(req, res, pathname, login) {
     // An own sign-in saved from the command line (woodshed sign-in push): the page's own save, answered with whether one
-    // is saved now and when, never the page's whole view.
+    // is saved now and when, never the page's whole view. A first save leaves that agent's reviews switch off (myWrite).
     const agentAuth = CLI_AGENT_AUTH_RE.exec(pathname);
     if (agentAuth) {
       const id = agentAuth[1];
