@@ -1159,6 +1159,8 @@ export async function sessionCommand({ origin, rest }, ctx) {
       const { s: x } = await find(id);
       if (!LIVE.has(x.status)) return { s: x, ended: true, deliveredAt };
       if (held !== null && (Array.isArray(x.heldIds) ? x.heldIds.includes(held) : x.pendingMessages > 0)) {
+        // Held behind a question or approval only its person can answer: said now, the message left in line.
+        if (x.status === 'running' && x.state === 'needs-you') return { s: x, stillHeld: true, deliveredAt: null };
         deliveredAt = null;
         worked = false;
       } else if (deliveredAt === null) deliveredAt = now();
@@ -1186,10 +1188,11 @@ export async function sessionCommand({ origin, rest }, ctx) {
   // Its lines kept, each cleaned as any text from the console is, so no escape reaches this terminal.
   const entryText = (e) => `[${e.role === 'assistant' ? 'said' : 'asked'}${e.at ? ` ${String(e.at).slice(11, 16)}` : ''}] ${e.text.trim().slice(0, 20_000).split(/\r?\n/).map((line) => printable(line, 20_000)).join('\n')}`;
 
-  // 0 done with its turn, 2 it needs you, 1 it stopped first or never took the message up.
+  // 0 done with its turn, 2 it needs you (a message still held behind its question too), 1 it stopped first or never took the message up.
   const turnCode = ({ s: x, ended, noReply }) => (ended || noReply ? EXIT.failed : x.state === 'needs-you' ? EXIT.waiting : EXIT.done);
 
-  function turnLine(x, { ended, noReply }) {
+  function turnLine(x, { ended, noReply, stillHeld }) {
+    if (stillHeld) return `Session ${id} needs you: your message is held until it is answered, on the console or with woodshed session connect ${id}.`;
     if (ended) return `Session ${id} is ${stateOf(x).word}: it stopped before it was done.`;
     if (noReply) return `Session ${id} did not take it up: it did not start working on it.`;
     return `Session ${id} is ${stateOf(x).word}.`;
@@ -1225,9 +1228,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
     if (!opts.wait) return EXIT.done;
     const turn = await waitTurn(messageId);
     // What it said since the message went in. What a session that has seen production data said stays on the console.
-    const said = turn.ended || turn.noReply || turn.s.taintedAt ? [] : (await conversation()).filter((e) => e.role === 'assistant' && e.at && Date.parse(e.at) >= turn.deliveredAt);
+    const said = turn.ended || turn.noReply || turn.stillHeld || turn.s.taintedAt ? [] : (await conversation()).filter((e) => e.role === 'assistant' && e.at && Date.parse(e.at) >= turn.deliveredAt);
     if (json) {
-      emit({ event: 'turn', session: summary(turn.s, { origin, login, appsOn }), ended: Boolean(turn.ended), noReply: Boolean(turn.noReply), said });
+      emit({ event: 'turn', session: summary(turn.s, { origin, login, appsOn }), ended: Boolean(turn.ended), noReply: Boolean(turn.noReply), held: Boolean(turn.stillHeld), said });
       return turnCode(turn);
     }
     say(turnLine(turn.s, turn));

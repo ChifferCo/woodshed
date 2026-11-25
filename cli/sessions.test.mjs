@@ -1953,6 +1953,16 @@ test('session send --wait types a message in, waits for the turn on it, and prin
   assert.equal(held.code, EXIT.done, held.err);
   assert.match(held.out, /^Held for session c0c0aa01: .+\nSession c0c0aa01 is done\.\n\[said \d\d:\d\d\] Its answer\.\n$/);
 
+  // Held behind a question only its person can answer: said, not waited on, and the message left in line.
+  session.state = 'working';
+  steps.push(() => { session.state = 'needs-you'; });
+  const asking = await c.run(['session', 'send', 'c0c0aa01', 'And the docs.', '--wait']);
+  assert.equal(asking.code, EXIT.waiting, asking.err);
+  assert.match(asking.out, /\nSession c0c0aa01 needs you: your message is held until it is answered/);
+  assert.equal(session.pendingMessages.length, 1);
+  session.pendingMessages = [];
+  session.state = 'done';
+
   // What a session that has seen production data said stays on the console.
   const before = statusd.asked.length;
   const tainted = await c.run(['session', 'read', 'c0c0aa02']);
