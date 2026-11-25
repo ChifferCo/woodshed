@@ -984,6 +984,26 @@ collected, denied, or 10 minutes pass, so a `login` stopped part way holds its p
 `login` says `Too many sign-ins from this address are waiting` (or that the console has too many) with the minutes to
 wait, and exits 1.
 
+## Running the commands from a program
+
+Every command is written once, in `cli/commands.mjs`: its words, its arguments and options with the checks a value
+passes and their help lines, where it can run (`needs`: anywhere the sign-in is, the person's own computer, or a
+terminal, with `why`), what it changes (`effect`: `read`, `change`, or `destructive` for one that ends, removes or
+hands out something of the person's) and how it may last (`waits`). `session`'s parser takes its options from it, and
+`cli/commands.test.mjs` holds every other parser and each command's `--help` to it: a command or option in the help
+that the catalogue lacks, or one in the catalogue a parser does not take, fails the test.
+
+A program that runs commands for a person, such as an MCP server, builds on it rather than copying the command line:
+
+- `argvOf(entry, args)` writes a command's words from its arguments by name, after checking each value: a value is
+  never read as an option, and free text (a prompt, a message, a config value, a tunnel's line) goes after `--`.
+- `runCommand(entry, args, {origin, token, signal, stdin, onEvent})` in `cli/api.mjs` runs it with the command line's
+  own code, as the person whose token it is, and gives back its `--json` events and exit code (`EXIT`). The token is
+  the caller's for that run alone, never read from or kept on a computer. Nothing asks a question (what needs the
+  person exits 2), opens a browser or reaches Herdr, and a command or option whose `needs` is set is refused before
+  anything runs. `signal` stops a wait, a watch or a tunnel's line: the run then says `stopped`, and a session being
+  waited on goes on.
+
 ## Checking a change
 
 `node --test cli/*.test.mjs` runs the commands against the console's real handler, with a stand-in for your browser,

@@ -13,7 +13,9 @@
   },
   "files": [
     "cli/agentSignIns.mjs",
+    "cli/api.mjs",
     "cli/browser.mjs",
+    "cli/commands.mjs",
     "cli/config.mjs",
     "cli/credentials.mjs",
     "cli/hc.mjs",

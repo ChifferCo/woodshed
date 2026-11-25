@@ -50,6 +50,7 @@
 // from that terminal), so an agent there can `hc wait --children` on it: the session, started or resumed with
 // herdrParent, waits for it rather than make its own.
 
+import { sessionOptions } from './commands.mjs';
 import {
   HC_MINIMUM, WATCH_SPACE, WATCH_TERMINAL, addMachine, agentOn, hcVersion, leftoverMachines, machineName, nameAgentPlace, parentTerminal, removeMachine,
   sessionHere, shellQuote, startAgentTerminal, startWatcher, tunnelMachines,
@@ -1537,23 +1538,12 @@ export function shareView(body) {
  *            all?: boolean, yes?: boolean, id?: string, action?: 'start'|'stop', app?: string}}
  */
 export function parseSessionArgs(sub, words, fail) {
-  const commands = {
-    new: { values: ['repo', 'branch', 'agent', 'model'], flags: ['no-wait', 'connect', 'herdr', ...PARENT_FLAGS], optional: ['parent'], words: 'prompt' },
-    connect: { values: ['agent'], flags: ['shell'], words: 'id' },
-    agents: { values: [], flags: [], words: 'id' },
-    agent: { values: ['agent', 'model', 'effort', 'mode'], flags: [], words: 'id-agent' },
-    herdr: { values: [], flags: [...PARENT_FLAGS], optional: ['parent'], words: 'id' },
-    list: { values: [], flags: ['all'], words: null },
-    get: { values: [], flags: [], words: 'id' },
-    app: { values: ['app', ...SHARE_VALUES], flags: ['no-wait', 'link'], words: 'id-action' },
-    extend: { values: [], flags: [], words: 'id' },
-    limits: { values: ['idle-hours', 'lifetime-hours'], flags: [], words: 'id' },
-    stop: { values: [], flags: [], words: 'id' },
-    resume: { values: [], flags: ['no-wait', 'herdr'], words: 'id' },
-    remove: { values: [], flags: ['yes'], words: 'id' },
-    prune: { values: [], flags: [], words: null },
-    watch: { values: ['kind', 'every'], flags: ['everyone', 'herdr', 'add'], words: null },
+  // Each command's options are the catalogue's (commands.mjs); how it reads its words is its own.
+  const wordsOf = {
+    new: 'prompt', connect: 'id', agents: 'id', agent: 'id-agent', herdr: 'id', list: null, get: 'id', app: 'id-action',
+    extend: 'id', limits: 'id', stop: 'id', resume: 'id', remove: 'id', prune: null, watch: null,
   };
+  const commands = Object.fromEntries(Object.entries(wordsOf).map(([name, w]) => [name, { ...sessionOptions(name), words: w }]));
   // Its own keys only: `constructor` or `toString` is no command.
   const takes = Object.hasOwn(commands, sub) ? commands[sub] : null;
   if (!takes) throw fail(`unknown session command ${sub}\n\n${SESSION_USAGE}`);
