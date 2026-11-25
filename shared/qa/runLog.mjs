@@ -66,16 +66,15 @@ export function readStream(stream) {
 /**
  * @param {string} phase  `plan` or `test`
  * @param {string} stream  the pass's stream-json
- * @returns {string|null}  one line on how the pass ended when that kept it from finishing, null when it ended well
+ * @returns {string|null}  one line on how the pass ended when that kept it from finishing, null when it ended well. It
+ *   goes into the pull request's QA comment and check, which anyone who reads the pull request sees, so it is fixed
+ *   phrases and a turn count: never anything claude or its tools printed, which the run log (console only) keeps
  */
 export function whyEnded(phase, stream) {
-  const { result, other } = readStream(stream);
-  if (!result) {
-    const tail = oneLine(other.at(-1) ?? '');
-    return `the ${phase} pass ended without a result: claude was stopped or crashed${tail ? ` (${clip(tail, 200)})` : ''}`;
-  }
+  const { result } = readStream(stream);
+  if (!result) return `the ${phase} pass ended without a result: claude was stopped or crashed`;
   if (ENDINGS[result.subtype]) return `the ${phase} pass ${ENDINGS[result.subtype]}${result.num_turns ? ` (${result.num_turns} turns)` : ''}`;
-  if (result.is_error) return `the ${phase} pass ended in an error: ${clip(oneLine(result.result ?? result.subtype), 200)}`;
+  if (result.is_error) return `the ${phase} pass ended in an error`;
   return null;
 }
 

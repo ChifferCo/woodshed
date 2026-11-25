@@ -3231,7 +3231,7 @@ export function createHandler({
       const found = findFor(qaLogRead[1], user.login);
       if (!found || !isQa(found)) return reply(res, 404, { error: 'no such QA session' });
       if (!found.qa?.log) return reply(res, 404, { error: 'this QA session sent no run log' });
-      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }).end(found.qa.log);
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }).end(found.qa.log);
       return;
     }
     const qaVideo = QA_VIDEO_RE.exec(pathname);

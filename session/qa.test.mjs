@@ -144,11 +144,12 @@ test('an app that fails to start is not covered, and says so', async (t) => {
 
 test('the run log reaches the console after each pass and with the report, and says how the passes ended', async (t) => {
   const { logs } = await runQa(t);
-  assert.equal(logs.length, 3, 'after the plan, after the tests, and as the run finishes');
+  assert.equal(logs.length, 4, 'after the plan, as the tests begin, after the tests, and as the run finishes');
   assert.deepEqual([logs[0].authorization, logs[0].type], ['Bearer tok', 'text/plain']);
-  assert.deepEqual(logs.map((l) => l.reports), [0, 0, 0], 'each before the report');
-  assert.match(logs[2].text, /## steps[\s\S]*Planning the tests[\s\S]*Running the tests/);
-  assert.match(logs[2].text, /## plan\nEnded: finished/);
+  assert.deepEqual(logs.map((l) => l.reports), [0, 0, 0, 0], 'each before the report');
+  assert.match(logs[1].text, /Test pass started; if the run is stopped now/);
+  assert.match(logs[3].text, /## steps[\s\S]*Planning the tests[\s\S]*Running the tests/);
+  assert.match(logs[3].text, /## plan\nEnded: finished/);
 });
 
 test('a test pass that runs out of turns with no report says so in the verdict and the log', async (t) => {

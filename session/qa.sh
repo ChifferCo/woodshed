@@ -11,7 +11,7 @@ set -uo pipefail
 
 : "${SESSION_DIR:?}" "${REPO_DIR:?}" "${PR:?}" "${QA_BASE:?}" "${SESSION_TOKEN:?}" "${WOODSHED_CONSOLE_URL:?}"
 QA=${QA_SCRIPT:-/opt/woodshed/shared/qa/qa.mjs}
-RUN_LOG=${QA_RUN_LOG:-$(dirname "$QA")/runLog.mjs}
+RUN_LOG=$(dirname "$QA")/runLog.mjs
 DIR=$REPO_DIR/.qa
 RUNNING=${QA_RUNNING:-/tmp/qa-running}
 STATUSD=http://127.0.0.1:${STATUSD_PORT:-7682}
@@ -220,6 +220,9 @@ main() {
 
   say "Running the tests at $appUrl, recording the browser"
   writeMcpConfig
+  # A checkpoint, so a run stopped mid-test leaves a log that says the tests began.
+  say "Test pass started; if the run is stopped now, its outcome is not known"
+  sendLog
   runClaude "$DIR/test-prompt.md" "$DIR/logs/test.jsonl" 200 --allowedTools "Bash,Read,Write,Edit,Glob,Grep,mcp__playwright" \
     --mcp-config "$DIR/mcp.json" --strict-mcp-config
   waitForBrowser

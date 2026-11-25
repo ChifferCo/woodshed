@@ -22,7 +22,7 @@ test('a pass that ran out of turns says so, with its numbers, its tool errors an
 test('a pass with no result was stopped or crashed, and what claude printed instead of its stream is kept', () => {
   const stream = `${said('Working')}\nError: Claude usage limit reached`;
   assert.match(summarize('test', stream), /Ended: no result from claude[\s\S]*Other output[\s\S]*usage limit reached/);
-  assert.equal(whyEnded('test', stream), 'the test pass ended without a result: claude was stopped or crashed (Error: Claude usage limit reached)');
+  assert.equal(whyEnded('test', stream), 'the test pass ended without a result: claude was stopped or crashed');
 });
 
 test('a pass that finished well has no reason to give, and one that never ran says so', () => {
@@ -34,5 +34,15 @@ test('a pass that finished well has no reason to give, and one that never ran sa
 
 test('an error result gives its message', () => {
   const stream = line({ type: 'result', subtype: 'success', is_error: true, result: 'Credit balance is too low', num_turns: 1 });
-  assert.equal(whyEnded('test', stream), 'the test pass ended in an error: Credit balance is too low');
+  assert.equal(whyEnded('test', stream), 'the test pass ended in an error');
+});
+
+test('what claude or its tools printed never reaches the published reason, only the run log', () => {
+  const secret = 'PRIVATE-MARKER-https://x.example/?token=abc';
+  const crashed = `${said('hi')}\nError: ${secret}`;
+  const errored = line({ type: 'result', subtype: 'success', is_error: true, result: secret });
+  for (const stream of [crashed, errored]) {
+    assert.doesNotMatch(whyEnded('test', stream), /PRIVATE-MARKER|token/);
+    assert.match(summarize('test', stream), /PRIVATE-MARKER/, 'the console-only log keeps it');
+  }
 });
