@@ -62,6 +62,9 @@
         c.input.checked = id === value;
         c.card.classList.toggle('is-on', id === value);
         c.card.classList.toggle('is-off', c.input.disabled);
+        // Drawn again only when the agent's availability changed, so a focused link keeps its focus.
+        if (c.off === c.input.disabled) continue;
+        c.off = c.input.disabled;
         c.line.replaceChildren(...(c.input.disabled
           ? [h('a', { href: `/settings#${id}`, 'aria-label': `Sign in to ${A.agent(id).product} on My settings` }, 'Sign in on My settings')]
           : [cardLine(id)]));
@@ -548,7 +551,7 @@
 
   /** @returns {{el: HTMLElement, update: (me: object) => void}} */
   function createLauncher() {
-    const prompt = h('textarea', { id: 'l-prompt', class: 'field', rows: '5', placeholder: 'What should Claude do? Type / for the repo\'s skills.' });
+    const prompt = h('textarea', { id: 'l-prompt', class: 'field', rows: '5', placeholder: 'What should Claude do? Type / for the repo\u2019s skills.' });
     const workOn = h('input', { id: 'l-on', class: 'field mono', autocomplete: 'off', placeholder: 'Search open PRs, or type PR #123 or a branch' });
     const agent = createAgentCards(() => {
       agentPicked = true;
