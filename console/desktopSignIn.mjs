@@ -49,7 +49,7 @@ export const PAGE_STYLE = `
   @media (prefers-color-scheme: dark) { :root { --ink: #e8ecf5; --sub: #a3aabb; --ground: #12151c; --stopped: #10131a; --line: #2a3142; --action: #f59433; --action-ink: #1b1204; } }
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px; box-sizing: border-box; background: var(--stopped); color: var(--ink); font: 15px/1.5 "Red Hat Display", system-ui, sans-serif; }
   main { width: min(440px, 100%); background: var(--ground); border: 1px solid var(--line); border-radius: 12px; padding: 32px; box-sizing: border-box; }
-  h1 { font: 700 22px/1.3 Merriweather, Georgia, serif; margin: 0 0 8px; }
+  h1 { font: 700 22px/1.3 "Red Hat Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; margin: 0 0 8px; }
   p { color: var(--sub); margin: 0 0 20px; }
   .btn { display: inline-block; padding: 10px 16px; border-radius: 6px; border: 0; background: var(--action); color: var(--action-ink); font: 600 15px "Red Hat Display", system-ui, sans-serif; text-decoration: none; cursor: pointer; }
   .quiet { display: inline-block; margin-left: 12px; color: var(--sub); }

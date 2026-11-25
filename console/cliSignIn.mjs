@@ -536,9 +536,9 @@ function escapeHtml(text) {
 }
 
 const CLI_STYLE = `${PAGE_STYLE}
-  .code { display: block; font: 600 24px/1.2 "JetBrains Mono", ui-monospace, monospace; letter-spacing: 0.08em; margin: 0 0 20px; }
-  .meta { font: 13px/1.5 "JetBrains Mono", ui-monospace, monospace; color: var(--sub); margin: -12px 0 20px; }
-  .field { display: block; width: 100%; box-sizing: border-box; margin: 0 0 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--ground); color: var(--ink); font: 600 20px "JetBrains Mono", ui-monospace, monospace; letter-spacing: 0.08em; text-transform: uppercase; }
+  .code { display: block; font: 600 24px/1.2 "Red Hat Mono", ui-monospace, monospace; letter-spacing: 0.08em; margin: 0 0 20px; }
+  .meta { font: 13px/1.5 "Red Hat Mono", ui-monospace, monospace; color: var(--sub); margin: -12px 0 20px; }
+  .field { display: block; width: 100%; box-sizing: border-box; margin: 0 0 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--ground); color: var(--ink); font: 600 20px "Red Hat Mono", ui-monospace, monospace; letter-spacing: 0.08em; text-transform: uppercase; }
   .error { color: var(--bad); margin: -8px 0 16px; }
   button.quiet { background: none; border: 0; padding: 10px 4px; font: inherit; cursor: pointer; text-decoration: underline; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
