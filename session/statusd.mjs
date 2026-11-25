@@ -1484,6 +1484,9 @@ let settingsState = null;
 // The round in flight, which the stop waits for, and whether the stop has had its last one.
 let settingsRound = null;
 let settingsOver = false;
+// Where the sync keeps what it last synced: the session's fixed path, or a test's own (statusd.test.mjs), which must
+// never write the one of the session it runs in.
+const SETTINGS_STATE_FILE = process.env.WOODSHED_SETTINGS_STATE_FILE || undefined;
 
 function syncSettings(timeoutMs) {
   // A tainted session's settings stay its own: the console refuses them, so nothing is sent.
@@ -1493,7 +1496,7 @@ function syncSettings(timeoutMs) {
 }
 
 async function settingsRoundOnce(timeoutMs) {
-  settingsState ??= await readState();
+  settingsState ??= await readState(SETTINGS_STATE_FILE);
   const result = await syncOnce({
     home: os.homedir(), state: settingsState, live: true, send: (body) => exchange({ consoleUrl: CONSOLE_URL, token: TOKEN, body, timeoutMs }),
   });
@@ -1501,7 +1504,7 @@ async function settingsRoundOnce(timeoutMs) {
   const moved = result.sent + result.removed + result.written + result.deleted;
   settingsState = result.state;
   if (!moved) return;
-  await writeState(settingsState);
+  await writeState(settingsState, SETTINGS_STATE_FILE);
   console.log('statusd: shared Claude settings synced', {
     version: settingsState.version, sent: result.sent, removed: result.removed, written: result.written, deleted: result.deleted,
   });
@@ -1521,10 +1524,30 @@ async function lastSettingsRound() {
   }
 }
 
-async function checkpoint() {
+// keepRunningOnFailure: a hand-off's checkpoint (console/handoff.mjs), which the console stops the session after only
+// when the push went through. When it fails the session runs on as before: its sends and home saves start again, and
+// its work stays in the checkout, committed.
+async function checkpoint({ keepRunningOnFailure = false } = {}) {
+  const before = { homeSavesOver, stopping, settingsOver };
   homeSavesOver = true;
   // The session is stopping: a guarded send still checking GitHub types nothing now.
   stopping = true;
+  try {
+    return await checkpointNow();
+  } catch (err) {
+    if (keepRunningOnFailure) {
+      // Each as it was before: the last settings round (lastSettingsRound) turned the sync off too. A taint since keeps
+      // it off.
+      homeSavesOver = before.homeSavesOver;
+      stopping = before.stopping;
+      settingsOver = before.settingsOver || tainted();
+      console.warn('statusd: checkpoint failed, the session runs on', { message: String(err?.message ?? err).split('\n')[0] });
+    }
+    throw err;
+  }
+}
+
+async function checkpointNow() {
   await keepCodexAuth();
   await keepAgentAuth();
   await lastSettingsRound();
@@ -1964,7 +1987,15 @@ async function handle(req, res) {
     }
     return reply(res, 200, await taint(body));
   }
-  if (route === 'POST /checkpoint') return reply(res, 200, await checkpoint());
+  if (route === 'POST /checkpoint') {
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req)) || '{}') ?? {};
+    } catch {
+      return reply(res, 400, { error: 'the body is not JSON' });
+    }
+    return reply(res, 200, await checkpoint({ keepRunningOnFailure: body.keepRunningOnFailure === true }));
+  }
   if (route === 'POST /upload') return uploadReply(req, res);
   if (route === 'GET /applog') return reply(res, 200, await appLogs());
   if (route === 'GET /diff') {

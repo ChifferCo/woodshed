@@ -56,8 +56,10 @@ const SAMPLE = {
   id: 'aaaa0001', repo: 'acme/app', line: 'true', prompt: 'fix it', message: 'look', key: 'terminal', value: 'tmux', target: 'aaaa0001', pulls: ['12'],
   branch: 'main', model: 'opus', effort: 'high', mode: 'auto', name: 'app2', app: 'web', path: '/a', revoke: 'aaaa0002', 'idle-hours': '2',
   'lifetime-hours': '3', kind: 'review,qa', every: '15', terminal: 't3', tab: 'main', space: 'api', to: 'new', rerun: '[qa]', dir: '.', only: ['skills'],
-  'own-files': '.', wait: '5m', reviews: 'both', 'review-prs': 'none', from: 'herdr',
+  'own-files': '.', wait: '5m', reviews: 'both', 'review-prs': 'none', from: 'herdr', note: '-what is left', agent: 'claude',
 };
+// A value that is the command's own form, where the one above is not.
+const SAMPLE_FOR = { 'session connect': { agent: 'agent-2' } };
 // What a command needs besides the option under test, for its parser to take it.
 const BASE = { move: { from: 'herdr', to: 'new', space: 'api' }, 'session agent stop': {}, 'sign-in push': { agent: 'grok' }, 'session agent': { agent: undefined } };
 // What the parsers say when they do not take the words: never what a test of the catalogue's own sees.
@@ -71,7 +73,7 @@ test('every parser takes each of its command\'s options, as argvOf writes them',
       const required = Object.fromEntries((entry.args ?? []).filter((a) => !a.optional).map((a) => [a.name, SAMPLE[a.name]]));
       if (name === 'session agent stop') required.agent = 'agent-2';
       if (name === 'sign-in push') required.agent = 'grok';
-      const runs = [{}, ...(entry.options ?? []).map((o) => ({ [o.name]: o.values ? o.values[0] : !o.value || o.optional ? true : SAMPLE[o.name] }))];
+      const runs = [{}, ...(entry.options ?? []).map((o) => ({ [o.name]: o.values ? o.values[0] : !o.value || o.optional ? true : SAMPLE_FOR[name]?.[o.name] ?? SAMPLE[o.name] }))];
       for (const extra of runs) {
         const [option] = Object.keys(extra);
         const spec = entry.options?.find((o) => o.name === option);
@@ -86,6 +88,7 @@ test('every parser takes each of its command\'s options, as argvOf writes them',
           withs.push(...(other.with ?? []));
         }
         if (option === 'replace' && name === 'settings plan') base.pull = true;
+        for (const o of entry.options ?? []) if (o.required && base[o.name] === undefined) base[o.name] = o.values ? o.values[0] : SAMPLE[o.name] ?? 'claude';
         const args = Object.fromEntries(Object.entries({ ...base, ...required, ...extra }).filter(([, v]) => v !== undefined));
         const argv = argvOf(entry, args, ['--console', 'http://127.0.0.1:9', '--json']);
         let out = '';
@@ -119,6 +122,8 @@ test('argvOf checks each value, keeps free text after --, and never writes an op
   assert.throws(() => argvOf(byName('session get'), { id: 'nope' }), /id is not in the form it takes/);
   assert.throws(() => argvOf(byName('session new'), { branch: '--connect' }), /branch must be a value that is not an option/);
   assert.throws(() => argvOf(byName('session new'), { shell: true }), /session new takes no shell/);
+  assert.throws(() => argvOf(byName('session handoff'), { id: 'aaaa0001' }), /session handoff needs --agent/);
+  assert.deepEqual(argvOf(byName('session handoff'), { id: 'aaaa0001', agent: 'codex', note: '-fix the rest' }), ['session', 'handoff', 'aaaa0001', '--agent=codex', '--note=-fix the rest']);
   assert.throws(() => argvOf(byName('session new'), { 'no-notify': true }), /--no-notify goes with --parent/);
   assert.throws(() => argvOf(byName('session agent'), { id: 'aaaa0001', message: 'stop' }), /message is not one it takes/);
   assert.equal(refusedValue({ name: 'line', text: true }, 'a\u0000b'), 'line must be text');

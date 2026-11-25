@@ -37,8 +37,10 @@ export function openStore(dir) {
  * @param {{load: () => Promise<object|null>, save: (state: object) => Promise<void>}} service
  * @param {{retryMs?: number}} [opts]
  * @returns {Promise<{state: object, save: () => void, flush: () => Promise<void>, close: () => Promise<void>}>}
- *   `flush` resolves once what was saved so far is written (or failed); `close` flushes, and from then on a save is
- *   refused, so an installation that was stopped cannot write over the state of the one that replaced it
+ *   `flush` resolves once what was saved so far is written, and rejects when a write failed (a retry is then waiting)
+ *   or the store has closed, which drops a save instead of writing it.
+ *   `close` flushes, and from then on a save is refused, so an installation that was stopped cannot write over the
+ *   state of the one that replaced it
  */
 export async function openServiceStore(service, { retryMs = RETRY_MS } = {}) {
   const loaded = await service.load();
@@ -51,6 +53,8 @@ export async function openServiceStore(service, { retryMs = RETRY_MS } = {}) {
   let retry = null;
   let closing = false;
   let closed = false;
+  // True after a write failed, until a later one is accepted. flush rejects while this is set.
+  let failed = false;
 
   // Resolves true once everything saved is written, false when a write failed (a retry is then set).
   async function writeLatest() {
@@ -58,9 +62,11 @@ export async function openServiceStore(service, { retryMs = RETRY_MS } = {}) {
       dirty = false;
       try {
         await service.save(JSON.parse(JSON.stringify(state)));
+        failed = false;
       } catch (err) {
         console.error('store: state not saved, trying again', { message: String(err?.message ?? err).split('\n')[0] });
         dirty = true;
+        failed = true;
         if (!closing && !retry) {
           retry = setTimeout(() => { retry = null; kick(); }, retryMs);
           retry.unref?.();
@@ -92,15 +98,22 @@ export async function openServiceStore(service, { retryMs = RETRY_MS } = {}) {
 
   async function flush() {
     while (writing) await writing;
+    // Closed drops a save without a failed service write, so `failed` stays false. Rejecting is what tells a caller
+    // that the save it just asked for is not durable.
+    if (closed || failed) throw Object.assign(new Error('store: state not saved'), { shown: true });
   }
 
   async function close() {
     closing = true;
     clearTimeout(retry);
     retry = null;
-    // One last try at what a failed write left.
+    // One last try at what a failed write left. A failure still stops the store: the replacement owns the state.
     if (dirty) kick();
-    await flush();
+    try {
+      await flush();
+    } catch (err) {
+      console.error('store: close left a change unsaved', { message: String(err?.message ?? err).split('\n')[0] });
+    }
     closed = true;
   }
 

@@ -11,6 +11,7 @@
 //   woodshed session app <id> share [--members on|off | --link [--hours 1|24|168] [--path /page] | --revoke <link id>]
 //   woodshed session stop <id>
 //   woodshed session resume <id> [--no-wait|--herdr]
+//   woodshed session handoff <id> --agent claude|codex|grok|opencode [--model M] [--note "..."] [--no-conversation] [--no-wait]
 //   woodshed session remove <id> [--yes]
 //   woodshed session prune
 //   woodshed session extend <id>
@@ -80,6 +81,10 @@ const STOP_DEADLINE_MS = 180_000;
 const ADD_TRIES = 3;
 const UNREACHABLE_GIVE_UP_MS = 60_000;
 
+// A hand-off answers once the old session stopped, its checkpoint pushed (up to 90 s at the console), and the new one
+// is created.
+const HANDOFF_DEADLINE_MS = 4 * 60_000;
+
 export const SESSION_USAGE = `Usage: woodshed session <command> [--console <url>] [--json]
 
 Commands:
@@ -134,6 +139,14 @@ Commands:
   stop <id>                  stop a session; a running one's work is pushed as it stops
   resume <id> [--no-wait]    start one of your stopped sessions again, its conversation and all, and wait for it
       --herdr                once it runs, add it to Herdr again as herdr does (not inside a Woodshed session)
+  handoff <id> [options]     hand one of your running sessions' work to another agent: it stops, pushing its work,
+                             and a new session starts on its branch with that agent, its conversation attached as a
+                             file; then wait for the new one as new does
+      --agent <agent>        the agent the new session runs (required): claude, codex, grok or opencode
+      --model <model>        its model (default the agent's own)
+      --note <text>          what to tell the new agent first, such as what is left to do
+      --no-conversation      leave the conversation behind: the new session starts from the branch and the note
+      --no-wait              print the new session and return once the console has it
   remove <id> [--yes]        take one of your sessions off the list, with its saved conversation (stopped first),
                              and forget its machine in Herdr
   prune                      forget the woodshed-<id> machines in Herdr whose session is no longer on this console
@@ -1225,6 +1238,23 @@ export async function sessionCommand({ origin, rest }, ctx) {
     return connect(found.s, found.login);
   }
 
+  if (sub === 'handoff') {
+    ownPrivate(s, login, 'hand off');
+    if (s.status !== 'running') throw fail(`Session ${id} is ${stateOf(s).word}: only a running session can be handed off. Run woodshed session resume ${id} first.`, { code: EXIT.refused, status: 'refused' });
+    const body = {
+      agent: opts.agent, model: opts.model ?? '', ...(opts.note !== undefined ? { note: opts.note } : {}), conversation: !opts['no-conversation'],
+    };
+    // The console reads its conversation and stops it, pushing its work, before it answers: up to a few minutes.
+    const next = await ask(`/api/my/sessions/${id}/handoff`, { method: 'POST', body, deadlineMs: HANDOFF_DEADLINE_MS });
+    if (!ID_RE.test(String(next.id))) throw fail(`${origin} answered with no session id`);
+    const shown = summary(next, { origin, login, appsOn });
+    if (json) emit({ event: 'handed-off', from: id, session: shown });
+    say(`Handed session ${id} off to ${opts.agent === 'codex' ? 'Codex' : 'Claude Code'}: session ${shown.id}${shown.title ? `: ${shown.title}` : ''}`);
+    say(`  ${shown.url}`);
+    if (opts.wait === false) return EXIT.done;
+    return follow(shown.id);
+  }
+
   if (sub === 'connect') {
     // The console opens a terminal only on your own private sessions, never one that has seen production data.
     ownPrivate(s, login, 'connect to');
@@ -1541,7 +1571,7 @@ export function parseSessionArgs(sub, words, fail) {
   // Each command's options are the catalogue's (commands.mjs); how it reads its words is its own.
   const wordsOf = {
     new: 'prompt', connect: 'id', agents: 'id', agent: 'id-agent', herdr: 'id', list: null, get: 'id', app: 'id-action',
-    extend: 'id', limits: 'id', stop: 'id', resume: 'id', remove: 'id', prune: null, watch: null,
+    extend: 'id', limits: 'id', stop: 'id', resume: 'id', handoff: 'id', remove: 'id', prune: null, watch: null,
   };
   const commands = Object.fromEntries(Object.entries(wordsOf).map(([name, w]) => [name, { ...sessionOptions(name), words: w }]));
   // Its own keys only: `constructor` or `toString` is no command.
@@ -1591,6 +1621,7 @@ export function parseSessionArgs(sub, words, fail) {
   for (const name of ['model', 'effort']) {
     if (sub === 'agent' && out[name] !== undefined && !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(out[name])) throw fail(`--${name} needs a name, such as New session offers`);
   }
+  if (sub === 'handoff' && out.agent === undefined) throw fail(`session handoff needs --agent: the agent the work goes to, one of ${AGENT_IDS.join(', ')}`);
   // An app's name, never the next option taken for one (`--app --no-wait`).
   if (out.app !== undefined && !APP_NAME_RE.test(out.app)) throw fail(`--app needs an app's name: lowercase letters, digits and dashes, as the project file names them${out.app.startsWith('-') ? `, not ${out.app}` : ''}`);
   if (sub === 'watch') {

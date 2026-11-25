@@ -9,8 +9,9 @@
 //   about     what it does, in the help's words
 //   args      positional arguments, in order: {name, about, check?, text?, list?, optional?}. `text` is free text, put after
 //             `--` so no word of it is read as an option; `list` is one or more words
-//   options   {name, about, value?, check?, values?, optional?, with?, needs?, twoWords?}: `value` names what it takes (a
-//             flag takes none), `values` the only ones it takes, `optional` a value it may go without (`--parent`),
+//   options   {name, about, value?, check?, values?, optional?, required?, with?, needs?, twoWords?}: `value` names what it
+//             takes (a flag takes none), `values` the only ones it takes, `required` one the command needs,
+//             `optional` a value it may go without (`--parent`),
 //             `with` the options it goes with, and `twoWords` an option whose parser takes its value as the next word
 //   needs     null: it runs wherever the command line's sign-in is. 'computer': it reads or changes the person's own
 //             computer (its files, its Herdr, its browser). 'terminal': a person types into it
@@ -153,6 +154,18 @@ export const COMMANDS = [
     path: ['session', 'resume', '<id>'], effect: 'change', waits: 'start', about: 'start one of your stopped sessions again, its conversation and all, and wait for it',
     args: [id()],
     options: [{ name: 'no-wait', about: 'return once the console has it' }, { name: 'herdr', needs: 'computer', about: 'once it runs, add it to Herdr again as herdr does' }],
+  },
+  {
+    path: ['session', 'handoff', '<id>'], effect: 'destructive', waits: 'start',
+    about: 'hand one of your running sessions\' work to another agent: it stops, pushing its work, and a new session starts on its branch with that agent, its conversation attached as a file; then wait for the new one as new does',
+    args: [id()],
+    options: [
+      { name: 'agent', value: 'agent', required: true, check: /^[a-z][a-z0-9-]{0,31}$/, about: 'the agent the new session runs (required): claude, codex, grok or opencode' },
+      { name: 'model', value: 'model', about: 'its model (default the agent\'s own)' },
+      { name: 'note', value: 'text', text: true, about: 'what to tell the new agent first, such as what is left to do' },
+      { name: 'no-conversation', about: 'leave the conversation behind: the new session starts from the branch and the note' },
+      { name: 'no-wait', about: 'print the new session and return once the console has it' },
+    ],
   },
   {
     path: ['session', 'remove', '<id>'], effect: 'destructive', about: 'take one of your sessions off the list, with its saved conversation (stopped first)',
@@ -319,6 +332,7 @@ export function argvOf(entry, args = {}, global = []) {
   }
   for (const o of entry.options ?? []) {
     const value = args[o.name];
+    if (o.required && (value === undefined || value === false)) throw new Error(`${commandName(entry)} needs --${o.name}`);
     if (value === undefined || value === false) continue;
     for (const other of o.with ?? []) if (args[other] === undefined || args[other] === false) throw new Error(`--${o.name} goes with --${other}`);
     if (!o.value || (o.optional && value === true)) {

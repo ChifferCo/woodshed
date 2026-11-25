@@ -1,6 +1,10 @@
 // A review's Grok Build and OpenCode calls to their model APIs, on the session API's port, on the pull request author's
-// own sign-in. Those agents have no team key (shared/agents.cjs): a review runs one only when its author picked it on
-// My settings and turned their sign-in on for reviews (reviewAgents.mjs), and the review records whose it is
+// own sign-in. Those agents have no team key (shared/agents.cjs): a review runs one when its author turned their
+// sign-in on for reviews and the default includes it, or their reviewer choice names it (reviewAgents.mjs). A sign-in
+// already saved when that default shipped, or found in the secret store without a save on My settings since, stays out
+// until they set reviews back to the default. A saved choice that leaves it out does not, unless none of that choice
+// can run, in which case the same default runs. The review
+// records whose sign-in it is
 // (`review.ownSignIns`). As the OpenAI proxy does for a review's Codex (openaiProxy.mjs), the sign-in is added here, so it
 // never enters the review session, which reads what anyone who can push to the pull request wrote. The session's agent
 // holds only its SESSION_TOKEN, as its API key:
