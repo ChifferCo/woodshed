@@ -135,3 +135,26 @@ test('G, then N, is the next session that needs you', () => {
   assert.equal(byId.needsYou.bare, 'G N');
   assert.equal(byId.needsYou.page, 'nextNeedsYou');
 });
+
+test('⌘B, then J, K, 1–4 or N, works from anywhere, as Herdr\'s prefix: typing, or in a terminal on a Mac', () => {
+  assert.equal(match({ key: 'b', code: 'KeyB', metaKey: true }, { inFrame: true }), 'prefix');
+  assert.equal(match({ key: 'b', code: 'KeyB', metaKey: true }, { typing: true }), 'prefix');
+  assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, { typing: true }), 'prefix', 'Ctrl+B off a Mac, while typing');
+  assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, { inFrame: true }), null, 'Ctrl+B in a terminal is tmux\'s prefix');
+  assert.equal(match({ key: 'B', code: 'KeyB', metaKey: true, shiftKey: true }), null, '⇧⌘B is the browser\'s bookmarks bar');
+  for (const where of [{ typing: true }, { inFrame: true }, {}]) {
+    const after = { ...where, afterPrefix: true };
+    assert.equal(match({ key: 'j', code: 'KeyJ' }, after), 'nextSession');
+    assert.equal(match({ key: 'k', code: 'KeyK' }, after), 'prevSession');
+    assert.equal(match({ key: 'ArrowDown', code: 'ArrowDown' }, after), 'nextSession');
+    assert.equal(match({ key: 'ArrowUp', code: 'ArrowUp' }, after), 'prevSession');
+    assert.equal(match({ key: 'n', code: 'KeyN' }, after), 'needsYou');
+    assert.equal(match({ key: '3', code: 'Digit3' }, after), 'tab');
+    assert.equal(match({ key: '3', code: 'Digit3', shiftKey: true }, after), 'tab', 'AZERTY');
+    assert.equal(match({ key: 'Escape', code: 'Escape' }, after), 'cancel');
+    assert.equal(match({ key: 'x', code: 'KeyX' }, after), null, 'any other key goes where it would have');
+  }
+  assert.equal(match({ key: 'k', code: 'KeyK', metaKey: true }, { afterPrefix: true }), 'palette', 'a ⌘ key after ⌘B is itself');
+  assert.deepEqual(caps(byId.prefix.mod, false), ['Ctrl', 'B']);
+  assert.equal(byId.prefix.page, 'moveSession', 'left alone on a page with no rail');
+});

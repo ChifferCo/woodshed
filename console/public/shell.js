@@ -226,10 +226,25 @@
   const keys = sheet('Keyboard shortcuts', [
     K.SHORTCUTS.filter((s) => !s.bell || notifications().available).map((s) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, keyCaps(s)), h('div', null, s.id === 'keys' ? 'This list' : s.what, s.where && h('span', { class: 'kwhere' }, ` on ${s.where}`)))),
     h('p', { class: 'sheet-note' }, MAC
-      ? 'Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal\'s. A key alone works while you are not typing. J and K move through the rail, 1 to 4 pick a tab, and ⌘K, then a name, jumps to any session.'
-      : 'A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal\'s: click outside it first. J and K move through the rail, 1 to 4 pick a tab, and Ctrl+K, then a name, jumps to any session.'),
+      ? 'Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal\'s. A key alone works while you are not typing. J and K move through the rail, 1 to 4 pick a tab, and ⌘B before any of them works even while typing or in a terminal. ⌘K, then a name, jumps to any session.'
+      : 'A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal\'s: click outside it first. J and K move through the rail, 1 to 4 pick a tab, and Ctrl+B before any of them works while typing. Ctrl+K, then a name, jumps to any session.'),
   ]);
 
+
+  // ---- the prefix's word: what ⌘B waits for, until a key or its time is up ----
+  let prefixEl = null;
+  let prefixTimer = null;
+  function prefixHint(on) {
+    clearTimeout(prefixTimer);
+    if (!on) {
+      if (prefixEl) prefixEl.hidden = true;
+      return;
+    }
+    prefixEl ??= document.body.appendChild(h('div', { class: 'toast', role: 'status', hidden: true }));
+    prefixEl.replaceChildren(h('kbd', null, keyText('prefix')), ' then ', h('kbd', null, 'J'), ' ', h('kbd', null, 'K'), ' ', h('kbd', null, '1–4'), ' or ', h('kbd', null, 'N'));
+    prefixEl.hidden = false;
+    prefixTimer = setTimeout(() => { prefixEl.hidden = true; }, PREFIX_MS);
+  }
 
   // ---- the keys ----
   // G waits this long for the second key of a sequence.
@@ -246,7 +261,13 @@
     prevSession: () => page.moveSession(-1),
     needsYou: () => page.nextNeedsYou(),
   };
+  // ⌘B waits this long for its key, as Herdr's prefix does (with a word on screen that it waits).
+  const PREFIX_MS = 2500;
+  let prefixAt = 0;
+  const MODIFIERS = new Set(['Shift', 'Meta', 'Control', 'Alt', 'AltGraph', 'CapsLock']);
   function onKey(e, inFrame, modOnly = false) {
+    // Shift pressed on its way to a digit (AZERTY) is not the key after ⌘B or G.
+    if (MODIFIERS.has(e.key)) return;
     hideHint();
     if (e.key === 'Escape' && (!palette.hidden || !keys.el.hidden)) {
       if (!palette.hidden && actionsFor) return;
@@ -256,12 +277,20 @@
     }
     if (e.repeat || e.isComposing) return;
     // A page framed in the pane (the Review) keeps its keys alone for itself: only ⌘ or Ctrl ones are the shell's.
-    if (modOnly && !e.metaKey && !e.ctrlKey) return;
+    const afterPrefix = Date.now() - prefixAt < PREFIX_MS;
+    prefixAt = 0;
+    if (afterPrefix) prefixHint(false);
+    if (modOnly && !e.metaKey && !e.ctrlKey && !afterPrefix) return;
     const afterG = Date.now() - gAt < SEQUENCE_MS;
     gAt = 0;
     // A key alone is for the page, never for an open palette or sheet, whose own keys come first.
     const overlayOpen = !palette.hidden || !keys.el.hidden || notifications().isOpen();
-    const id = K.match(e, { inFrame, afterG, typing: overlayOpen || K.takesTyping(e.composedPath?.()[0] ?? e.target) });
+    const id = K.match(e, { inFrame, afterG, afterPrefix, typing: overlayOpen || K.takesTyping(e.composedPath?.()[0] ?? e.target) });
+    if (id === 'cancel') {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     // A form's own key (⌘↵ on New session) is left to the form, which reads it from its fields.
     // A key the page does (K.byId[id].page) is nothing on a page that registered no such thing: no rail, no tabs.
     const pageHook = K.byId[id]?.page;
@@ -272,6 +301,11 @@
     e.stopPropagation();
     if (id === 'g') {
       gAt = Date.now();
+      return;
+    }
+    if (id === 'prefix') {
+      prefixAt = Date.now();
+      prefixHint(true);
       return;
     }
     if (id === 'tab') page.showTab(K.tabOf(e));

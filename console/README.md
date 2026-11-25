@@ -592,7 +592,11 @@ And what the shed shows about each session:
   panes: **J** and **K** (or **⌥⌘↓** and **⌥⌘↑**) open the next and previous
   session in the rail as it is drawn, skipping folded zones; **1** to **4** (or
   **⌥⌘1** to **⌥⌘4**) pick the pane bar's tabs by their place; **G** then **N**
-  opens the next session that needs you. The ⌥⌘ ones reach the page from a
+  opens the next session that needs you. **⌘B** first, as Herdr's prefix, makes
+  the next key one of those wherever the focus is, typing in Chat or in a
+  terminal (J, K, ↓, ↑, 1 to 4 or N; Esc cancels, and any other key goes where
+  it would have): off a Mac it is Ctrl+B, outside a terminal only, since Ctrl+B
+  is tmux's prefix there. The ⌥⌘ ones reach the page from a
   terminal on a Mac; off a Mac they are Ctrl+Alt, never read while typing,
   since that is AltGr on many keyboards. Ctrl works for ⌘ outside a terminal, and the pages
   write the keys as Ctrl on Windows and Linux. A key alone works only while

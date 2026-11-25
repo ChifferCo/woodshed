@@ -14,6 +14,9 @@
     { id: 'palette', mod: '⌘K', bare: '/', what: 'Jump to a session, or run a command' },
     { id: 'new', mod: '⇧⌘O', bare: 'N', what: 'New session' },
     { id: 'rail', mod: '⌘.', what: 'Show or hide the rail' },
+    // Herdr's prefix: ⌘B, then one key, from anywhere, typing or in a terminal (Ctrl+B off a Mac, outside a terminal,
+    // where Ctrl+B is tmux's own prefix). AFTER_PREFIX says which keys follow it.
+    { id: 'prefix', mod: '⌘B', what: 'Then J, K, 1–4 or N, even while typing or in a terminal', page: 'moveSession' },
     // Moving through the sessions as Herdr moves through its panes: J and K alone, and ⌥⌘ with an arrow, which a
     // terminal frame passes to the page on a Mac. Only where there is a rail (session.js registers them).
     { id: 'nextSession', mod: '⌥⌘↓', bare: 'J', what: 'Next session in the rail', page: 'moveSession' },
@@ -38,6 +41,8 @@
   const byId = Object.fromEntries(SHORTCUTS.map((s) => [s.id, s]));
   // The second key of a G sequence.
   const AFTER_G = { m: 'mine', e: 'everyone', s: 'mySettings', n: 'needsYou' };
+  // What a key after ⌘B is: the session keys alone, read whatever has the focus. Arrows too, as Herdr's navigate mode.
+  const AFTER_PREFIX = { j: 'nextSession', k: 'prevSession', n: 'needsYou', arrowdown: 'nextSession', arrowup: 'prevSession' };
   // The tab keys: 1 to 4, read from the key's place (⌥ on a Mac turns the digit into another character).
   const TAB_CODES = ['Digit1', 'Digit2', 'Digit3', 'Digit4'];
 
@@ -87,12 +92,19 @@
   /**
    * Which shortcut a key press is.
    * @param {{key: string, code?: string, metaKey?: boolean, ctrlKey?: boolean, altKey?: boolean, shiftKey?: boolean}} e
-   * @param {{inFrame?: boolean, typing?: boolean, afterG?: boolean}} where  inFrame: pressed in a terminal, where Ctrl
-   *   and every key alone are the terminal's; typing: focus takes text; afterG: G was the last key alone
-   * @returns {string|null}  a shortcut's id, 'g' for the start of a sequence, or null when the key is not ours
+   * @param {{inFrame?: boolean, typing?: boolean, afterG?: boolean, afterPrefix?: boolean}} where  inFrame: pressed in a
+   *   terminal, where Ctrl and every key alone are the terminal's; typing: focus takes text; afterG: G was the last key
+   *   alone; afterPrefix: ⌘B was the last key, so the next one is ours wherever it is pressed
+   * @returns {string|null}  a shortcut's id, 'g' or 'prefix' for the start of a sequence, 'cancel' for Esc after ⌘B, or
+   *   null when the key is not ours
    */
   function match(e, where = {}) {
     const code = e.code || '';
+    if (where.afterPrefix && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (e.key === 'Escape') return 'cancel';
+      if (tabOf(e) && String(e.key) === String(tabOf(e))) return 'tab';
+      return e.shiftKey ? null : AFTER_PREFIX[String(e.key || '').toLowerCase()] ?? null;
+    }
     if (e.metaKey || (e.ctrlKey && !where.inFrame)) {
       if (e.altKey) {
         // Ctrl+Alt is AltGr on many keyboards, which types { or @ with a digit: never ours while typing.
@@ -107,6 +119,7 @@
       if (code === 'Comma') return 'settings';
       if (code === 'Period') return 'rail';
       if (code === 'KeyO' && e.shiftKey) return 'new';
+      if (code === 'KeyB' && !e.shiftKey) return 'prefix';
       if (e.key === 'Enter' && !e.shiftKey) return 'start';
       return null;
     }
