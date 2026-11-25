@@ -68,6 +68,9 @@
 
   const term = new window.Terminal(OPTIONS);
   window.term = term;
+  // Whether what is typed reaches the session now: stdin is on while Enter waits to reconnect, with the socket closed
+  // (waitForEnter), so terminalPaste.cjs asks this before it says a path was typed.
+  window.termConnected = () => socket?.readyState === WebSocket.OPEN;
   const fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
   term.loadAddon(new window.WebLinksAddon.WebLinksAddon());

@@ -24,9 +24,13 @@
     return file.name || `pasted.${(String(file.type).split('/')[1] || 'png').replace(/[^a-z0-9]/g, '')}`;
   }
 
-  /** Whether the terminal takes input now: xterm's stdin is off while its connection is down (terminalPage.js). */
-  function canType(term) {
-    return Boolean(term) && !term.options?.disableStdin;
+  /**
+   * Whether what is pasted reaches the session now: the terminal page's own word on its socket (terminalPage.js,
+   * `termConnected`), since xterm's stdin is on while Enter waits to reconnect; a page from before it, by its stdin.
+   */
+  function canType(term, connected) {
+    if (!term) return false;
+    return typeof connected === 'function' ? Boolean(connected()) : !term.options?.disableStdin;
   }
 
   /**
@@ -34,10 +38,11 @@
    * still go in when a later file fails, and are named when the terminal cannot take them.
    * @param {{name?: string, size: number, type: string}[]} files
    * @param {{upload: (file: object, name: string) => Promise<{ok: boolean, body: any}>,
-   *   term?: {paste: (text: string) => void, focus?: () => void, options?: object}|null, toast: (text: string) => void}} io
+   *   term?: {paste: (text: string) => void, focus?: () => void, options?: object}|null, toast: (text: string) => void,
+   *   connected?: () => boolean}} io  connected: whether the terminal's socket is open, where the page says
    * @returns {Promise<{typed: number, pasted: string[], failed: boolean}>}
    */
-  async function attachFiles(files, { upload, term, toast }) {
+  async function attachFiles(files, { upload, term, toast, connected }) {
     const none = { typed: 0, pasted: [], failed: true };
     if (files.length > MAX_FILES) return toast(`At most ${MAX_FILES} files at a time`), none;
     const big = files.find((f) => f.size > MAX_FILE_MB * MB);
@@ -60,7 +65,7 @@
     let pasted = [];
     let missed = '';
     if (untyped.length) {
-      if (canType(term)) {
+      if (canType(term, connected)) {
         term.paste(`${untyped.join(' ')} `);
         term.focus?.();
         pasted = untyped;
@@ -136,7 +141,7 @@
    */
   function bind(doc, { pane, mac, upload, toast }) {
     const win = doc.defaultView;
-    const attach = (files) => attachFiles(files, { upload, term: win?.term, toast });
+    const attach = (files) => attachFiles(files, { upload, term: win?.term, toast, connected: win?.termConnected });
     const take = (e, list) => {
       const files = [...(list || [])];
       if (!files.length) return;

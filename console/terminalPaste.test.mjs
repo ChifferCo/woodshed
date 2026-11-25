@@ -5,7 +5,7 @@ import paste from './public/terminalPaste.cjs';
 
 // A terminal frame's document as terminalPaste.bind sees it: listeners by event, a window with xterm, the clipboard and
 // File, and events that record what was done to them.
-function frame({ clipboard = undefined, connected = true } = {}) {
+function frame({ clipboard = undefined, connected = true, socketOpen = undefined } = {}) {
   const typed = [];
   const term = {
     options: { disableStdin: !connected },
@@ -15,7 +15,7 @@ function frame({ clipboard = undefined, connected = true } = {}) {
   };
   const listeners = {};
   const doc = {
-    defaultView: { term, File: globalThis.File, navigator: { clipboard } },
+    defaultView: { term, File: globalThis.File, navigator: { clipboard }, ...(socketOpen === undefined ? {} : { termConnected: () => socketOpen }) },
     addEventListener: (type, fn) => (listeners[type] ??= []).push(fn),
   };
   const fire = (type, fields) => {
@@ -171,4 +171,22 @@ test('on a Mac, a held Ctrl+V pastes once: its repeats read nothing and send no 
   assert.ok(held.stoppedNow && held.prevented);
   assert.equal(reads, 1);
   assert.deepEqual(typed, [{ paste: 'once' }]);
+});
+
+// terminalPage.js turns stdin back on while Enter waits to reconnect, with the socket still closed: its own word on the
+// socket decides, so a paste then is not said to be typed.
+test('a terminal waiting for Enter to reconnect is not said to have the path, though its stdin is on', async () => {
+  const { doc, typed, fire } = frame({ connected: true, socketOpen: false });
+  const toasts = [];
+  paste.bind(doc, { pane: 'agent', mac: false, upload: uploads([saved('/tmp/uploads/1-a.png', false)]).upload, toast: (t) => toasts.push(t) });
+  fire('paste', { clipboardData: { files: [png('a.png')] } });
+  await settle();
+  assert.deepEqual(typed, []);
+  assert.equal(toasts.at(-1), 'Saved in the session as /tmp/uploads/1-a.png: type its path at the prompt');
+
+  const open = frame({ connected: true, socketOpen: true });
+  paste.bind(open.doc, { pane: 'agent', mac: false, upload: uploads([saved('/tmp/uploads/1-b.png', false)]).upload, toast() {} });
+  open.fire('paste', { clipboardData: { files: [png('b.png')] } });
+  await settle();
+  assert.deepEqual(open.typed, [{ paste: '/tmp/uploads/1-b.png ' }]);
 });
