@@ -760,11 +760,12 @@ export function createFleet({
 
   // The messages between two sessions of a person's (sessionStarts.mjs), on both, for the page's Details: when, which
   // way, with which session, whether it asked something, and the start of what it said. The newest MESSAGES_KEPT.
-  function noteMessage({ from, to, text, question = false }) {
+  // `unconfirmed`: the console did not hear back that it went in (fleet.send's `unknown`): it may not have arrived.
+  function noteMessage({ from, to, text, question = false, unconfirmed = false }) {
     const at = nowIso();
     const said = String(text).replace(/\s+/g, ' ').trim().slice(0, MESSAGE_PREVIEW_CHARS);
     for (const [s, other, dir] of [[from, to, 'out'], [to, from, 'in']]) {
-      update(s, { messages: [{ at, dir, with: other.id, question: Boolean(question), text: said }, ...(s.messages ?? [])].slice(0, MESSAGES_KEPT) });
+      update(s, { messages: [{ at, dir, with: other.id, question: Boolean(question), text: said, ...(unconfirmed ? { unconfirmed: true } : {}) }, ...(s.messages ?? [])].slice(0, MESSAGES_KEPT) });
     }
   }
 

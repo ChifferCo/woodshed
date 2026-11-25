@@ -18,7 +18,7 @@ async function serve({ sessions, startMine = null, allowed = () => true, canWrit
     stopped: [],
     questions: [],
     noted: [],
-    noteMessage({ from, to, text, question }) { fleet.noted.push([from.id, to.id, text, Boolean(question)]); },
+    noteMessage({ from, to, text, question, unconfirmed }) { fleet.noted.push([from.id, to.id, text, Boolean(question), ...(unconfirmed ? ['unconfirmed'] : [])]); },
     noteQuestion(session, { to }) { fleet.questions.push(['asked', session.id, to]); session.askedAt = 'now'; },
     clearQuestion(session) { if (session.askedAt) fleet.questions.push(['answered', session.id]); session.askedAt = null; },
     // As the fleet's send: a message that went in, or is held to, answers a question it asked; one left in its box not.
@@ -608,9 +608,16 @@ test('each message between sessions is noted, by whichever way it reaches the ot
   Object.assign(child, { state: 'working', pendingMessages: [] });
   const waiting = api.call('GET', `/sessions/${child.id}/wait?for=reply`, { token });
   await new Promise((r) => setTimeout(r, 50));
-  await api.call('POST', `/sessions/${session.id}/messages`, { token: childToken, body: { text: 'Developers or customers?', question: true } });
+  const answered = await api.call('POST', `/sessions/${session.id}/messages`, { token: childToken, body: { text: 'Developers or customers?', question: true } });
+  assert.equal(answered.body.answeredWait, true, 'handed to the open wait');
   await waiting;
   assert.deepEqual(api.fleet.noted, [[session.id, child.id, 'Use cents.', false], [child.id, session.id, 'Developers or customers?', true]]);
+
+  // One the console did not hear back about is noted as unconfirmed.
+  const unknown = await serve({ sessions, send: async () => 'unknown' });
+  t.after(unknown.close);
+  await unknown.call('POST', `/sessions/${child.id}/messages`, { token, body: { text: 'Maybe.' } });
+  assert.deepEqual(unknown.fleet.noted, [[session.id, child.id, 'Maybe.', false, 'unconfirmed']]);
 });
 
 test('a message left unsent in the other\'s box is not noted, so sending it again lists it once', async (t) => {

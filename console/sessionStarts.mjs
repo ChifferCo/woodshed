@@ -343,7 +343,7 @@ export function createSessionStarts({
     }
     const outcome = await fleet.send(to, `${head}\n\n${said}`);
     // Left in its box unsent (409 below): not sent yet, and a send again would list it twice.
-    if (outcome !== 'in-box') fleet.noteMessage?.({ from, to, text: said, question: asks });
+    if (outcome !== 'in-box') fleet.noteMessage?.({ from, to, text: said, question: asks, unconfirmed: outcome === 'unknown' });
     if (asks && outcome !== 'in-box') fleet.noteQuestion?.(from, { to: to.id });
     console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome, question: asks });
     if (outcome === 'in-box') return reply(res, 409, { error: 'it went into the session\'s box but was not sent: a prompt came up as it was typed, which the person answers in its TUI tab' });

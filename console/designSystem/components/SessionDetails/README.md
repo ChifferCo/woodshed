@@ -11,6 +11,7 @@ phone at the top of the session's ⋯ sheet.
   first, one item each, 6px apart. Each item:
   - the direction in `sub`: **From**, **To**, **Asked** (this session asked a question) or **Asked by**;
   - the other session's name as a link, or `a session no longer on the list` as text;
-  - when, in mono 11px `meta` (`msg-at`);
+  - when, in mono 11px `meta` (`msg-at`), then `· may not have arrived` the same way when the console did not hear back
+    that it went in;
   - on a line of its own, the start of the message in `sub`, cut to one line with an ellipsis (`msg-text`). The whole
     message is in the receiving session's Chat, or, for a reply handed to a wait, in that waiting command's output.

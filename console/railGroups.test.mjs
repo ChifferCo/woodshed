@@ -89,4 +89,5 @@ test('Details lists a session\'s messages newest first, naming a session no long
     ['out', false, 'a session no longer on the list', 'Use cents.'],
   ]);
   assert.equal(lines[1].other.id, null);
+  assert.equal(JSON.parse(JSON.stringify(W.messageLines(mine('u', { messages: [{ at: at(1), dir: 'out', with: 'x', unconfirmed: true, text: 'Maybe.' }] }), [])))[0].unconfirmed, true);
 });

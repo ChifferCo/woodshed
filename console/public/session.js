@@ -1911,6 +1911,7 @@
         h('span', { class: 'msg-dir' }, m.dir === 'out' ? (m.question ? 'Asked ' : 'To ') : (m.question ? 'Asked by ' : 'From ')),
         m.other.id ? h('a', { href: sessionHref(m.other) }, m.other.title) : m.other.title,
         h('span', { class: 'msg-at' }, ` · ${W.ago(m.at)}`),
+        m.unconfirmed && h('span', { class: 'msg-at', title: 'The console did not hear back that it went in' }, ' · may not have arrived'),
         m.text && h('span', { class: 'msg-text' }, m.text))))));
   }
 

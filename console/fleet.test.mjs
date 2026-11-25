@@ -4581,6 +4581,9 @@ test('a message between two sessions is kept on both, newest first, the last 20,
     ['in', main.id, false, 'Use cents, not floats.'],
   ]);
   assert.deepEqual(main.messages.map((m) => m.dir), ['in', 'out']);
+  fleet.noteMessage({ from: main, to: child, text: 'Maybe.', unconfirmed: true });
+  assert.equal(child.messages[0].unconfirmed, true);
+  assert.equal(child.messages[1].unconfirmed, undefined);
   for (let i = 0; i < 25; i++) fleet.noteMessage({ from: main, to: child, text: `x${i} ${'y'.repeat(300)}` });
   assert.equal(child.messages.length, 20);
   assert.match(child.messages[0].text, /^x24 /);

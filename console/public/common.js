@@ -1201,12 +1201,12 @@
 
   /**
    * The messages between this session and others of its person's (fleet.mjs noteMessage), newest first, for Details.
-   * @returns {{at: string, dir: 'in'|'out', other: {id: string|null, title: string}, question: boolean, text: string}[]}
+   * @returns {{at: string, dir: 'in'|'out', other: {id: string|null, title: string}, question: boolean, unconfirmed: boolean, text: string}[]}
    */
   function messageLines(s, sessions, { max = 5 } = {}) {
     return (s.messages ?? []).slice(0, max).map((m) => {
       const other = sessions.find((x) => x.id === m.with);
-      return { at: m.at, dir: m.dir, question: Boolean(m.question), text: m.text ?? '',
+      return { at: m.at, dir: m.dir, question: Boolean(m.question), unconfirmed: Boolean(m.unconfirmed), text: m.text ?? '',
         other: other ? { id: other.id, title: other.title } : { id: null, title: 'a session no longer on the list' } };
     });
   }
