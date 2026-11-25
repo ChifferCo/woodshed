@@ -8,7 +8,11 @@
 // written down), and its stdin from the caller. A command or option that needs the computer or a terminal
 // (`needs` in the catalogue) is refused before anything runs.
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 
 import { argvOf, commandName } from './commands.mjs';
 import { EXIT, main } from './woodshed.mjs';
@@ -17,6 +21,11 @@ export { EXIT };
 
 /** A command's run stopped by its caller (its signal): not an answer of the command's. */
 export class Stopped extends Error {}
+
+// The folder a command runs in: an empty one of its own, never a checkout, so a command that would read the checkout
+// it is run in (review status with no --repo) finds none, whatever folder the program itself runs in.
+let emptyDir = null;
+const noCheckout = () => (emptyDir ??= fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-api-')));
 
 /**
  * Runs one command as the person whose `token` it is, on the console at `origin`.
@@ -29,10 +38,15 @@ export class Stopped extends Error {}
  *          lines (a line that is not JSON as its text); a tunnel's `stdout` is its line's
  */
 export async function runCommand(entry, args, { origin, token, fetch: fetchFn = globalThis.fetch, signal = null, stdin = '', onEvent = () => {}, maxOutput = 1_000_000 }) {
+  // The caller's sign-in, always: never none, which the command line would take for this computer's own.
+  if (typeof token !== 'string' || !/^wsc_[0-9a-f]{64}$/.test(token)) throw new Error('runCommand needs the person\'s command line token');
   if (entry.needs) throw new Error(`${commandName(entry)} runs only on the person's own ${entry.needs}`);
   for (const o of [...(entry.options ?? []), ...(entry.args ?? [])]) {
     if (o.needs && args[o.name] !== undefined && args[o.name] !== false) throw new Error(`--${o.name} runs only on the person's own ${o.needs}`);
   }
+  // A command that reads a checkout here when it is given none (--dir, which needs the computer) needs its repo named.
+  const repoOption = (entry.options ?? []).find((o) => o.name === 'repo');
+  if (repoOption && (entry.options ?? []).some((o) => o.name === 'dir') && !args.repo) throw new Error(`${commandName(entry)} needs repo: there is no checkout here`);
   const tunnel = entry.waits === 'line';
   const argv = argvOf(entry, args, ['--console', origin, ...(tunnel ? [] : ['--json'])]);
   const out = { code: null, events: [], stdout: '', stderr: '', stopped: false, truncated: false };
@@ -51,9 +65,11 @@ export async function runCommand(entry, args, { origin, token, fetch: fetchFn = 
     if (out.events.length < 5000) out.events.push(event);
     onEvent(event);
   };
+  // A character split across two writes is kept whole.
+  const decoder = new StringDecoder('utf8');
   const stdout = new Writable({
     write(chunk, _enc, done) {
-      const text = chunk.toString();
+      const text = typeof chunk === 'string' ? chunk : decoder.write(chunk);
       if (out.stdout.length < maxOutput) out.stdout += text.slice(0, maxOutput - out.stdout.length);
       else out.truncated = true;
       if (!tunnel) {
@@ -98,7 +114,7 @@ export async function runCommand(entry, args, { origin, token, fetch: fetchFn = 
       env: {}, stdout, stderr, stdin: Readable.from(stdin ? [Buffer.from(stdin)] : []), fetch: fetchWith, sleep, signal,
       token, hc: nothing, openBrowser: () => {}, isTerminal: false,
       // Nobody to ask (null), as with no terminal: a confirmation the command needs waits on the person, exit 2.
-      confirm: async () => null, terminal: async () => ({ status: 'refused', message: 'no terminal here' }), interactive: false,
+      cwd: noCheckout(), confirm: async () => null, terminal: async () => ({ status: 'refused', message: 'no terminal here' }), interactive: false,
     });
   } catch (err) {
     if (!out.stopped && !(err instanceof Stopped)) throw err;
@@ -107,6 +123,9 @@ export async function runCommand(entry, args, { origin, token, fetch: fetchFn = 
     signal?.removeEventListener('abort', stop);
   }
   if (out.stopped) out.code = null;
+  const rest = decoder.end();
+  if (rest && out.stdout.length < maxOutput) out.stdout += rest;
+  if (!tunnel) partial += rest;
   if (partial && !tunnel) take(partial);
   return out;
 }

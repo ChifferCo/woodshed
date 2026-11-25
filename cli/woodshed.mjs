@@ -342,7 +342,11 @@ export async function main(argv, deps = {}) {
 
   function signedIn(origin) {
     // A sign-in its caller holds (api.mjs): the token for this one run, never read from or kept on this computer.
-    if (deps.token) return { config: { current: null, consoles: {} }, entry: { store: 'given' }, store: { label: 'the caller', read: () => deps.token, remove: () => {} }, token: deps.token };
+    // Given by its caller, even as none: then nobody is signed in, and this computer's own sign-in is never read.
+    if (Object.hasOwn(deps, 'token')) {
+      if (!deps.token) return { config: { current: null, consoles: {} }, entry: null, store: null, token: null };
+      return { config: { current: null, consoles: {} }, entry: { store: 'given' }, store: { label: 'the caller', read: () => deps.token, remove: () => {} }, token: deps.token };
+    }
     const config = readConfig(dir);
     const entry = config.consoles[origin];
     const store = entry && credentials.storeFor(entry.store);

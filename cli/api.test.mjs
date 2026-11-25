@@ -1,11 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 
 import { createCliSignIn } from '../console/cliSignIn.mjs';
 import { createHandler } from '../console/server.mjs';
 import { EXIT, runCommand } from './api.mjs';
 import { commandName, COMMANDS } from './commands.mjs';
+import { createCredentials } from './credentials.mjs';
+import { main } from './woodshed.mjs';
 
 const byName = (n) => COMMANDS.find((e) => commandName(e) === n);
 
@@ -73,4 +78,37 @@ test('its caller\'s signal stops a watch, and the run says it was stopped', asyn
   assert.equal(out.stopped, true);
   assert.equal(out.code, null);
   assert.equal(seen[0].event, 'watching');
+});
+
+test('no token is never this computer\'s: runCommand refuses it, and main given none reads no saved sign-in', async (t) => {
+  const c = await consoleFor(t);
+  for (const token of [undefined, null, '', 'wt_nope', 42]) {
+    await assert.rejects(runCommand(byName('status'), {}, { ...c, token }), /needs the person's command line token/, String(token));
+  }
+  // A sign-in kept on this computer for the same console, as login keeps one.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'api-saved-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const credentials = createCredentials({ platform: 'test', dir: path.join(dir, 'woodshed') });
+  const store = credentials.save(c.origin, c.token);
+  fs.writeFileSync(path.join(dir, 'woodshed', 'cli.json'), JSON.stringify({ current: c.origin, consoles: { [c.origin]: { store: store.kind ?? 'file', login: 'mia-dev' } } }));
+  const run = async (deps) => {
+    let out = '';
+    const code = await main(['status', '--console', c.origin, '--json'], { env: { XDG_CONFIG_HOME: dir }, credentials, stdout: { write: (s) => { out += s; } }, stderr: { write: () => {} }, hc: async () => ({ missing: true }), ...deps });
+    return { code, line: JSON.parse(out.trim().split('\n')[0]) };
+  };
+  assert.equal((await run({})).line.login, 'mia-dev', 'the saved sign-in is there');
+  for (const token of [null, '']) {
+    const r = await run({ token });
+    assert.equal(r.code, EXIT.waiting, String(token));
+    assert.equal(r.line.signedIn, false, String(token));
+  }
+});
+
+test('a command that would read the checkout it runs in needs its repo named: it runs in no checkout', async (t) => {
+  const c = await consoleFor(t);
+  for (const name of ['review status', 'review pulls', 'review start']) {
+    await assert.rejects(runCommand(byName(name), name === 'review start' ? { pulls: ['12'] } : {}, c), /needs repo: there is no checkout here/, name);
+  }
+  const status = await runCommand(byName('review status'), { repo: 'acme/app' }, c);
+  assert.ok(!JSON.stringify(status).includes(process.cwd()), 'nothing of the folder the program runs in');
 });

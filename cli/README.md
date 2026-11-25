@@ -999,7 +999,10 @@ A program that runs commands for a person, such as an MCP server, builds on it r
   never read as an option, and free text (a prompt, a message, a config value, a tunnel's line) goes after `--`.
 - `runCommand(entry, args, {origin, token, signal, stdin, onEvent})` in `cli/api.mjs` runs it with the command line's
   own code, as the person whose token it is, and gives back its `--json` events and exit code (`EXIT`). The token is
-  the caller's for that run alone, never read from or kept on a computer. Nothing asks a question (what needs the
+  the caller's for that run alone, never read from or kept on a computer: one that is not a command line token (none,
+  empty) is refused, and `main` given `token` never reads the computer's own sign-in, even when it is empty. It runs
+  in an empty folder that is no checkout, so a command that reads the checkout it runs in (`review status`, `pulls`
+  and `start` with no `--repo`) is refused unless its repo is named. Nothing asks a question (what needs the
   person exits 2), opens a browser or reaches Herdr, and a command or option whose `needs` is set is refused before
   anything runs. `signal` stops a wait, a watch or a tunnel's line: the run then says `stopped`, and a session being
   waited on goes on.
