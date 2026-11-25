@@ -26,7 +26,8 @@ export class Stopped extends Error {}
 // it is run in (review status with no --repo) finds none, whatever folder the program itself runs in.
 let emptyDir = null;
 function noCheckout() {
-  if (emptyDir) return emptyDir;
+  // Made again when something cleared the temporary folder since.
+  if (emptyDir && fs.existsSync(emptyDir)) return emptyDir;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-api-'));
   // A temporary folder inside a checkout (TMPDIR set to one) would be read as that checkout: refused, not used.
   for (let at = path.dirname(dir); ; at = path.dirname(at)) {

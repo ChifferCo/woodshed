@@ -552,7 +552,7 @@ export async function main(argv, deps = {}) {
       return TUNNEL_FAILED;
     }
     // As ssh does: the words after -- are one line, joined by spaces, for the session's sh -c.
-    return runTunnel({ origin, token, session, line: args.rest.join(' '), stdin, stdout, stderr, userAgent: `woodshed-cli/${VERSION}` });
+    return runTunnel({ origin, token, session, line: args.rest.join(' '), stdin, stdout, stderr, userAgent: `woodshed-cli/${VERSION}`, signal: deps.signal ?? null });
   }
 
   // The command as typed, for the catch below: only the tunnel's failures exit 255, whatever the other commands' words.

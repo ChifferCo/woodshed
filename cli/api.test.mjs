@@ -142,7 +142,7 @@ test('a temporary folder inside a checkout is refused, never read as the folder 
   const { isolatedEnv } = await import('../test/isolatedEnv.mjs');
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'api-checkout-'));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
-  execFileSync('git', ['init', '-q', repo]);
+  execFileSync('git', ['init', '-q', repo], { env: isolatedEnv() });
   const tmp = path.join(repo, 'tmp');
   fs.mkdirSync(tmp);
   const script = `import('${new URL('./api.mjs', import.meta.url).href}').then(async ({ runCommand }) => {
@@ -153,4 +153,21 @@ test('a temporary folder inside a checkout is refused, never read as the folder 
   const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env: isolatedEnv({ TMPDIR: tmp }), encoding: 'utf8' });
   assert.equal(run.status, 3, run.stderr);
   assert.match(run.stdout, /is inside the checkout .*set TMPDIR to a folder outside any checkout/);
+});
+
+test('a tunnel stopped while it connects closes its connection, and the run ends stopped', async (t) => {
+  const c = await consoleFor(t);
+  // A console that takes the tunnel's request and holds it, as one does while it reaches the session.
+  const server = http.createServer(() => {});
+  let socket;
+  const arrived = new Promise((resolve) => server.on('upgrade', (req, s) => { socket = s; resolve(); }));
+  const port = await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+  t.after(() => { socket?.destroy(); server.close(); });
+  const abort = new AbortController();
+  const run = runCommand(byName('tunnel'), { id: 'aaaa0001', line: 'sleep 60' }, { origin: `http://localhost:${port}`, token: c.token, signal: abort.signal });
+  await arrived;
+  abort.abort();
+  const out = await run;
+  assert.deepEqual([out.stopped, out.code], [true, null]);
+  assert.match(out.stderr, /could not reach|stopped before the line ran/, 'the tunnel closed its side');
 });
