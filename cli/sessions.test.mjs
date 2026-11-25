@@ -189,6 +189,13 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       moving.set(s.id, script.map((step) => ({ ...step })));
       return s;
     },
+    // As the fleet's: the name every page shows, never an empty one.
+    rename: (session, title) => {
+      const next = String(title ?? '').replace(/\s+/g, ' ').trim();
+      if (!next) throw Object.assign(new Error('a name cannot be empty'), { shown: true });
+      session.title = next;
+      return session;
+    },
     // The Chat tab's send (server.mjs, terminalAction): held while the agent works, as the fleet's is.
     send: async (session, text, { id } = {}) => {
       calls.push(['send', { id: session.id, text }]);
@@ -2019,4 +2026,20 @@ test('a conversation read the command line waits on is cut when the session\'s l
   const { token } = c.cli.poll(device.deviceCode);
   const body = await (await fetch(`${c.origin}/api/sessions`, { headers: { authorization: `Bearer ${token}` } })).json();
   assert.equal(at(body.sessions, 'c0c0aa03').lastMessage, null, 'the console\'s own answer to the token carries none');
+});
+
+test('session rename names one of your sessions as the page\'s title does, and a session you cannot see is no session', async (t) => {
+  const c = await consoleFor(t, { extra: [{ id: 'c0c0aa04', owner: 'mia-dev', title: 'Fix the thing', status: 'running', state: 'done' }] });
+  const renamed = await c.run(['session', 'rename', 'c0c0aa04', 'Retry', 'webhooks', 'with', 'backoff']);
+  assert.equal(renamed.code, EXIT.done, renamed.err);
+  assert.equal(renamed.out, 'Session c0c0aa04 is now "Retry webhooks with backoff".\n');
+  assert.equal(at(c.sessions, 'c0c0aa04').title, 'Retry webhooks with backoff');
+  const json = await c.run(['session', 'rename', 'c0c0aa04', 'Backoff', '--json']);
+  assert.deepEqual(JSON.parse(json.out), { event: 'renamed', session: 'c0c0aa04', title: 'Backoff' });
+  assert.notEqual((await c.run(['session', 'rename', 'ffff9999', 'Nope'])).code, EXIT.done);
+});
+
+test('session rename needs a name', () => {
+  const fail = (message) => Object.assign(new Error(message), { usage: true });
+  assert.throws(() => parseSessionArgs('rename', ['0a1b2c3d'], fail), /needs the name/);
 });

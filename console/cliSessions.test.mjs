@@ -96,6 +96,8 @@ test('the command line allows only the session, config and review routes', () =>
     ['GET', '/api/sessions/0a1b2c3d/agents'], ['POST', '/api/sessions/0a1b2c3d/agents'], ['POST', '/api/sessions/0a1b2c3d/agents/agent-2/stop'],
     // woodshed session send, wait and read's: the Chat tab of the session's own agent.
     ['POST', '/api/sessions/0a1b2c3d/send'], ['GET', '/api/sessions/0a1b2c3d/transcript'],
+    // woodshed session rename's: the title's rename.
+    ['POST', '/api/sessions/0a1b2c3d/rename'],
   ]) assert.equal(cliMayCall(method, path), true, `${method} ${path}`);
   for (const [method, path] of [
     ['POST', '/api/sessions'], ['GET', '/api/my'], ['POST', '/api/my/claude-token'], ['POST', '/api/my/remove'], ['POST', '/api/my/tunnel-token'],

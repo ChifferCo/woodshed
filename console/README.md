@@ -1946,6 +1946,7 @@ database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. B
 `/api/tunnel/exec/*` the token signs in to the routes listed in `console/cliSessions.mjs`. For `woodshed session` these
 are `GET /api/sessions`, `GET /api/my/projects`,
 `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove`, `POST /api/sessions/<id>/stop|extend|limits`,
+`POST /api/sessions/<id>/rename` (the title's rename, for `session rename`),
 `POST /api/sessions/<id>/send` and `GET /api/sessions/<id>/transcript` (the Chat tab's Send and its conversation, for
 `session send`, `wait` and `read`; the transcript of a session that has seen production data is refused the token with
 409, `cliSessions: refused, a tainted session's conversation`, as `woodshed tunnel` is) and

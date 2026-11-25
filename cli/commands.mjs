@@ -123,6 +123,11 @@ export const COMMANDS = [
     args: [{ ...id(), text: true }, { name: 'message', about: 'what to say', text: true }],
     options: [{ name: 'wait', about: 'then wait until it has worked on it, and print what it said' }],
   },
+  {
+    path: ['session', 'rename'], effect: 'change',
+    about: 'rename one of your sessions, as its title on the page does: the name every page shows',
+    args: [{ ...id(), text: true }, { name: 'name', about: 'its new name', text: true }],
+  },
   { path: ['session', 'wait', '<id>'], effect: 'read', waits: 'turn', about: 'until one of your sessions is done with its turn, needs you, or stops', args: [id()] },
   {
     path: ['session', 'read', '<id>'], effect: 'read',
