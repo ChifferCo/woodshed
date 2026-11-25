@@ -303,12 +303,12 @@
           h('p', { class: 'layer-meta' }, savedLine(f.personal)),
           ownEditor(project, f.key, f.personal, `Your values for ${labelOf(f)}`),
           note(id(project, f.key)),
-          h('p', { class: 'sub' }, `They replace the repo's defaults and this installation's values for the keys they set, in your private sessions on this repo only. ${NO_CREDENTIALS}`)),
+          h('p', { class: 'sub' }, `In your private sessions, these keys replace the repo's and this installation's. ${NO_CREDENTIALS}`)),
         read && L.sessionLayer(f),
         read && h('div', { class: 'layer-gets' },
           h('h3', null, 'What your sessions get'),
           L.keyTable(f, { yours: true }),
-          h('p', { class: 'sub' }, 'Keys only: each value stays in its own layer. Shared sessions get the same, without yours.')));
+          h('p', { class: 'sub' }, 'Keys only. Shared sessions get the same, without yours.')));
     }
 
     function instructionsPanel(project) {
@@ -327,7 +327,7 @@
           ownEditor(project, INSTRUCTIONS, personal, 'Your instructions'),
           shownText.has(k) && sizeLineOf(project),
           note(k),
-          h('p', { class: 'sub' }, 'At most 16 KB. They go into the prompt of your private sessions on this repo only, after this installation\'s, and win where the two disagree. No secrets: put them in an env file\'s values.')));
+          h('p', { class: 'sub' }, 'At most 16 KB, in your private sessions only, after this installation\'s. No secrets: put those in an env file.')));
     }
 
     async function loadOwnFiles(name) {
@@ -425,9 +425,8 @@
               },
             }, 'Remove')),
           failed ? h('p', { class: 'form-error', role: 'alert' }, `Could not read your files: ${failed}`) : note(k),
-          h('p', { class: 'sub' }, `Whole files your private sessions on ${v.repo} write into its checkout at start, such as the `, h('code', null, '.env.production'),
-            ' your MCP servers read. A file is written only where git ignores it, so it never reaches a commit. Other repos never get them.',
-            v.filesMaxBytes ? ` Up to ${Math.floor(v.filesMaxBytes / 1024)} KB across this repo's files, ${v.filesMax ?? 20} files at most.` : '')));
+          h('p', { class: 'sub' }, `Whole files your private sessions on ${v.repo} write into its checkout. Git must ignore the path, so it never reaches a commit.`,
+            v.filesMaxBytes ? ` Up to ${Math.floor(v.filesMaxBytes / 1024)} KB, ${v.filesMax ?? 20} files at most.` : '')));
     }
 
     // An open repo shows one part at a time, picked on a switch whose dot says where the person keeps something.

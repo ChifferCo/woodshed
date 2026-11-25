@@ -115,8 +115,8 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         notices.get(block)?.bad && !bad
           ? h('span', { class: 'form-error', role: 'alert' }, notices.get(block).text)
           : h('span', { class: 'sub', role: 'status' }, bad ? 'Fix the value in red first.'
-            : changes.length ? `${changes.length} changed. Takes effect on the next check, with no restart.`
-              : notices.get(block)?.text || 'Saved values. Each change is logged with who made it.')),
+            : changes.length ? `${changes.length} changed. Applies on the next check.`
+              : notices.get(block)?.text || '')),
     ];
   }
 
@@ -148,7 +148,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       numbersRow({
         id: 'sessions-timeouts', title: 'Timeouts', block: 'timeouts',
         value: [qty('idleHours') && `Pause after ${qty('idleHours')} waiting for input`, qty('lifetimeHours') && `stop after ${qty('lifetimeHours')} working`],
-      }, h('p', { class: 'sub' }, 'When a shared session stops by itself. Its work is pushed first, and Resume picks it up where it was.')),
+      }, h('p', { class: 'sub' }, 'When a shared session pauses or stops on its own. Work is pushed first, and Resume picks it up.')),
     ];
   }
 
@@ -159,7 +159,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         qty('keepAfterCloseDays') && `Deleted ${qty('keepAfterCloseDays')} after merge`, qty('keepOpenPrDays') && `${qty('keepOpenPrDays')} with a PR still open`,
         qty('keepWithoutPrDays') && `${qty('keepWithoutPrDays')} with none`, qty('removeDeletedDays') && `off the list after ${qty('removeDeletedDays')}`,
       ],
-    }, h('p', { class: 'sub' }, 'How long a stopped shared session keeps its conversation and databases, so it can be resumed. After that the branch alone stays, on GitHub, and the card says Deleted until it is taken off the list.'));
+    }, h('p', { class: 'sub' }, 'How long a stopped shared session can still be resumed. After that, only the GitHub branch remains, and the card says Deleted until it leaves the list.'));
   }
 
   // The repos sessions can start on: the installation's own (read-only here), and the ones added on this page.
@@ -232,7 +232,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         data.palette && h('div', { class: 'set-row' },
           h('div', null,
             h('div', { class: 'set-name' }, 'Colour on the rail'),
-            h('div', { class: 'set-help' }, 'Marks its sessions on the rail. Saved as it is picked; a colour another repo has cannot be picked.')),
+            h('div', { class: 'set-help' }, 'Two repos never share a colour. Saved as it is picked.')),
           h('div', { class: 'set-value' }, colorPicker(p))),
         h('div', { class: 'set-row' },
           h('div', null,
@@ -258,7 +258,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         note ? h('span', { class: note.bad ? 'form-error' : 'sub', role: note.bad ? 'alert' : 'status' }, note.text)
           : h('span', { class: 'sub' }, !p.removable ? 'Set in the installation\'s configuration, so it is removed there.'
             : p.sessions ? `Stop or delete its ${p.sessions === 1 ? 'session' : `${p.sessions} sessions`} first.`
-              : 'Remove: new sessions can no longer start on it. Its pull requests and branches on GitHub are not touched.')));
+              : 'Remove stops new sessions on it. Pull requests and branches on GitHub stay.')));
   }
 
   // A save on a repo's row: `run` returns what to say on the row, or throws the console's refusal.
@@ -395,16 +395,13 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     return row({
       id: 'repos-add', title: 'Add a repo',
       value: listing()
-        ? `One of the repos ${repoChoices.via === 'gh' ? 'the console\'s gh login can push to' : 'the GitHub App may reach'}, or another typed as owner/name`
-        : 'As owner/name',
+        ? `Repos ${repoChoices.via === 'gh' ? 'this console can push to' : 'the GitHub App can reach'}, or type owner/name`
+        : 'Type owner/name',
     },
       h('div', { class: `set-row${repoForm.error ? ' is-bad' : ''}` },
         h('div', null,
           h('label', { class: 'set-name', for: 'repos-add__repo' }, 'Repo'),
-          h('div', { class: 'set-help' }, listing()
-            ? `One of the repos ${repoChoices.via === 'gh' ? 'the console\'s gh login can push to' : 'the GitHub App may reach'}, or Another repo to type one in.`
-            : 'As owner/name.',
-          data.repoNames === false ? ' Sessions show it by the repo\'s own name.' : ' The name sessions show for it is the repo\'s own, unless you give one.')),
+          h('div', { class: 'set-help' }, data.repoNames === false ? 'Sessions show it by the repo\'s own name.' : 'The name sessions show is the repo\'s own, unless you give one.')),
         h('div', { class: 'set-value' },
           listing() ? repoSelect() : repoField(),
           backToList(),
@@ -417,14 +414,14 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         repoForm.error && h('p', { class: 'form-error', role: 'alert' }, W.errorParts(repoForm.error))),
       h('div', { class: 'card-foot' },
         h('button', { type: 'button', class: 'btn btn-open', disabled: repoForm.busy, onclick: addRepo }, repoForm.busy ? 'Checking with GitHub…' : 'Add repo'),
-        h('span', { class: 'sub', role: 'status' }, repoForm.notice || 'It applies at once; Remove takes it off again. Each change is logged with who made it.')));
+        h('span', { class: 'sub', role: 'status' }, repoForm.notice || 'It applies at once. Remove takes it off again.')));
   }
 
   function projectsGroup() {
     if (!data.projects) return null;
     return group({
       id: 'card-projects', label: 'Repos',
-      note: ['The repos sessions can start on. The default one is what questions from Slack use. Each repo\'s own project file says which databases its sessions need, so each is checked on its own: one that cannot start sessions says Needs setup, with why and how to fix it. ', repoChoices?.via === 'gh' ? 'Sessions push with the console\'s gh login, so it must be able to push to a repo added here.' : 'The GitHub App must be given access to a repo before it is added here.', ' An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail. A repo\'s own settings page has its env file values, instructions and the Slack channel its pull requests go to.'],
+      note: ['Repos sessions can start on: the default is what Slack questions use, and one that cannot start says Needs setup. ', repoChoices?.via === 'gh' ? 'This console\'s gh login must be able to push to a repo added here.' : 'Give the GitHub App access before adding a repo.'],
     },
       data.projects.length ? data.projects.map(projectRow)
         : row({ id: 'repos-none', title: 'No repo yet', value: 'So no session can start. The first one added becomes the default.' }),
@@ -671,9 +668,9 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       f.production && h('div', { class: 'prod-callout', role: 'note' },
         h('p', { class: 'prod-callout-head' }, h('span', { class: 'otag is-production' }, 'Production'), 'What happens to a session that uses it'),
         h('ul', null,
-          h('li', null, 'Only My Woodshed sessions of the people and repos below get it, and it is off until its person turns it on in /mcp.'),
-          h('li', null, 'Its first call locks that session down for good: no internet but its org\'s private repos on GitHub, and no package installs. Nothing undoes it.'),
-          h('li', null, 'The session is removed some time after it stops (Retention, under Kept sessions).'))));
+          h('li', null, 'Only My Woodshed sessions of the people and repos below, and only after that person turns it on in /mcp.'),
+          h('li', null, 'The first call locks the session down for good: no internet except the org\'s private GitHub repos, and no package installs. Nothing undoes it.'),
+          h('li', null, 'The session is removed after it stops (Retention, under Kept sessions).'))));
   }
 
   // The repos whose sessions get it: All repos, or some of the console's, as checkboxes under a fold. A saved repo the
@@ -693,7 +690,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     const label = fid(f, 'repos-label');
     return h('div', { class: 'set-row is-top' },
       h('div', null, h('span', { class: 'set-name', id: label }, 'Repos'),
-        h('div', { class: 'set-help' }, 'Whose sessions get it. All repos takes in any added later.')),
+        h('div', { class: 'set-help' }, 'Whose sessions get it. All repos includes any added later.')),
       h('div', { class: 'set-value' },
         h('details', { class: 'repo-pick', open: f.reposOpen, ontoggle: (e) => { f.reposOpen = e.target.open; } },
           h('summary', { id: fid(f, 'repos'), class: 'field', 'aria-labelledby': `${label} ${fid(f, 'repos')}` }, h('span', { class: 'repo-pick-text' }, summary)),
@@ -709,17 +706,17 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     const verb = f.editing ? 'Save' : 'Add server';
     return [
       h('div', { class: 'set-rows' },
-        mcpField(f, 'name', 'Name', 'What claude calls it, such as sentry: lowercase letters, digits and dashes.', 'name', { disabled: f.editing ? true : null }),
-        mcpField(f, 'url', 'URL', 'Its Streamable HTTP endpoint, such as https://mcp.example.com/mcp. The console calls it, so it must answer from the console.', 'url', { placeholder: 'https://' }),
+        mcpField(f, 'name', 'Name', 'What Claude calls it. Lowercase letters, digits and dashes.', 'name', { disabled: f.editing ? true : null }),
+        mcpField(f, 'url', 'URL', 'The console calls this address, so it must answer from here.', 'url', { placeholder: 'https://' }),
         mcpKind(f),
-        !f.production && mcpSelect(f, 'shared', 'Shared sessions', 'Whether sessions everyone can type into get it too: issues, pull requests and questions from Slack. Never a QA run or a review.', 'shared',
+        !f.production && mcpSelect(f, 'shared', 'Shared sessions', 'Whether shared sessions get it too. Never a QA run or a review.', 'shared',
           [['false', 'No'], ['true', 'Yes']], (v) => { f.shared = v === 'true'; }),
-        mcpField(f, 'people', 'People', 'GitHub logins whose My Woodshed sessions get it, comma-separated, or * for everyone.', 'people'),
+        mcpField(f, 'people', 'People', 'GitHub logins, comma-separated, or * for everyone.', 'people'),
         data.projects ? mcpRepos(f) : mcpField(f, 'repos', 'Repos', 'owner/name, comma-separated, or * for every repo.', 'repos'),
-        mcpSelect(f, 'auth', 'What the console adds', 'Signed token: one the console signs as its OpenID Connect issuer, for the server to check. Header: a value the console keeps, such as an API key.', 'auth', Object.entries(AUTH_WORDS), (v) => { f.auth = v; }),
-        f.auth === 'oidc' && mcpField(f, 'audience', 'Audience', `The token's aud. The server trusts issuer ${mcp.issuer}, keys at ${mcp.jwks}. Empty: ${f.production ? 'woodshed-prod-mcp' : 'the server\'s name'}.`, 'audience'),
+        mcpSelect(f, 'auth', 'What the console adds', 'Signed token: the console signs it. Header: a value the console keeps, such as an API key.', 'auth', Object.entries(AUTH_WORDS), (v) => { f.auth = v; }),
+        f.auth === 'oidc' && mcpField(f, 'audience', 'Audience', `The token's aud. Empty uses ${f.production ? 'woodshed-prod-mcp' : 'the server\'s name'}. The server trusts issuer ${mcp.issuer}.`, 'audience'),
         f.auth === 'header' && mcp.headers && mcpField(f, 'header', 'Header', 'Its name, such as Authorization or X-Api-Key.', 'header'),
-        f.auth === 'header' && mcp.headers && mcpField(f, 'value', 'Value', f.editing ? 'Leave empty to keep the saved one. Never shown again.' : 'Such as Bearer <key>. Kept in the console\'s secret store and never shown again.', 'value', { type: 'password', autocomplete: 'new-password' })),
+        f.auth === 'header' && mcp.headers && mcpField(f, 'value', 'Value', f.editing ? 'Leave empty to keep the saved one. Never shown again.' : 'Never shown again.', 'value', { type: 'password', autocomplete: 'new-password' })),
       f.auth === 'header' && !mcp.headers && h('p', { class: 'cap-note' }, 'This console has no secret store, so it cannot keep a header.'),
       f.error && h('p', { class: 'form-error', role: 'alert', style: 'margin: 0' }, W.errorParts(f.error)),
       f.failedTest && h('p', { class: 'form-error', role: 'alert', style: 'margin: 0' }, `Not ${f.editing ? 'saved' : 'added'}. ${f.failedTest} Fix it and try again, or ${f.editing ? 'save' : 'add'} it anyway if the server is not up yet.`),
@@ -728,7 +725,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         f.failedTest && h('button', { type: 'button', class: 'btn btn-quiet', disabled: !!f.busy, onclick: () => saveMcp(f, { untested: true }) }, `${f.editing ? 'Save' : 'Add'} anyway`),
         s && testButton(s),
         s && h('button', { type: 'button', class: 'btn btn-danger', disabled: !!f.busy, onclick: () => removeMcp(f, s) }, 'Remove'),
-        h('span', { class: 'sub', role: 'status' }, f.notice || `${verb} tests the server first. Each change is logged with who made it.${s ? ' Closing the row drops what was typed.' : ''}`)),
+        h('span', { class: 'sub', role: 'status' }, f.notice || `${verb} tests the server first.${s ? ' Closing the row drops what was typed.' : ''}`)),
       s && testNote(s),
     ];
   }
@@ -737,7 +734,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     if (!mcp) return null;
     return group({
       id: 'mcp-servers', label: 'MCP servers',
-      note: 'Tools claude gets in sessions, each reached through the console, so no session ever holds what a server takes to let it in: the console adds a token it signs, or a header it keeps, to each call. A change reaches sessions started after it. Test asks a server what it offers, the way the console calls it.',
+      note: 'Tools Claude gets in sessions, through the console, so a session never holds the server\'s credentials.',
     },
       mcp.servers.length ? mcp.servers.map(mcpRow) : row({ id: 'mcp-none', title: 'None yet' }),
       row({ id: 'mcp-add', title: 'Add a server', value: 'It is tested first, then reaches sessions started after it', opens: true },
@@ -889,9 +886,9 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     if (running || awaitingRestart) open.add('card-updates');
     return row({
       id: 'card-updates', title: 'Woodshed', pill: updatesPill(u),
-      value: [u.head && `Running ${u.head}`, u.checkedAt && `checked ${since(u.checkedAt)}`, u.last && `last updated ${since(u.last.at)} by @${u.last.by}`].filter(Boolean).join(' · ') || 'The Woodshed this console runs',
+      value: [u.head && `Running ${u.head}`, u.checkedAt && `checked ${since(u.checkedAt)}`, u.last && `last updated ${since(u.last.at)} by @${u.last.by}`].filter(Boolean).join(' · ') || 'Not checked yet',
     },
-      h('p', { class: 'sub' }, `The Woodshed this console runs, from its git clone at ${u.clone}${u.remote ? `, against ${u.remote}` : ''}. Checked every hour. Update pulls the new commits, builds the session image again when what it is made from changed, and restarts the console: running sessions carry on, new ones start on the new image.`),
+      h('p', { class: 'sub' }, `From ${u.clone}${u.remote ? `, against ${u.remote}` : ''}. Checked every hour. Update pulls new commits, rebuilds the session image when it changed, and restarts the console. Running sessions carry on.`),
       updatesError && h('p', { class: 'form-error', role: 'alert', style: 'margin: 0' }, `Could not load it: ${updatesError}`),
       versionLine(u), commitList(u), lastLine(u), jobBlock(u.job), !u.supervisor && u.behindBy > 0 && byHand(u),
       h('div', { class: 'card-foot' },
@@ -1043,7 +1040,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       value: `${d.held.length ? held : 'No stopped session keeps data'} · checked every minute`,
       pill: d.stalled.length ? h('span', { class: 'pill is-bad' }, `${d.stalled.length} stalled`) : h('span', { class: 'pill' }, `${d.held.length} kept`),
     },
-      h('p', { class: 'sub' }, 'Shared sessions that are stopped but keep their conversation and databases, and anything left behind or stuck. Checked again every minute.'),
+      h('p', { class: 'sub' }, 'Stopped shared sessions that still keep their conversation and databases, and anything stuck.'),
       d.stalled.length > 0 && [
         h('div', { class: 'sub-head' }, 'Stalled', h('span', { class: 'count' }, d.stalled.length)),
         h('div', { class: 'data-list' }, d.stalled.map(stalledRow))],
@@ -1121,9 +1118,8 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
 
   const channelName = (v) => (v.channelName ? `#${v.channelName}` : v.channel);
 
-  function channelText(v) {
-    if (!v.channel) return 'Not posted: no channel. A repo can post to its own channel instead, on its Settings under Repos.';
-    return `Posted to ${channelName(v)}. A repo can post to its own channel instead, on its Settings under Repos.`;
+  function channelText() {
+    return 'A repo can post to its own channel on its Settings under Repos.';
   }
 
   function botText(v) {
@@ -1171,7 +1167,6 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         : lacks ? h('span', { class: 'pill is-warn' }, 'Missing scopes')
           : h('span', { class: 'pill is-ok' }, v.bot?.team ? `Connected to ${v.bot.team}` : 'Connected'),
     },
-      h('p', { class: 'sub' }, botText(v)),
       (refused || lacks) && h('p', { class: 'cap-note' },
         refused ? 'Fixed it in Slack? ' : `The app lacks ${v.missingScopes.join(', ')}. Add ${v.missingScopes.length === 1 ? 'it' : 'them'} on its OAuth & Permissions page and reinstall it, then `,
         checkAgainButton(), refused ? '' : '. If Slack gave it a new token, Replace keys with that instead.'),
@@ -1211,7 +1206,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       pill: unsavedPill('slack') ?? h('span', { class: 'pill' }, v.channel ? channelName(v) : 'No channel'),
     },
       isOpen && [
-        h('p', { class: 'sub' }, channelText(v)),
+        h('p', { class: 'sub' }, channelText()),
         h('div', { class: 'slack-more' },
           channelPicker.el,
           h('div', { class: 'card-foot' },
@@ -1231,7 +1226,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     let text;
     if (!reaches) text = 'Mentions of the bot do not reach this console: it has no webhook receiver.';
     else if (!on) text = `Off${state.at ? ` since ${W.when(state.at)}${state.by && state.by !== 'console' ? `, by ${state.by}` : ''}` : ''}: ${SLACK_SWITCH.off(state.dropped ? ` (${state.dropped} so far)` : '')}`;
-    else text = `${v.bot?.name ? `Mentions of @${v.bot.name}` : 'Mentions of the bot'} are answered, each in a session that reads the default branch and changes nothing.${v.lastMention ? ` Last one ${W.ago(v.lastMention)}.` : ''}`;
+    else text = `${v.bot?.name ? `Mentions of @${v.bot.name}` : 'Mentions of the bot'} are answered in a session that changes nothing.${v.lastMention ? ` Last one ${W.ago(v.lastMention)}.` : ''}`;
     return row({
       id: 'slack-questions', title: 'Questions', value: text,
       pill: unsavedPill('questions') ?? (!reaches ? h('span', { class: 'pill is-warn' }, 'Not reached') : on ? h('span', { class: 'pill is-ok' }, 'On') : h('span', { class: 'pill' }, 'Off')),
@@ -1242,18 +1237,17 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
           onclick: () => flipWebhooks('slack', on),
         }),
         h('span', { class: 'toggle-label', id: 'webhooks-switch-slack' }, SLACK_SWITCH.label),
-        h('p', { class: 'sub' }, on ? SLACK_SWITCH.on : text),
+        h('p', { class: 'sub' }, on ? 'Off, each mention is dropped.' : 'On, each mention is answered in a session that changes nothing.'),
         switchError?.source === 'slack' && h('p', { class: 'form-error', role: 'alert' }, switchError.text)),
-      !reaches && h('p', { class: 'sub' }, text),
-      !v.signingSecret && h('p', { class: 'cap-note' }, 'No signing secret is saved, so every mention is refused before it reaches the console: Replace keys, on the Bot row, to add it.'),
-      !v.eventsUrl && h('p', { class: 'sub' }, 'This console does not know its events Request URL: the Set up Slack dialog says where to find it.'),
+      !v.signingSecret && h('p', { class: 'cap-note' }, 'No signing secret is saved, so every mention is refused. Replace keys on the Bot row to add it.'),
+      !v.eventsUrl && h('p', { class: 'sub' }, 'No events Request URL. The Set up Slack dialog says where to find it.'),
       limitsBlock('questions'));
   }
 
   function slackGroup() {
     if (!slackView && !slackError) return null;
     const v = slackView;
-    const what = 'Post each pull request a shared session opens to a channel, and answer questions people ask the bot.';
+    const what = 'Posts pull requests to a channel, and answers questions to the bot.';
     const about = { id: 'card-slack', label: 'Slack', note: v?.connected ? what : null };
     if (!v) return group(about, row({ id: 'slack-setup', title: 'Slack', value: h('span', { class: 'form-error', role: 'alert' }, `Could not load it: ${slackError}`), pill: h('span', { class: 'pill is-bad' }, 'Not loaded') }));
     // Not set up, it is one line with its button: there is nothing to open yet.
@@ -1276,13 +1270,12 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
   const WEBHOOK_ONLY = 'QA labels, QA after a review, the automatic QA label, reviews started by a commit\'s tag and Needs a human messages to the assignee';
   const GITHUB_SWITCH = {
     source: 'github', label: 'GitHub webhooks',
-    on: `On: labels, comments and pull request changes reach the console within seconds. Off, it polls GitHub instead, which finds only the session label and /woodshed comments, within a minute. ${WEBHOOK_ONLY} stop until it is on again.`,
+    on: `On: labels, comments and pull request changes arrive within seconds. Off, a poll finds only the session label and /woodshed comments, and ${WEBHOOK_ONLY} stop.`,
     off: (dropped) => `the console drops each GitHub delivery${dropped} and polls GitHub, so the session label and /woodshed comments take up to a minute. ${WEBHOOK_ONLY} have stopped.`,
   };
   // The Slack group's Questions switch: the same switch as GitHub's, for mentions of the bot.
   const SLACK_SWITCH = {
     source: 'slack', label: 'Answer questions',
-    on: 'On: the console answers each mention of its Slack bot in a session of its own. Off, it drops them.',
     off: (dropped) => `the console drops each mention of its Slack bot${dropped}, so questions in Slack go unanswered. Webhook events lists them as ignored.`,
   };
   let switching = null;
@@ -1351,7 +1344,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       h('div', null,
         h('h1', { class: 'title' }, 'Settings ', W.scopePill('/console-settings')),
         W.settingsTabs('/console-settings'),
-        h('p', { class: 'sub' }, 'For every shared session on this console, and only admins can change them. A change applies on the console\'s next check, and is logged with who made it. Your own settings, for your My Woodshed sessions, are on ', h('a', { href: '/settings' }, 'My settings'), '.')));
+        h('p', { class: 'sub' }, 'For every shared session. Only admins can change these. Yours are on ', h('a', { href: '/settings' }, 'My settings'), '.')));
     if (!data) {
       app.replaceChildren(h('div', { class: 'page settings-page' }, life.nav('/console-settings'), head,
         h('p', { class: 'empty' }, loadError ? `Could not load the settings: ${loadError}` : 'Loading settings…')));

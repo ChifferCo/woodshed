@@ -512,10 +512,10 @@ test('the Slack row says what the channel is for and where posts go now, and lis
   const { app } = await loadPage({ slack: { consoleChannel: 'C0CONSOLE01', channels: {} } });
   const card = cardOf(app, 'slack');
   const text = textOf(card);
-  assert.match(text, /When a shared session on this repo opens a pull request, the console posts it to this channel once its review and checks pass, with its decision brief and a mention of whoever has the session in the post's thread\./);
+  assert.match(text, /A shared session's pull request is posted here once review and checks pass\./);
   assert.match(text, /With no channel here, it goes to the channel on Settings' Slack card\./);
   assert.match(text, /invite the bot first/, 'each channel says whether the bot is in it');
-  assert.match(text, /a question asked in Slack is answered in its own thread/);
+  assert.match(text, /A question asked in Slack is answered in its own thread/);
   assert.match(text, /Posting to the console's channel, C0CONSOLE01\./);
   assert.equal(walk(card).find((e) => e.tag === 'a' && /Slack card/.test(textOf(e))).attrs.href, '/console-settings#card-slack');
   assert.ok(pickerSearch(app), 'a search over the channels, not an ID field');

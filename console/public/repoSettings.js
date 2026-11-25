@@ -205,7 +205,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
         read && h('div', { class: 'layer-gets' },
           h('h3', null, 'What a session gets'),
           L.keyTable(f),
-          h('p', { class: 'sub' }, 'Keys only: each value stays in its own layer. In a person\'s private sessions, their own values from My settings come after this installation\'s.'))),
+          h('p', { class: 'sub' }, 'Keys only. In a private session, that person\'s own values come after these.'))),
     ];
   }
 
@@ -259,7 +259,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
     return group({
       id: 'env-files', label: 'Env files',
       note: [
-        'Each env file a session writes is the repo\'s defaults, then this installation\'s values, then a person\'s own (in their private sessions), then the session\'s overrides, what it sets itself. A later line wins.',
+        'Layers, later wins: the repo\'s defaults, then this installation, then a person\'s own (private sessions), then what the session sets.',
         !view.projectFile.read && h('p', { class: 'cap-note', role: 'status' }, `The project file could not be read (${view.projectFile.error}), so only the saved values are listed. They cannot be saved again until it can be read.`),
       ],
     },
@@ -297,7 +297,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
       pill: h('span', { class: record ? 'pill is-ok' : 'pill' }, record ? `${record.bytes.toLocaleString()} bytes` : 'None'),
       onOpen: readInstructions,
     },
-      h('p', { class: 'sub' }, 'Added to every session\'s prompt on this repo, after the repo\'s own rules. Woodshed\'s rules come first; below them, this installation\'s beat the repo\'s, and a person\'s own beat this installation\'s.'),
+      h('p', { class: 'sub' }, 'Woodshed\'s rules come first. These beat the repo\'s, and a person\'s own beat these.'),
       h('div', { class: 'layered' },
         layer('repo', 'From the repo', L.repoRules(view)),
         layer('installation', 'This installation\'s instructions',
@@ -305,7 +305,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
           editorBlock(INSTRUCTIONS, record, 'This installation\'s instructions'),
           shownText.has(INSTRUCTIONS) && sizeLine,
           note(INSTRUCTIONS),
-          h('p', { class: 'sub' }, 'At most 16 KB. It goes into the prompt of every session on this repo, so no secrets: put them in an env file\'s values.')))));
+          h('p', { class: 'sub' }, 'At most 16 KB. No secrets: put those in an env file.')))));
   }
 
   function labelProblem(raw) {
@@ -354,7 +354,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
     const switchesSaid = note(SWITCHES);
     return group({
       id: 'github', label: 'Sessions from GitHub',
-      note: [`How a shared session on ${view.repo} starts from GitHub. Someone with write access and Sessions from GitHub on People adds the label to an issue, or comments `, code('/woodshed …'), ' on an issue or pull request. A label or comment turned off here is ignored and logged; nothing is posted on the issue.'],
+      note: `How a shared session on ${view.repo} starts from GitHub.`,
     },
       triggerLine({
         id: 'switch-labels', on: t.labels, label: 'Start sessions from the label', change: (on) => ({ labels: on }),
@@ -385,7 +385,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
             onclick: () => saveTriggers({ label: null }, (n) => `Back to the console's label, ${n.label}.`),
           }, 'Use the console\'s')),
         note(GITHUB),
-        h('p', { class: 'sub' }, 'GitHub matches it whatever its case. It must not be the repo\'s QA label (its project file\'s ', code('pullRequests.qa.label'), '). Make the label on the repo\'s Labels page on GitHub, so people can pick it.')));
+        h('p', { class: 'sub' }, 'GitHub matches any case. It must not be this repo\'s QA label. Make it on the repo\'s Labels page so people can pick it.')));
   }
 
   // The channel's state in words: where the next pull request goes.
@@ -430,7 +430,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
         : h('span', { class: 'pill is-warn' }, 'Nothing posted');
     return group({ id: 'slack-group', label: 'Slack' }, row({ id: SLACK_ROW, title, value: slackNow(slack), pill, opens: true },
       isOpen && [
-        h('p', { class: 'sub' }, 'When a shared session on this repo opens a pull request, the console posts it to this channel once its review and checks pass, with its decision brief and a mention of whoever has the session in the post\'s thread. With no channel here, it goes to the channel on ', consoleLink, '.'),
+        h('p', { class: 'sub' }, 'A shared session\'s pull request is posted here once review and checks pass. With no channel here, it goes to the channel on ', consoleLink, '.'),
         h('label', { class: 'field-label', for: 'slack-channel' }, h('span', null, 'This repo\'s channel')),
         channelPicker.el,
         bad && h('p', { class: 'form-error', role: 'alert' }, bad),
@@ -438,7 +438,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
           h('button', { type: 'button', class: 'btn btn-open', disabled: Boolean(bad) || picked === saved || busy.has(SLACK), onclick: () => saveChannel(picked) }, busy.has(SLACK) ? 'Saving…' : 'Save'),
           h('button', { type: 'button', class: 'btn btn-quiet', disabled: !saved || busy.has(SLACK), title: saved ? 'Back to the console\'s channel' : null, onclick: () => saveChannel('') }, 'Clear')),
         note(SLACK),
-        h('p', { class: 'sub' }, 'Nothing else uses it: a question asked in Slack is answered in its own thread, the assignee\'s other messages are direct messages, and a My Woodshed session\'s pull request is never posted.'),
+        h('p', { class: 'sub' }, 'A question asked in Slack is answered in its own thread. A My Woodshed pull request is never posted.'),
       ]));
   }
 
@@ -449,7 +449,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
           h('p', { class: 'crumb' }, h('a', { href: '/console-settings#card-projects' }, '‹ Settings · Repos')),
           h('h1', { class: 'title' }, view?.repo ?? project),
           h('p', { class: 'sub' }, view
-            ? [h('span', { class: 'rref' }, view.project), view.default ? ' · the default project. ' : '. ', 'What every shared session on this repo gets in its env files and prompt. Only admins can change these, and each change is logged with who made it. Your own values for the same files, for your My Woodshed sessions, are on ', h('a', { href: '/settings#repo-settings' }, 'My settings'), '.']
+            ? [h('span', { class: 'rref' }, view.project), view.default ? ' · the default project. ' : '. ', 'Env files and the prompt for every shared session. Only admins can change these. Yours are on ', h('a', { href: '/settings#repo-settings' }, 'My settings'), '.']
             : 'Repo settings'))),
       body);
   }

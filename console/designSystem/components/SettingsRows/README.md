@@ -4,7 +4,8 @@ now and its status word, opening in place on its form (`public/settingsRows.js`,
 still says its value.
 
 - A group is a `group-label` over one box with a `line` border and `radius-lg`, its rows divided by `line-soft`. A
-  sentence that holds for the whole group sits under the label in `sub`, never in each row.
+  sentence that holds for the whole group sits under the label in `sub`, never in each row. That note is one sentence.
+  An open row does not repeat the closed line: it says how to change the setting, or the one consequence.
 - A row is its name (`ink`, 600) over one line in `sub` saying what it is now ("Pause after 1 hour waiting for you ·
   stop after 8 hours working"), then its pill, then a `meta` ▸ that turns when open. The whole row is the button, on
   `slate-tint` when hovered; open, its head is on `stopped` and its form is under it on `ground`.

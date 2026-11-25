@@ -12,23 +12,23 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   const FILE_ROWS = {
     'tmux-conf': {
       id: 'my-tmux', title: 'tmux', placeholder: 'set -g prefix C-a',
-      about: 'Your sessions use the image\'s tmux config, and add your own lines after it, so a setting in both uses yours. Your next My Woodshed session picks up what you save; running ones keep theirs. Your own values for a repo\'s env files are under Repo settings.',
-      after: 'Loaded by claude\'s tmux. Prefix then r reloads it in a running session.',
+      about: 'Added after the image\'s tmux config. Yours wins where both set the same thing. Your next session picks it up.',
+      after: 'Prefix then r reloads it in a running session.',
     },
     gitconfig: {
       id: 'my-gitconfig', title: 'git', placeholder: '[alias]\n\tco = checkout\n[pull]\n\trebase = true',
-      about: 'Your own aliases and colors, and how diff, merge, pull, push and rebase behave, after what your session sets. Your session commits as you and signs in to GitHub by itself, so [user], [credential], [url], [include], a pager, an editor, a path or a credential is refused.',
-      after: 'woodshed settings push fills it from your computer\'s ~/.gitconfig, leaving out what a session does not take.',
+      about: 'Aliases, colors, and how diff, merge, pull, push and rebase behave. [user], credentials, URLs, includes, pagers, editors and paths are refused: the session already commits and signs in as you.',
+      after: 'woodshed settings push fills this from ~/.gitconfig, leaving out what a session does not take.',
     },
     inputrc: {
       id: 'my-inputrc', title: 'readline', placeholder: 'set editing-mode vi',
-      about: 'Your own ~/.inputrc lines for the bash in your session\'s terminals, after the system\'s own. An $include only of a file under /etc.',
-      after: 'woodshed settings push fills it from your computer\'s ~/.inputrc.',
+      about: 'Your ~/.inputrc for the bash in your terminals, after the system\'s. An $include only of a file under /etc.',
+      after: 'woodshed settings push fills this from ~/.inputrc.',
     },
     'bash-aliases': {
       id: 'my-bash-aliases', title: 'Shell aliases', placeholder: "alias ll='ls -la'",
-      about: 'Alias lines alone, one to a line, which bash reads in your session\'s terminals. Nothing that sets a variable or runs a command as it is read, and no credential.',
-      after: 'woodshed settings push fills it from the aliases in your computer\'s ~/.bash_aliases, ~/.bashrc and ~/.zshrc.',
+      about: 'Alias lines only, one per line. No variables, no commands that run as the file is read, and no credentials.',
+      after: 'woodshed settings push fills this from the aliases in ~/.bash_aliases, ~/.bashrc and ~/.zshrc.',
     },
   };
   const fileKeys = () => Object.keys(me?.files ?? {}).filter((key) => FILE_ROWS[key]);
@@ -49,6 +49,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   const repoSettings = window.WoodshedMyRepoSettings.create({ render, row: (...args) => row(...args), isOpen: (id) => open.has(id), setOpen: (id) => open.add(id) });
   const tokenInput = h('input', { id: 'claude-token', type: 'password', class: 'field mono', autocomplete: 'off', spellcheck: 'false', placeholder: 'sk-ant-oat01-…' });
   const status = h('p', { class: 'form-note', role: 'status' });
+  const noStore = () => h('p', { class: 'form-note is-error' }, 'Nothing can be saved here yet. ', h('a', { href: '/secrets' }, 'Choose a store on Secrets & webhooks.'));
 
   // The cards whose change the console is still making. Most go through the AWS CLI and take a few seconds, so the
   // card says so and its buttons wait, rather than look as if the click did nothing.
@@ -114,7 +115,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       steps(
         { text: 'Sign in to Codex on your laptop:', command: 'codex login' },
         { text: 'Print the sign-in it saved:', command: 'cat ~/.codex/auth.json' },
-        { text: 'Paste all of it below and press Save. A ChatGPT login is saved back when a session stops, since OpenAI rotates it.' },
+        { text: 'Paste all of it below and press Save. A ChatGPT login is saved back when a session stops.' },
       ),
       h('p', { class: 'form-note' }, 'Or paste an OpenAI API key (', h('code', null, 'sk-…'), ') instead.'),
     ];
@@ -122,7 +123,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       id: 'codex', title: 'Codex', pill,
       value: set ? `Your own sign-in, for Codex sessions${me.ownCodexForReviews ? ' and reviews of your pull requests' : ''}` : 'Codex sessions run on the team\u2019s OpenAI key, if the console has one',
     },
-      h('p', { class: 'sub' }, 'Choose Codex as the agent in New session. With no sign-in saved here, it runs on the team\u2019s OpenAI key, if the console has one.'),
+      h('p', { class: 'sub' }, 'Codex in New session. With nothing saved here, it uses the team\u2019s OpenAI key, if there is one.'),
       set ? howTo('How to get a sign-in', how) : how,
       h('label', { class: 'field-label', for: 'codex-auth' }, h('span', null, set ? 'Replace the sign-in' : 'Paste your sign-in')),
       codexInput,
@@ -134,7 +135,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
           },
         }, 'Remove')),
       codexReviewsSwitch(),
-      !me.available && h('p', { class: 'form-note is-error' }, 'This console has no secrets manager yet, so nothing can be saved here. ', h('a', { href: '/secrets' }, 'Choose one on the Secrets page.')),
+      !me.available && noStore(),
       codexStatus);
   }
 
@@ -167,8 +168,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       }),
       h('span', { class: 'toggle-label', id: `${id}-reviews-label` }, 'Also use it for reviews of my pull requests'),
       h('p', { class: 'sub' }, on
-        ? `On: when you pick ${a.name} under Reviews of my pull requests, it reviews the pull requests you open on ${what}. The console adds it to ${a.name}\u2019s calls; it never goes into the review session.${a.signIn.rotates && id === 'grok' ? ' A login that has expired is not used: a Grok session of yours refreshes it.' : ''}`
-        : `Off: ${a.name} never reviews your pull requests. There is no team key for it.`),
+        ? `On: when you pick ${a.name}, it reviews your pull requests on ${what}. The sign-in stays in the console.${a.signIn.rotates && id === 'grok' ? ' An expired login is skipped until a Grok session refreshes it.' : ''}`
+        : `Off: ${a.name} does not review your pull requests. There is no team key.`),
       !saved && h('p', { class: 'why-off' }, 'Save a sign-in above to turn this on.'));
   }
 
@@ -184,7 +185,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       id, title: a.product, pill,
       value: set ? `Your own sign-in, for ${a.name} sessions${a.reviews && me.ownAgentForReviews?.[id] ? ' and, when you pick it, reviews of your pull requests' : ''}` :`Save ${a.signIn.kinds}, and New session offers ${a.name}`,
     },
-      h('p', { class: 'sub' }, `Choose ${a.name} as the agent in New session. It runs only on your own sign-in, handed to your own My Woodshed sessions and nobody else’s: ${a.name} never runs in a shared session.${a.reviews ? ` It can review your own pull requests, below, without the sign-in ever entering the review.` : ''}`),
+      h('p', { class: 'sub' }, `${a.name} runs only on your sign-in, in your My Woodshed sessions. Never in a shared session.`),
       set ? howTo('How to get a sign-in', how) : how,
       h('label', { class: 'field-label', for: `${id}-auth` }, h('span', null, set ? 'Replace the sign-in' : 'Paste your sign-in')),
       agentInputs[id],
@@ -196,7 +197,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
           },
         }, 'Remove')),
       agentReviewsSwitch(id),
-      !me.available && h('p', { class: 'form-note is-error' }, 'This console has no secrets manager yet, so nothing can be saved here. ', h('a', { href: '/secrets' }, 'Choose one on the Secrets page.')),
+      !me.available && noStore(),
       agentStatus[id]);
   }
 
@@ -213,8 +214,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       }),
       h('span', { class: 'toggle-label', id: 'codex-reviews-label' }, 'Also use it for reviews of my pull requests'),
       h('p', { class: 'sub' }, on
-        ? 'On: when Codex reviews a pull request you opened (Reviews of my pull requests, below), it runs on your plan. The console adds your sign-in to Codex\u2019s calls; it never goes into the review session. A ChatGPT sign-in that has expired is not used: a Codex session of yours refreshes it.'
-        : 'Off: when Codex reviews a pull request you opened, it runs on the team\u2019s OpenAI key, or not at all without one.'),
+        ? 'On: Codex reviews of your pull requests use your sign-in. It stays in the console. An expired ChatGPT login is skipped until a Codex session refreshes it.'
+        : 'Off: those reviews use the team\u2019s OpenAI key, or Codex does not review.'),
       !saved && h('p', { class: 'why-off' }, 'Save a sign-in above to turn this on.'));
   }
 
@@ -253,7 +254,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
           },
         }, 'Remove')),
       sharedSwitch(),
-      !me.available && h('p', { class: 'form-note is-error' }, 'This console has no secrets manager yet, so nothing can be saved here. ', h('a', { href: '/secrets' }, 'Choose one on the Secrets page.')),
+      !me.available && noStore(),
       status);
   }
 
@@ -269,8 +270,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       }),
       h('span', { class: 'toggle-label', id: 'own-shared-label' }, 'Also use it for shared sessions I start from GitHub'),
       h('p', { class: 'sub' }, on
-        ? 'On: a label you add, or a /woodshed comment that starts a session, runs on your plan. The session stays shared: everyone sees it and can type into it, on your plan, but your token never leaves the console. A resume or review fix keeps running on your plan.'
-        : 'Off: sessions you start from GitHub run on the team key.'),
+        ? 'On: sessions you start from GitHub run on your plan. Everyone can still see them. Your token stays in the console.'
+        : 'Off: those sessions run on the team key.'),
       !saved && h('p', { class: 'why-off' }, 'Save a token above to turn this on.'));
   }
 
@@ -303,24 +304,24 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     const via = me.app?.slug ?? 'the App';
     // No App at all, on one person's machine: sessions push with its gh login, as that person.
     if (!gh.connected && !me.githubConnect && me.pushesWithGh) {
-      return row({ id: 'my-github', title: 'GitHub', pill: h('span', { class: 'pill' }, 'Pushes as you'), value: 'Your My Woodshed sessions commit, push and open pull requests as you, with this machine\'s gh login.' });
+      return row({ id: 'my-github', title: 'GitHub', pill: h('span', { class: 'pill' }, 'Pushes as you'), value: 'Sessions push as you, with this machine\'s gh login.' });
     }
     // No App sign-in to connect through (a console that borrows its GitHub access from its host): sessions push as the App.
     if (!gh.connected && !me.githubConnect) {
       const app = me.app?.login ?? 'the GitHub App';
-      return row({ id: 'my-github', title: 'GitHub', pill: h('span', { class: 'pill' }, `Pushes as ${app}`), value: `Your My Woodshed sessions push and open pull requests as ${app}, with the GitHub access this console has.` });
+      return row({ id: 'my-github', title: 'GitHub', pill: h('span', { class: 'pill' }, `Pushes as ${app}`), value: `Sessions push and open pull requests as ${app}.` });
     }
     // Behind a host that connects people on its own, being unconnected is the exception: someone signed in to GitHub as
     // another account, or who disconnected. The card says so, and Connect is the quiet way back.
     if (!gh.connected && me.githubConnectAutomatic) {
       return row({ id: 'my-github', title: 'GitHub', pill: h('span', { class: 'pill' }, `Pushes as ${bot}`), value: 'Connect to have your sessions push and open pull requests as you' },
-        h('p', { class: 'sub' }, `Your My Woodshed sessions push and open pull requests as ${bot}. GitHub usually connects on its own the first time you open the console; it did not this time, or you disconnected. Connect to have them push as you, marked “via ${via}”.`),
+        h('p', { class: 'sub' }, `Sessions push as ${bot} until you connect. GitHub usually connects on its own; it did not this time, or you disconnected.`),
         h('div', { class: 'set-actions' }, h('a', { class: 'btn btn-quiet', href: me.githubConnectHref }, 'Connect GitHub')),
         githubStatus);
     }
     if (!gh.connected) {
       return row({ id: 'my-github', title: 'GitHub', pill: h('span', { class: 'pill' }, `Pushes as ${bot}`), value: 'Connect to have your sessions push and open pull requests as you' },
-        h('p', { class: 'sub' }, `Connect to have your My Woodshed sessions commit, push and open pull requests as you, marked “via ${via}”. It is the same GitHub sign-in again; this time the console keeps the token, and only your private sessions get it, a few minutes at a time.`),
+        h('p', { class: 'sub' }, `Connect so sessions push as you, marked “via ${via}”. The console keeps the token, and only your private sessions get it.`),
         h('div', { class: 'set-actions' }, h('a', { class: 'btn btn-open', href: me.githubConnectHref ?? '/auth/connect' }, 'Connect GitHub')),
         githubStatus);
     }
@@ -332,8 +333,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       value: gh.name || gh.email ? `Commits as ${[gh.name, gh.email].filter(Boolean).join(' \u00b7 ')}` : 'Your sessions push and open pull requests as you',
     },
       h('p', { class: 'sub' }, me.githubConnectAutomatic
-        ? `Your My Woodshed sessions push and open pull requests as you, marked “via ${via}”. Nothing to do: it connected on its own when you first opened the console. Disconnect ends your token at GitHub, and running sessions push as ${bot} again within 5 minutes.`
-        : `Your My Woodshed sessions push and open pull requests as you. Disconnect here ends your token at GitHub, and running sessions push as ${bot} again within 5 minutes.`),
+        ? `Sessions push as you, marked “via ${via}”. Disconnect ends the token, and running sessions push as ${bot} within 5 minutes.`
+        : `Disconnect ends the token, and running sessions push as ${bot} within 5 minutes.`),
       h('div', { class: 'lgrid2' },
         h('label', { class: 'field-label', for: 'git-name' }, h('span', null, 'Commits as'), gitName),
         h('label', { class: 'field-label', for: 'git-email' }, h('span', null, 'Email'), gitEmail)),
@@ -392,9 +393,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     const several = labels.length > 1;
     const named = labels.join(' and ');
     return [
-      several ? `A ${named} database, each called ` : `A ${named} database called `, h('code', null, db.name),
-      `, copied from the same template as every shared session's. ${several ? 'Their' : 'Its'} user reaches nothing else, and only your private sessions are given it. `,
-      `Open ${several ? `them with the ${named} buttons` : `it with the ${named} button`} in Open ▾ on any of your running private sessions.`,
+      `A ${named} database called `, h('code', null, db.name),
+      `. Copied from the shared template. Only your private sessions connect, and the user reaches nothing else. Open ${several ? 'them' : 'it'} from Open ▾.`,
     ];
   }
 
@@ -416,8 +416,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     }, tunnelCopied ? 'Copied' : 'Copy');
     return h('div', { class: 'tunnel' },
       h('h3', null, 'From your computer'),
-      h('p', { class: 'sub' }, 'Open them in TablePlus, DataGrip, psql or Compass. Make a token, run the command it gives you in a terminal, ',
-        `and connect to the ${tunnel.kinds.length === 1 ? 'string' : 'two strings'} it prints. It needs Node 18.3 or later.`, ' The token lasts 12 hours; making another, or Revoke, ends it and closes its connections.'),
+      h('p', { class: 'sub' }, 'Run the command, then connect to the ', tunnel.kinds.length === 1 ? 'string' : 'strings', ' it prints. Needs Node 18.3 or later. The token lasts 12 hours; Revoke ends it.'),
       command && h('div', { class: 'value-row' }, h('code', { class: 'value-box' }, command), copy),
       command && h('p', { class: 'form-note' }, 'Shown this once: the console keeps only a hash of it.'),
       !command && tunnel.expiresAt && h('p', { class: 'form-note' }, `A token works until ${W.when(tunnel.expiresAt)}.`),
@@ -445,7 +444,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       id: 'my-cli', title: 'Command line', pill,
       value: tokens.length ? tokens.map((t) => t.name).join(', ') : 'Sign the woodshed command line in on your computer',
     },
-      h('p', { class: 'sub' }, 'The woodshed command line signs in as you, once per computer, by a code you approve in this browser. Each sign-in lasts 90 days. Revoke ends it at once.'),
+      h('p', { class: 'sub' }, 'One sign-in per computer, approved in this browser. Each lasts 90 days. Revoke ends it at once.'),
       tokens.length ? howTo('How to sign in on another computer', steps({ text: 'In a terminal on that computer, from a Woodshed checkout:', command }))
         : steps({ text: 'In a terminal on your computer, from a Woodshed checkout:', command },
           { text: 'It opens this console on a page with a code. Check it is the one your terminal shows, and press Sign in the CLI.' }),
@@ -507,9 +506,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     if (db.status === 'working' || restore.busy()) open.add('my-databases');
     return row({ id: 'my-databases', title: 'Your databases', pill, value },
       h('p', { class: 'sub' }, ...databasesLine(db)),
-      db.status === 'none' && !me.claudeToken.set && h('p', { class: 'sub' }, 'They are made when you save your Claude token.'),
-      db.status === 'working' && h('p', { class: 'sub' }, `Started ${W.when(db.startedAt)}. Copying takes about a minute, and New session waits for it.`),
-      db.status === 'failed' && h('p', { class: 'form-note is-error' }, `The last try failed: ${db.error ?? 'no reason given'}. The db-admin task's log in CloudWatch says more.`),
+      db.status === 'working' && h('p', { class: 'sub' }, `Started ${W.when(db.startedAt)}.`),
+      db.status === 'failed' && h('p', { class: 'form-note is-error' }, `The last try failed: ${db.error ?? 'no reason given'}.`),
       db.status !== 'working' && h('div', { class: 'set-actions' }, db.status === 'ready' ? reset : make,
         db.status === 'ready' && restoreBusy && h('span', { class: 'form-note' }, 'Waits for the restore to finish.')),
       dbStatus,
@@ -527,9 +525,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       pill: home.saved ? h('span', { class: 'pill is-ok' }, `Kept · ${(home.bytes / 1024 / 1024).toFixed(1)} MB`) : h('span', { class: 'pill' }, 'Nothing kept yet'),
       value: home.saved ? `Your ~/.claude, last kept ${W.when(home.savedAt)}` : 'Your ~/.claude is kept from your first private session on',
     },
-      h('p', { class: 'sub' }, 'Log in to an MCP once, inside any of your private sessions. While one runs, and when it stops, your ', h('code', null, '~/.claude'),
-        ' is kept, and your next session starts with it: logins, memory, settings, and the conversations Resume reopens. Your settings, skills, agents and MCP logins are also kept the same in every running session, within 20 seconds. Forget it works once none is running.'),
-      home.saved && h('p', { class: 'sub' }, `Last kept ${W.when(home.savedAt)}.`),
+      h('p', { class: 'sub' }, 'Log in to an MCP in any private session. Your ', h('code', null, '~/.claude'),
+        ' is kept while one runs and when it stops, and the next session starts with it. Settings stay in step across running sessions within 20 seconds. Forget it once none is running.'),
       home.saved && h('div', { class: 'set-actions' }, h('button', {
         type: 'button', class: 'btn btn-quiet', disabled: busy.has('home'), onclick: () => {
           if (!window.confirm('Forget your kept Claude home? MCP logins, memory, your shared settings and the conversations Resume would reopen are deleted.')) return;
@@ -655,8 +652,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     }
     projectSelect.disabled = busy.has('project');
     return line('My default project', [
-      projects.saved ? 'The repo New session opens on for you.' : 'The repo New session opens on for you: the console\u2019s default, until you pick one.',
-      ' You can still pick another there for one session. Only projects whose repo you can write to are listed.', projectStatus,
+      projects.saved ? 'The repo New session opens on.' : 'New session opens on the console\u2019s default until you pick one.',
+      ' You can still pick another for one session.', projectStatus,
     ], [h('label', { class: 'sr-only', for: 'default-project' }, 'My default project'), projectSelect], { id: 'my-project' });
   }
   // Saved as it is picked, as a switch is: the row has no Save.
@@ -677,8 +674,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     });
     return line('Agent terminal', [
       current === 'herdr'
-        ? 'Your private sessions run their agent in Herdr: the TUI tab attaches to it, and so can your own Herdr.'
-        : 'Your private sessions run their agent in tmux, as every session does.',
+        ? 'Your private sessions run their agent in Herdr. The TUI tab attaches to it, and so can your own Herdr.'
+        : 'Your private sessions run their agent in tmux.',
       ' Shared sessions, reviews and the Terminal tab use tmux either way.', terminalStatus,
     ], seg('Agent terminal', [['tmux', 'tmux', 'Run the agent in tmux'], ['herdr', 'Herdr', 'Run the agent in Herdr’s terminal runtime']], current, pick, busy.has('terminal') || !me.available), { id: 'my-terminal' });
   }
@@ -756,14 +753,14 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     const viewRow = (where, name, help) => displayRow(name, help, seg(name, VIEWS, sessionView?.[where] ?? 'chat', (view) => setSessionView(where, view), !sessionView || busy.has('display')));
     return group({
       id: 'my-display', label: 'Display',
-      note: ['How the console looks to you. The theme and review files are this browser\u2019s; the tab a session opens on follows you to every device. ', W.shell ? h('kbd', null, W.shell.keyText('settings')) : null, W.shell ? ' comes here from anywhere.' : null, displayStatus],
+      note: ['Theme and review files stay in this browser. The tab a session opens on follows you. ', W.shell ? h('kbd', null, W.shell.keyText('settings')) : null, W.shell ? ' opens this from anywhere.' : null, displayStatus],
     },
-        displayRow('Theme', 'Follow the device, or pick one and keep it. Terminals stay dark either way: they are a program\u2019s colours, not the page\u2019s.',
+        displayRow('Theme', 'Follow the device, or pick one. Terminals stay dark either way.',
           seg('Theme', [['system', 'device', 'Follow my device'], ['light', 'light', 'Always light'], ['dark', 'dark', 'Always dark']], currentTheme(), setTheme)),
         displayRow('Review files', 'Whether a review opens with every file\u2019s diff showing or folded. Files you mark as viewed stay folded.',
           seg('Review files', [['collapsed', 'folded', 'Open a review with every file folded'], ['all', 'expanded', 'Open a review with every file\u2019s diff showing']], reviewExpands() ? 'all' : 'collapsed', setReviewExpand)),
-        viewRow('desktop', 'Sessions on a desktop', 'The tab a running session opens on in a wide window, until you pick another for that session.'),
-        viewRow('phone', 'Sessions on a phone', 'The same for a narrow window, under 720px wide.'));
+        viewRow('desktop', 'Sessions on a desktop', 'The tab a session opens on in a wide window.'),
+        viewRow('phone', 'Sessions on a phone', 'The same for a window under 720px wide.'));
   }
 
   // Who reviews the pull requests you open (console/reviewAgents.mjs), as a grid: each agent that reviews on its own row
@@ -805,7 +802,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     const listed = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
     const who = !names.length ? 'No code review of' : names.length === 2 ? `${listed} both review` : names.length > 2 ? `${listed} all review` : `${listed} reviews`;
     return row({ id: 'my-reviews', title: 'Reviews of my pull requests', pill: h('span', { class: choice ? 'pill is-ok' : 'pill' }, choice ? 'Your own' : 'Default'), value: `${who} the pull requests you open` },
-      h('p', { class: 'sub' }, 'Who reviews a pull request you open, in repos that review with Woodshed sessions. With several on, the strictest verdict wins, so it is approved only when all of them approve. With all off, there is no code review, and the Slack post and QA go on without one. Grok Build and OpenCode review only on your own sign-in, which the console adds to their calls: it never enters the review.'),
+      h('p', { class: 'sub' }, 'Who reviews pull requests you open: several on means all must approve, and all off means no code review (Slack and QA still run). Grok Build and OpenCode use only your sign-in, which stays in the console.'),
       h('table', { class: 'onoff-grid' },
         h('thead', null, h('tr', null, h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Reviewer')), h('th', { scope: 'col' }, 'Off'), h('th', { scope: 'col' }, 'On'))),
         h('tbody', null, rows.map(([agent, label, needs]) => h('tr', { class: available[agent] ? null : 'is-unavailable' },
@@ -834,10 +831,10 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     const hours = (key) => { const n = own[key] ?? me.limitDefaults?.[key]; return n === undefined || n === null ? null : `${n} hour${Number(n) === 1 ? '' : 's'}`; };
     const value = hours('idleHours') && hours('lifetimeHours') ? `Pause after ${hours('idleHours')} waiting for you \u00b7 stop after ${hours('lifetimeHours')} working` : 'When your sessions pause and stop by themselves';
     return row({ id: 'my-timeouts', title: 'My session timeouts', pill: h('span', { class: custom ? 'pill is-ok' : 'pill' }, custom ? 'Your own' : 'Console defaults'), value },
-      h('p', { class: 'sub' }, 'How long your My Woodshed sessions wait for you before they pause, and how long one that works may run before it is stopped. Either way its work is pushed first, and Resume picks it up. Leave a box empty to use the console\'s number, shown in it. Sessions already running use the new numbers within a few seconds. The console\'s own numbers, for shared sessions, are the Sessions card on ', W.isAdmin() ? h('a', { href: '/console-settings#card-sessions' }, 'Settings') : 'Settings (admins)', '.'),
+      h('p', { class: 'sub' }, 'When your sessions pause or stop. Work is pushed first, and Resume picks it up. An empty box uses the console\'s number. Running sessions pick up a change within seconds. Shared sessions use the numbers on ', W.isAdmin() ? h('a', { href: '/console-settings#card-sessions' }, 'Settings') : 'Settings (admins)', '.'),
       h('div', { class: 'lgrid2' },
-        h('label', { class: 'field-label', for: 'limit-idle' }, h('span', null, 'Pause a session waiting for input after (hours, 0.25 to 24)'), limitInputs.idleHours),
-        h('label', { class: 'field-label', for: 'limit-lifetime' }, h('span', null, 'Stop a working session after (hours, 1 to 24)'), limitInputs.lifetimeHours)),
+        h('label', { class: 'field-label', for: 'limit-idle' }, h('span', null, 'Pause when idle (hours, 0.25 to 24)'), limitInputs.idleHours),
+        h('label', { class: 'field-label', for: 'limit-lifetime' }, h('span', null, 'Stop when working (hours, 1 to 24)'), limitInputs.lifetimeHours)),
       h('div', { class: 'set-actions' },
         h('button', { type: 'button', class: 'btn btn-open', disabled: busy.has('limits'), onclick: () => saveLimits({ idleHours: limitInputs.idleHours.value, lifetimeHours: limitInputs.lifetimeHours.value }, 'Saved.') }, 'Save'),
         custom && h('button', { type: 'button', class: 'btn btn-quiet', disabled: busy.has('limits'), onclick: () => saveLimits({}, 'Back to the console\'s numbers.') }, 'Use the console\'s')),
@@ -850,7 +847,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   function removeCard() {
     const live = me.running;
     return row({ id: 'my-remove', title: 'Remove My Woodshed', danger: true, pill: !me.setUp && !live ? h('span', { class: 'pill' }, 'Nothing to remove') : null, value: 'Stops your private sessions and deletes everything saved on this page' },
-      h('p', { class: 'sub' }, `Stops your ${live} running private session${live === 1 ? '' : 's'}, each pushing its branch first, takes all your private sessions off the list, and deletes your Claude token, GitHub connection, your own databases, your repo settings, tmux lines and kept Claude home. Branches and pull requests stay on GitHub, and shared sessions you started stay on Shared. You can set it up again from scratch later.`),
+      h('p', { class: 'sub' }, `Stops your ${live} private session${live === 1 ? '' : 's'} (each branch is pushed first), takes them off the list, and deletes your token, GitHub connection, databases, repo settings, tmux lines and Claude home. What is on GitHub stays, and so do shared sessions.`),
       h('div', { class: 'set-actions' }, h('button', {
         type: 'button', class: 'btn btn-danger',
         onclick: () => W.confirmChange({
@@ -888,7 +885,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       life.nav('/settings'),
       h('header', { class: 'page-head' }, h('div', null,
         h('h1', { class: 'title' }, 'My settings ', W.scopePill('/settings')),
-        h('p', { class: 'sub' }, `For ${W.personText(me.login)}'s My Woodshed sessions only. Shared sessions get none of it, but for your Claude token when you switch that on below. What applies to everyone is on `, W.isAdmin() ? h('a', { href: '/console-settings' }, 'Settings') : 'Settings (admins)', '.'))),
+        h('p', { class: 'sub' }, `Your My Woodshed sessions. Shared sessions are separate, except the Claude token switch below. What applies to everyone is on `, W.isAdmin() ? h('a', { href: '/console-settings' }, 'Settings') : 'Settings (admins)', '.'))),
       // A repo sessions cannot start on is said first: it is what stops the person, whatever else is set.
       blockersCard(),
       // What a new person does first, then how their sessions run, what is kept between them, each repo's own, and the look.
@@ -897,7 +894,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       group({ id: 'set-kept', label: 'Kept for you' }, databasesCard(), homeCard()),
       group({
         id: 'repo-settings', label: 'Repos and files',
-        note: 'Your own values for each repo\'s env files, your own instructions and your own files, for your private sessions on that repo. Shared sessions never get them. Only repos you can write to are listed.',
+        note: 'Your env values, instructions and files, in your private sessions on repos you can write to.',
       }, repoSettings.rows(), fileRows()),
       displayCard(),
       group({ id: 'set-remove' }, removeCard())));
