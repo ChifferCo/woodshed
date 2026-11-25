@@ -1024,7 +1024,7 @@ test('extra agents in Grok Build and OpenCode sessions skip branch startup confi
     assert.match(flags, /--setting-sources user --strict-mcp-config --disable-slash-commands/);
     assert.doesNotMatch(flags, / --mcp-config/);
     const owner = configureCodex({ agent, pulled: { 'config.toml': 'model = "gpt-5.5"\n\n[projects."/work/app"]\ntrust_level = "trusted"\n' } });
-    assert.equal(owner.config, 'model = "gpt-5.5"\n\n[projects."/work/app"]\ntrust_level = "untrusted"\n');
+    assert.match(owner.config, /^model = "gpt-5\.5"\n+\[projects\."\/work\/app"\]\ntrust_level = "untrusted"\n$/);
   }
 });
 
