@@ -1200,15 +1200,6 @@
   }
 
   /**
-   * The rail's groups (session.js): a session started as a piece of another's work (`startedFrom`, not `startedApart`)
-   * nests under it while that one is live and on the same list, the same person's. Once it stops, they are each on their
-   * own again, so a live session never hides in a folded Stopped zone.
-   * @param {object[]} listed  the sessions the rail shows
-   * @returns {{top: object[], kids: Map<string, object[]>, parentOf: Map<string, object>}}  `top` the sessions in no
-   *   group, `kids` each group's sessions by its session's id (those asking their person first, asksPerson, then the
-   *   live, then the newest), `parentOf` the group each nested one is in
-   */
-  /**
    * The messages between this session and others of its person's (fleet.mjs noteMessage), newest first, for Details.
    * @returns {{at: string, dir: 'in'|'out', other: {id: string|null, title: string}, question: boolean, text: string}[]}
    */
@@ -1220,6 +1211,15 @@
     });
   }
 
+  /**
+   * The rail's groups (session.js): a session started as a piece of another's work (`startedFrom`, not `startedApart`)
+   * nests under it while that one is live and on the same list, the same person's. Once it stops, they are each on their
+   * own again, so a live session never hides in a folded Stopped zone.
+   * @param {object[]} listed  the sessions the rail shows
+   * @returns {{top: object[], kids: Map<string, object[]>, parentOf: Map<string, object>}}  `top` the sessions in no
+   *   group, `kids` each group's sessions by its session's id (those asking their person first, asksPerson, then the
+   *   live, then the newest), `parentOf` the group each nested one is in
+   */
   function railGroups(listed) {
     const byId = new Map(listed.map((s) => [s.id, s]));
     const parentOf = new Map();
