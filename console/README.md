@@ -505,8 +505,12 @@ TUI and Terminal tabs):
   which serves only the repo, `/tmp/uploads` and Claude's scratchpad.
 - **Files**: paste or drop up to 8 files (25 MB each, 40 MB together) on a
   terminal. Each goes through the console to `/tmp/uploads` in the session,
-  and its path is typed at that terminal's prompt with no Enter. claude starts
-  with `--add-dir /tmp/uploads`, so it reads them without asking.
+  and its path is typed at that terminal's prompt with no Enter: by statusd in
+  tmux, and by the page, as a paste on the terminal's own connection, for an agent
+  in Herdr, which hc cannot type into without an Enter (statusd answers `typed:
+  false`). In an agent's TUI, Ctrl+V pastes as ⌘V does (on a Mac, by reading the
+  clipboard, which the browser asks for first); the Terminal tab's shell keeps ^V.
+  claude starts with `--add-dir /tmp/uploads`, so it reads them without asking.
 - **Scrolling back** (the wheel, or a swipe on a phone) is the browser's own when
   the pane is on the main screen: claude and codex run inline, never full screen
   (`session/bin/claude`, `session/bin/codex`), and tmux leaves what scrolls off

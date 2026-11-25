@@ -919,7 +919,8 @@ URL on top of each env file's Repo settings values
   `echo '{"hook_event_name":"Stop"}' | node /opt/woodshed/session/hookState.mjs`.
 - **A pasted or dropped file is not typed into the terminal, or a picture does
   not open.** The toast says the console's answer. statusd logs `statusd: file
-  uploaded` with the pane; the console logs `console: statusd unreachable` when
+  uploaded` with the pane (`typed: null` for an agent in Herdr, whose path the
+  page types itself, as a paste); the console logs `console: statusd unreachable` when
   the session did not answer. A picture answers 404 for a path outside the
   repo, `/tmp/uploads` and the scratchpad, or one that is not png, jpg, gif or
   webp after its symlinks. A session started from an image before
