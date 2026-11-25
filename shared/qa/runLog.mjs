@@ -59,15 +59,17 @@ const oneLine = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
  * @param {string} stream  claude's stream-json output, with anything else it printed (errors) among the lines
  * @returns {{result: object|null, said: string[], tools: number, errors: string[], other: string[], turns: number}}
  */
-export function readStream(stream) {
+export function readStream(stream, env = process.env) {
   const said = [];
   const errors = [];
   const other = [];
   let result = null;
   let tools = 0;
   let turns = 0;
-  for (const line of String(stream ?? '').split('\n')) {
+  for (let line of String(stream ?? '').split('\n')) {
     if (!line.trim()) continue;
+    // Scrubbed here, whole, before anything is clipped: a clip inside a secret would leave a piece the scrub cannot match.
+    line = redact(line, env);
     let event;
     try {
       event = JSON.parse(line);

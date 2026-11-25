@@ -140,7 +140,7 @@ sendLog() {
     echo
     node "$RUN_LOG" plan "$DIR/logs/plan.jsonl"
     echo
-    node "$RUN_LOG" test "$DIR/logs/test.jsonl"
+    if [ -f "$DIR/logs/test.jsonl" ] || [ ! -f "$DIR/logs/test-started" ]; then node "$RUN_LOG" test "$DIR/logs/test.jsonl"; else printf '## test\nStarted; its outcome is not known yet.\n'; fi
     for f in SKIP NO_PLAN; do [ -f "$DIR/plan/$f.md" ] && { echo; echo "## plan/$f.md"; head -c 2000 "$DIR/plan/$f.md"; }; done
     [ -f "$DIR/report.md" ] || { echo; echo 'No report.md was written.'; }
   } 2>&1 | node "$RUN_LOG" --redact > "$DIR/logs/run.log"
@@ -222,6 +222,7 @@ main() {
   writeMcpConfig
   # A checkpoint, so a run stopped mid-test leaves a log that says the tests began.
   say "Test pass started; if the run is stopped now, its outcome is not known"
+  : > "$DIR/logs/test-started"
   sendLog
   runClaude "$DIR/test-prompt.md" "$DIR/logs/test.jsonl" 200 --allowedTools "Bash,Read,Write,Edit,Glob,Grep,mcp__playwright" \
     --mcp-config "$DIR/mcp.json" --strict-mcp-config

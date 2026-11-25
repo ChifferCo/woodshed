@@ -75,3 +75,16 @@ test('redact takes out a credential in JSON, and the variables the installation 
   assert.doesNotMatch(clean, /opaqueValue123|k-opaque-456|gempass/);
   assert.match(clean, /"user":"u"/, 'what is not a credential stays');
 });
+
+test('a secret the clip would cut is taken out whole first, so no piece of it survives', () => {
+  const secret = 'S3cr3t-'.repeat(60);
+  const env = { REGISTRY_TOKEN: secret };
+  process.env.REGISTRY_TOKEN = secret;
+  try {
+    const text = summarize('test', toolError(`npm ERR! ${'x'.repeat(280)} ${secret}`));
+    assert.ok(!text.includes('S3cr3t'), 'no prefix of it is left');
+  } finally {
+    delete process.env.REGISTRY_TOKEN;
+  }
+  assert.ok(!redact(`${'x'.repeat(280)} ${secret}`, env).includes('S3cr3t'));
+});
