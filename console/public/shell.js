@@ -55,6 +55,7 @@
   let toastTimer = null;
   // `ms` keeps it up longer: an error needs time to be read on a phone.
   function toast(text, { ms = 2000 } = {}) {
+    prefixHint(false);
     toastEl ??= document.body.appendChild(h('div', { class: 'toast', role: 'status', hidden: true }));
     toastEl.textContent = text;
     toastEl.hidden = false;
@@ -248,6 +249,11 @@
       if (prefixEl) prefixEl.hidden = true;
       return;
     }
+    // One toast at a time: the hint takes the place of one still up (a tab's reason), which the key after it answers.
+    if (toastEl) {
+      clearTimeout(toastTimer);
+      toastEl.hidden = true;
+    }
     prefixEl ??= document.body.appendChild(h('div', { class: 'toast', role: 'status', hidden: true }));
     prefixEl.replaceChildren(h('kbd', null, keyText('prefix')), ' then ', h('kbd', null, 'J'), ' ', h('kbd', null, 'K'), ' ', h('kbd', null, '1–4'), ' or ', h('kbd', null, 'N'));
     prefixEl.hidden = false;
@@ -305,7 +311,7 @@
     gAt = 0;
     // A key alone is for the page, never for an open palette or sheet, whose own keys come first.
     const overlayOpen = !palette.hidden || !keys.el.hidden || notifications().isOpen();
-    const id = K.match(e, { inFrame, afterG, afterPrefix, typing: overlayOpen || K.takesTyping(e.composedPath?.()[0] ?? e.target) });
+    const id = K.match(e, { inFrame, afterG, afterPrefix, mac: MAC, typing: overlayOpen || K.takesTyping(e.composedPath?.()[0] ?? e.target) });
     // In the Review, a key alone after ⌘B is the shell's only when it is one of the prefix's own: / there is the page's.
     if (modOnly && !e.metaKey && !e.ctrlKey && !PREFIX_IDS.has(id)) return;
     if (id === 'cancel') {

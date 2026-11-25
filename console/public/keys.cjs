@@ -92,9 +92,9 @@
   /**
    * Which shortcut a key press is.
    * @param {{key: string, code?: string, metaKey?: boolean, ctrlKey?: boolean, altKey?: boolean, shiftKey?: boolean}} e
-   * @param {{inFrame?: boolean, typing?: boolean, afterG?: boolean, afterPrefix?: boolean}} where  inFrame: pressed in a
+   * @param {{inFrame?: boolean, typing?: boolean, afterG?: boolean, afterPrefix?: boolean, mac?: boolean}} where  inFrame: pressed in a
    *   terminal, where Ctrl and every key alone are the terminal's; typing: focus takes text; afterG: G was the last key
-   *   alone; afterPrefix: ⌘B was the last key, so the next one is ours wherever it is pressed
+   *   alone; afterPrefix: ⌘B was the last key, so the next one is ours wherever it is pressed; mac: on an Apple computer
    * @returns {string|null}  a shortcut's id, 'g' or 'prefix' for the start of a sequence, 'cancel' for Esc after ⌘B, or
    *   null when the key is not ours
    */
@@ -121,7 +121,8 @@
       if (code === 'Comma') return 'settings';
       if (code === 'Period') return 'rail';
       if (code === 'KeyO' && e.shiftKey) return 'new';
-      if (code === 'KeyB' && !e.shiftKey) return 'prefix';
+      // On a Mac, Ctrl+B in a text field is back one character, as macOS's own: only ⌘B is the prefix there.
+      if (code === 'KeyB' && !e.shiftKey) return !e.metaKey && where.mac && where.typing ? null : 'prefix';
       if (e.key === 'Enter' && !e.shiftKey) return 'start';
       return null;
     }

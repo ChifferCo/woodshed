@@ -142,6 +142,9 @@ test('⌘B, then J, K, 1–4 or N, works from anywhere, as Herdr\'s prefix: typi
   assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, { typing: true }), 'prefix', 'Ctrl+B off a Mac, while typing');
   assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, { inFrame: true }), null, 'Ctrl+B in a terminal is tmux\'s prefix');
   assert.equal(match({ key: 'B', code: 'KeyB', metaKey: true, shiftKey: true }), null, '⇧⌘B is the browser\'s bookmarks bar');
+  assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, { typing: true, mac: true }), null, 'Ctrl+B in a Mac\'s text field is back one character');
+  assert.equal(match({ key: 'b', code: 'KeyB', metaKey: true }, { typing: true, mac: true }), 'prefix');
+  assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, { mac: true }), 'prefix', 'Ctrl+B on a Mac, not typing');
   for (const where of [{ typing: true }, { inFrame: true }, {}]) {
     const after = { ...where, afterPrefix: true };
     assert.equal(match({ key: 'j', code: 'KeyJ' }, after), 'nextSession');
