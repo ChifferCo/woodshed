@@ -43,6 +43,32 @@ test('each option the catalogue names is in its command\'s help', async () => {
   }
 });
 
+test('each session command\'s own help section names exactly its catalogue options', async () => {
+  // Its sections: from `  <sub>` to the next command's line. A command with several entries (app, agent) has several.
+  const sections = new Map();
+  let current = null;
+  for (const line of (await help('session')).split('\n')) {
+    const sub = /^ {2}([a-z]+)\b/.exec(line)?.[1];
+    if (sub) current = sub;
+    else if (/^\S/.test(line)) current = null;
+    if (current) sections.set(current, `${sections.get(current) ?? ''}\n${line}`);
+  }
+  // The command line's own options, which any help may mention.
+  const global = new Set(['json', 'console', 'help']);
+  for (const [sub, text] of sections) {
+    // Its own: an option's line (`      --repo <owner/name>`), its command line's brackets (`list [--all]`), never prose
+    // that names another command's (`watch --herdr --add`).
+    const named = new Set([
+      ...[...text.matchAll(/^ {6}--([a-z][a-z-]*)/gm)].map((m) => m[1]),
+      ...[...text.matchAll(/^ {2}[a-z].*$/gm)].flatMap((m) => [...m[0].matchAll(/\[--([a-z][a-z-]*)/g)].map((x) => x[1])),
+      // and one named with what it takes, inside another's line (`--model <name>, --effort <level>`)
+      ...[...text.matchAll(/--([a-z][a-z-]*) </g)].map((m) => m[1]),
+    ].filter((n) => !global.has(n)));
+    const catalogue = new Set(COMMANDS.filter((e) => e.path[0] === 'session' && e.path[1] === sub).flatMap((e) => (e.options ?? []).map((o) => o.name)));
+    assert.deepEqual([...named].sort(), [...catalogue].sort(), `woodshed session ${sub}: its help names one set of options, the catalogue another`);
+  }
+});
+
 test('the session parser takes the catalogue\'s options, and nothing else', () => {
   assert.deepEqual(sessionOptions('new'), {
     values: ['repo', 'branch', 'agent', 'model'], flags: ['no-wait', 'connect', 'herdr', 'no-notify', 'end-with-parent'], optional: ['parent'],

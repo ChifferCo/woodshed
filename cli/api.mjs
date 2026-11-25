@@ -75,6 +75,7 @@ export async function runCommand(entry, args, { origin, token, fetch: fetchFn = 
       }
     }
     if (out.events.length < 5000) out.events.push(event);
+    else out.truncated = true;
     onEvent(event);
   };
   // A character split across two writes is kept whole.
