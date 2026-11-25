@@ -598,8 +598,9 @@ And what the shed shows about each session:
   mode, the tab taking the keys; **N** opens the next session that needs you.
   The mode stays on, the toast's place saying so, until Esc (which goes no
   further, not to a terminal), a click, a toast, the double tap again, or any
-  other key, which then does what it would have. These keys do nothing without
-  it. A tap is the key pressed and let go with nothing else pressed between,
+  other key, which then does what it would have. Outside the mode these keys
+  move nothing and keep what they did before: **N** alone is still New
+  session. A tap is the key pressed and let go with nothing else pressed between,
   so ⌘K or Ctrl+C twice is never one.
   Ctrl works for ⌘ outside a terminal, and the pages
   write the keys as Ctrl on Windows and Linux. A key alone works only while
