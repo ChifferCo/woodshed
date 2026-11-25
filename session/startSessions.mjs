@@ -54,6 +54,8 @@ Commands:
       --wait             then wait for it to work on it, and print what it said
   reply ("<message>" | --prompt-file <file> | -) [--wait]
                          the same, to the session that started this one
+      --question         (send or reply) it asks something and waits for the answer: the console shows this session
+                         as asking its person until it is sent a message or works again
   wait <id> [--reply]    until it is done, needs its person, or stopped (--reply: until it has worked on what was sent)
   read <id> [--last <n>] [--since <time>]
                          what it was asked and said, newest last (default the last 10)
@@ -86,6 +88,7 @@ export function parseArgs(argv) {
     else if (word === '--reply') flags.reply = true;
     else if (word === '--all') flags.all = true;
     else if (word === '--separate') flags.separate = true;
+    else if (word === '--question') flags.question = true;
     else if (takes.has(word)) {
       if (i + 1 >= words.length) throw new Refused(`${word} needs a value`);
       flags[word.slice(2).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = words[++i];
@@ -329,8 +332,11 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
         if (!startedFrom) throw new Refused('no session started this one: reply answers the session that started it');
         to = startedFrom.id;
       }
+      // A question waits for its answer with the turn ended, which shows this session as asking; waiting in the turn
+      // would not, and the answer comes typed in either way.
+      if (flags.question && flags.wait) throw new Refused('--question asks and ends the turn: leave out --wait, and the answer comes typed in here');
       const said = await words2text(words, 'give the message: in quotes, --prompt-file <file>, or - to read it from stdin');
-      const sent = await call('POST', `/sessions/${to}/messages`, { text: said });
+      const sent = await call('POST', `/sessions/${to}/messages`, { text: said, ...(flags.question ? { question: true } : {}) });
       if (flags.json && !flags.wait) return say(JSON.stringify(sent)), 0;
       say(sent.held ? `Held for session ${to}: it gets it once it is at its prompt (${sent.session?.status}${sent.session?.state ? `, ${sent.session.state}` : ''})`
         : `Sent to session ${to}${sent.unknown ? ' (the console did not hear back in time: it may have gone in)' : ''}`);

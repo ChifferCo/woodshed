@@ -430,7 +430,9 @@ URL on top of each env file's Repo settings values
   `sessionStarts: message` with its `outcome`: `queued` is held until the other is at its prompt (it works, waits in
   line or is paused), as Chat's held messages are; a `send --wait` that says `it did not take up what was sent` saw the
   other neither work nor hold it for 90 s. `woodshed-session agent …` is a helper agent beside the session's own: the console logs `sessionStarts: agent asked
-  for`, then the + Another agent lines below, with the same refusals.
+  for`, then the + Another agent lines below, with the same refusals. A session that reads **asked a question** sent
+  `reply --question` (`fleet: session asked a question`) and is not answered yet: a message to it, or its working again,
+  clears it (`fleet: question answered` with `why`).
 - **A private session starts without its MCP logins, or Resume opens a blank
   claude.** The session's log says `Claude home restored`, `No Claude home
   saved yet` or `WARNING: Claude home not restored` with the status. Every 5

@@ -120,6 +120,9 @@
   function displayStatus(s) {
     if (s.status === 'running') {
       if (s.state === 'needs-you') return { key: 'needs-you', word: 'needs you' };
+      // Done with its turn on a question it asked the session that started it (woodshed-session reply --question), which
+      // waits for an answer: its person's, passed on by that session.
+      if (s.state === 'done' && s.askedAt) return { key: 'needs-you', word: 'asked a question' };
       if (s.state === 'working') return { key: 'working', word: 'working' };
       if (s.state === 'done' && s.slackWaiting) return { key: 'review', word: 'in review' };
       // Done with its turn, but a background shell that waits on a job still runs on a pull request: it needs nobody yet.
