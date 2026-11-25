@@ -132,6 +132,8 @@ const iso = (ms) => new Date(ms).toISOString();
 // ones. A session the fleet starts or resumes takes the next of `script`'s steps each time the list is read, as a start
 // moves while the command line waits. The command line is signed in as mia-dev before each test.
 async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false, hc = fakeHc(), app = fakeApp(null, { missing: true }), relativeConfig = false, tty = true, terminal = null, extra = [], onSleep = null, signal = undefined, githubSessions = null, appDomain = null, appScript = [], env = {} } = {}) {
+  const locking = new Set();
+  const lockingListeners = [];
   let clock = T0;
   const now = () => clock;
   const store = { state: {}, save() {} };
@@ -188,12 +190,16 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       return s;
     },
     // The Chat tab's send (server.mjs, terminalAction): held while the agent works, as the fleet's is.
-    send: async (session, text) => {
+    send: async (session, text, { id } = {}) => {
       calls.push(['send', { id: session.id, text }]);
-      return session.state === 'working' ? 'queued' : 'sent';
+      if (session.state !== 'working') return 'sent';
+      session.pendingMessages = [...(session.pendingMessages ?? []), { id, text }];
+      return 'queued';
     },
-    // The agents beside a session's own (server.mjs, agentAction): allowed once statusd started one.
-    isLocked: (s) => Boolean(s.taintedAt),
+    // The agents beside a session's own (server.mjs, agentAction): allowed once statusd started one. A lockdown as the
+    // fleet's starts one: locking until the test taints it, its listeners told at once.
+    isLocked: (s) => Boolean(s.taintedAt) || locking.has(s.id),
+    onLocking: (fn) => lockingListeners.push(fn),
     allowAgent: (s, agent) => { calls.push(['allowAgent', { id: s.id, agent }]); return true; },
     removePrivateSession: async ({ owner, id }) => {
       calls.push(['remove', { owner, id }]);
@@ -296,7 +302,8 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
   };
   const signed = await run(['login', '--console', origin]);
   assert.equal(signed.code, EXIT.done, signed.err);
-  return { origin, run, calls, sessions, cli, hc, app, dir, answer: (a) => { answer = a; }, listFailures, now, appShares };
+  const lockDown = (id) => { locking.add(id); for (const fn of lockingListeners) fn(id); };
+  return { origin, run, calls, sessions, cli, hc, app, dir, answer: (a) => { answer = a; }, listFailures, now, appShares, lockDown };
 }
 
 // A start as the fleet moves it: in line, starting, each step, then running.
@@ -1937,6 +1944,15 @@ test('session send --wait types a message in, waits for the turn on it, and prin
   assert.equal(waited.code, EXIT.waiting, waited.err);
   assert.match(waited.out, /^Session c0c0aa01 is .+\.\n$/);
 
+  // Sent while it works: held behind the turn already running, whose answer is not this message's.
+  session.state = 'working';
+  steps.push(() => { session.state = 'done'; said('assistant', 'The turn it was held behind.', 0); session.lastMessage = { role: 'claude', text: 'The turn it was held behind.', at: iso(c.now()) }; });
+  steps.push(() => { session.pendingMessages = []; session.state = 'working'; said('user', 'Then the tests.', 0); });
+  steps.push(() => { session.state = 'done'; said('assistant', 'Its answer.', 1); });
+  const held = await c.run(['session', 'send', 'c0c0aa01', 'Then the tests.', '--wait']);
+  assert.equal(held.code, EXIT.done, held.err);
+  assert.match(held.out, /^Held for session c0c0aa01: .+\nSession c0c0aa01 is done\.\n\[said \d\d:\d\d\] Its answer\.\n$/);
+
   // What a session that has seen production data said stays on the console.
   const before = statusd.asked.length;
   const tainted = await c.run(['session', 'read', 'c0c0aa02']);
@@ -1953,4 +1969,34 @@ test('session send needs a message, and read --last a number', () => {
   assert.deepEqual(parseSessionArgs('send', ['0a1b2c3d', '--wait', 'do', 'it'], fail), { wait: true, id: '0a1b2c3d', text: 'do it' });
   assert.throws(() => parseSessionArgs('send', ['0a1b2c3d'], fail), /needs the message/);
   assert.deepEqual(parseSessionArgs('read', ['0a1b2c3d', '--last', '3'], fail), { last: '3', id: '0a1b2c3d' });
+});
+
+test('a conversation read the command line waits on is cut when the session\'s lockdown starts, and refused while it locks', async (t) => {
+  // A statusd that answers slowly, by when the test says: what it sends after the lockdown started could be production's.
+  let answer;
+  const server = http.createServer((req, res) => {
+    answer = () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ entries: [{ role: 'assistant', text: 'Customer 4411 owes 1,204.50.', at: iso(T0) }] })); };
+  });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const c = await consoleFor(t, { extra: [
+    { id: 'c0c0aa03', owner: 'mia-dev', title: 'About to read prod', status: 'running', state: 'working', safeSend: true, lastMessage: { role: 'claude', text: 'Reading.', at: iso(T0) },
+      endpoint: { host: '127.0.0.1', statusPort: port, termPort: 1 } },
+  ] });
+  const reading = c.run(['session', 'read', 'c0c0aa03']);
+  while (!answer) await new Promise((r) => setTimeout(r, 10));
+  c.lockDown('c0c0aa03');
+  answer();
+  const read = await reading;
+  assert.notEqual(read.code, EXIT.done);
+  assert.doesNotMatch(read.out + read.err, /4411/, 'nothing statusd sent after the lockdown started reached the command line');
+
+  const again = await c.run(['session', 'read', 'c0c0aa03']);
+  assert.equal(again.code, EXIT.refused, 'refused while it locks');
+  assert.match(again.err, /seen production data/);
+
+  // Nor does a tainted session's last message reach it on the list.
+  at(c.sessions, 'c0c0aa03').taintedAt = iso(T0);
+  const listed = await c.run(['session', 'get', 'c0c0aa03', '--json']);
+  assert.doesNotMatch(listed.out, /Reading\./);
 });

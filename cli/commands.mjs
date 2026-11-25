@@ -128,7 +128,7 @@ export const COMMANDS = [
     path: ['session', 'read', '<id>'], effect: 'read',
     about: 'what one of your running sessions was asked and said, newest last; never one that has seen production data',
     args: [id()],
-    options: [{ name: 'last', value: 'n', check: /^[1-9][0-9]{0,2}$/, about: 'how many of its latest messages (default 10)' }],
+    options: [{ name: 'last', value: 'n', check: /^(100|[1-9][0-9]?)$/, about: 'how many of its latest messages, up to 100 (default 10)' }],
   },
   {
     path: ['session', 'agent', '<id>', 'stop', '<agent>'], effect: 'destructive', about: 'end one of them',

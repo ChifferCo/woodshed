@@ -51,6 +51,7 @@
 // from that terminal), so an agent there can `hc wait --children` on it: the session, started or resumed with
 // herdrParent, waits for it rather than make its own.
 
+import { randomUUID } from 'node:crypto';
 import { sessionOptions } from './commands.mjs';
 import {
   HC_MINIMUM, WATCH_SPACE, WATCH_TERMINAL, addMachine, agentOn, hcVersion, leftoverMachines, machineName, nameAgentPlace, parentTerminal, removeMachine,
@@ -114,10 +115,10 @@ Commands:
                              session new takes them (auto by default)
   agent <id> stop <agent-N>  end one of them
   send <id> "message"        type a message in at one of your running sessions' agent, as the Chat tab's Send does;
-                             held while it works, and typed in once its turn ends
-      --wait                 then wait until it has worked on it, and print what it said
+                             held while it works or a prompt is on its screen, typed in once it is back at its prompt
+      --wait                 then wait until it has gone in and been worked on, and print what it said
   wait <id>                  until one of your sessions is done with its turn, needs you, or stops
-  read <id> [--last <n>]     what it was asked and said, newest last (default the last 10), from its Chat. Never a
+  read <id> [--last <n>]     what it was asked and said, newest last (default 10, up to 100), from its Chat. Never a
                              session that has seen production data: its conversation is read on the console only
   herdr <id>                 make one of your sessions a machine in Herdr (hc ${HC_MINIMUM} or newer), woodshed-<id>,
                              reached through woodshed tunnel; a paused one is resumed first, and waited for. Run on
@@ -1147,26 +1148,34 @@ export async function sessionCommand({ origin, rest }, ctx) {
   // How long a message that went in may go unworked on before it is said not to have been taken up.
   const NO_REPLY_MS = 90_000;
 
-  // Until the session is done with its turn, needs its person or stops. With `sentAt`, a turn after the message went in:
-  // one already settled is not its answer, and one too quick to be seen working is told by a newer last message.
-  async function waitTurn(sentAt = null) {
-    const started = now();
+  // Until the session is done with its turn, needs its person or stops. With `held`, the id of the message just sent:
+  // a turn only once the console no longer holds it (it is typed in when the agent is back at its prompt), so the turn
+  // it was held behind is not its answer, and one too quick to be seen working is told by a newer last message. As
+  // sessionStarts.mjs's waitLoop does for woodshed-session.
+  async function waitTurn(held = null) {
+    let deliveredAt = held === null ? now() : null;
     let worked = false;
     for (;;) {
       const { s: x } = await find(id);
-      if (!LIVE.has(x.status)) return { s: x, ended: true };
-      if (x.state === 'working') worked = true;
-      const settled = x.status === 'running' && SETTLED.has(x.state);
-      const newer = sentAt && x.lastMessage?.role === 'assistant' && x.lastMessage.at && Date.parse(x.lastMessage.at) > sentAt;
-      if (settled && (sentAt === null || worked || newer)) return { s: x };
-      if (settled && sentAt && now() - started >= NO_REPLY_MS) return { s: x, noReply: true };
+      if (!LIVE.has(x.status)) return { s: x, ended: true, deliveredAt };
+      if (held !== null && (Array.isArray(x.heldIds) ? x.heldIds.includes(held) : x.pendingMessages > 0)) {
+        deliveredAt = null;
+        worked = false;
+      } else if (deliveredAt === null) deliveredAt = now();
+      // statusd's last message is `you` or `claude` (shared/sessionState.mjs), whichever agent it is.
+      const answered = x.lastMessage?.role === 'claude' && x.lastMessage.at && Date.parse(x.lastMessage.at) > deliveredAt;
+      if (deliveredAt !== null && (x.state === 'working' || (held !== null && answered))) worked = true;
+      const settled = x.status === 'running' && SETTLED.has(x.state) && deliveredAt !== null;
+      if (settled && (held === null || worked)) return { s: x, deliveredAt };
+      if (settled && now() - deliveredAt >= NO_REPLY_MS) return { s: x, noReply: true, deliveredAt };
       await sleep(POLL_MS);
     }
   }
 
-  async function conversation(limit) {
+  // The most statusd gives (its /transcript's limit), of which the tool calls are left out here.
+  async function conversation() {
     try {
-      const body = await ask(`/api/sessions/${id}/transcript?limit=${limit}`);
+      const body = await ask(`/api/sessions/${id}/transcript?limit=300`);
       return (Array.isArray(body.entries) ? body.entries : []).filter((e) => (e.role === 'user' || e.role === 'assistant') && typeof e.text === 'string' && e.text.trim());
     } catch (err) {
       if (err.http === 409) throw fail(`Session ${id}: ${err.message}`, { code: EXIT.refused, status: 'refused' });
@@ -1202,10 +1211,11 @@ export async function sessionCommand({ origin, rest }, ctx) {
 
   if (sub === 'send') {
     if (s.status !== 'running') throw fail(`Session ${id} is ${stateOf(s).word}: a message is typed in only while it runs. woodshed session resume ${id} first.`, { code: EXIT.refused, status: 'not-running' });
-    const sentAt = now();
+    // Its own id, which the console lists in `heldIds` while it holds the message.
+    const messageId = randomUUID();
     let sent;
     try {
-      sent = await ask(`/api/sessions/${id}/send`, { method: 'POST', body: { text: opts.text } });
+      sent = await ask(`/api/sessions/${id}/send`, { method: 'POST', body: { text: opts.text, id: messageId } });
     } catch (err) {
       if (err.http === 409) throw fail(`Session ${id}: ${err.message}`, { code: EXIT.refused, status: 'refused' });
       throw err;
@@ -1213,9 +1223,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
     if (json) emit({ event: 'sent', session: id, held: Boolean(sent.held), ...(sent.unknown ? { unknown: true } : {}) });
     else say(sent.held ? `Held for session ${id}: it is typed in once its agent's turn ends.` : `Sent to session ${id}${sent.unknown ? ' (the console did not hear back in time: it may have gone in)' : ''}.`);
     if (!opts.wait) return EXIT.done;
-    const turn = await waitTurn(sentAt);
-    // What a session that has seen production data said stays on the console.
-    const said = turn.ended || turn.noReply || turn.s.taintedAt ? [] : (await conversation(50)).filter((e) => e.role === 'assistant' && e.at && Date.parse(e.at) > sentAt);
+    const turn = await waitTurn(messageId);
+    // What it said since the message went in. What a session that has seen production data said stays on the console.
+    const said = turn.ended || turn.noReply || turn.s.taintedAt ? [] : (await conversation()).filter((e) => e.role === 'assistant' && e.at && Date.parse(e.at) >= turn.deliveredAt);
     if (json) {
       emit({ event: 'turn', session: summary(turn.s, { origin, login, appsOn }), ended: Boolean(turn.ended), noReply: Boolean(turn.noReply), said });
       return turnCode(turn);
@@ -1236,7 +1246,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
   if (sub === 'read') {
     if (s.status !== 'running') throw fail(`Session ${id} is ${stateOf(s).word}: its conversation is read while it runs. woodshed session resume ${id} first.`, { code: EXIT.refused, status: 'not-running' });
     const last = opts.last === undefined ? 10 : Number(opts.last);
-    const entries = (await conversation(Math.max(last * 3, 50))).slice(-last);
+    const entries = (await conversation()).slice(-last);
     if (json) emit({ event: 'conversation', session: id, entries });
     else say(entries.length ? entries.map(entryText).join('\n') : 'Nothing said yet.');
     return EXIT.done;

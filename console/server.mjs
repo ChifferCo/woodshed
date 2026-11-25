@@ -2996,6 +2996,17 @@ export function createHandler({
     return toStatusd(req, res, session, { method: 'GET', path: `/${what}${query}` });
   }
 
+  // The command line's conversation reads still being answered, by session: cut the moment its lockdown starts, before
+  // anything it reads from production can be in what statusd sends (a production call goes on only once it is locked).
+  const cliTranscripts = new Map();
+  fleet.onLocking?.((id) => {
+    for (const res of cliTranscripts.get(id) ?? []) {
+      console.log('cliSessions: conversation read cut off, the session is being locked down', { id });
+      res.destroy();
+    }
+    cliTranscripts.delete(id);
+  });
+
   // The command line token's reads and writes, past handleCliCall's checks (cliSessions.mjs). A config write answers
   // with the config alone (cliConfig.mjs).
   async function cliRead(req, res, url, login) {
@@ -3012,13 +3023,26 @@ export function createHandler({
     // stays on the console rather than reach a computer.
     const transcriptRead = TERMINAL_RE.exec(pathname);
     if (transcriptRead?.[2] === 'transcript') {
-      if (findFor(transcriptRead[1], login)?.taintedAt) {
-        console.log('cliSessions: refused, a tainted session\'s conversation', { login, id: transcriptRead[1] });
+      const id = transcriptRead[1];
+      const found = findFor(id, login);
+      if (found?.taintedAt || (found && fleet.isLocked?.(found))) {
+        console.log('cliSessions: refused, a tainted session\'s conversation', { login, id, locking: !found.taintedAt });
         return reply(res, 409, { error: 'this session has seen production data: its conversation is read on the console only' });
       }
+      const open = cliTranscripts.get(id) ?? new Set();
+      cliTranscripts.set(id, open.add(res));
+      res.on('close', () => {
+        open.delete(res);
+        if (!open.size && cliTranscripts.get(id) === open) cliTranscripts.delete(id);
+      });
       return statusdRead(req, res, url, login, transcriptRead);
     }
-    return reply(res, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
+    if (pathname === '/api/sessions') {
+      // Nor its last words, which the list carries for the page's cards.
+      const body = sessionsBody(login);
+      return reply(res, 200, { ...body, sessions: body.sessions.map((x) => (x.taintedAt ? { ...x, lastMessage: null } : x)) });
+    }
+    return reply(res, 200, await projectsView(login));
   }
   function cliWrite(req, res, pathname, login) {
     // An own sign-in saved from the command line (woodshed sign-in push): the page's own save, answered with whether one
