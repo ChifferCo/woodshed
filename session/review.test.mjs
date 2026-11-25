@@ -435,6 +435,9 @@ test('the model screen is a claude call, so a review that did not choose Claude 
   assert.match(codexOnly.logs.find((l) => l.tier === 'full').text, /No model check for secrets: Claude is not one of this review's reviewers/);
   const both = await runReview(t, { agents: 'claude codex', claude: REVIEW_FAKE_SCREEN_RECORDER, codex: codexWithPrivateDiagnostic });
   assert.ok(fs.existsSync(seen), 'with Claude among the reviewers, the screen runs');
+  const prompts = fs.readFileSync(seen, 'utf8');
+  assert.doesNotMatch(prompts, /PRIVATE-WORKSPACE-MARKER/, 'another provider\'s diagnostic is never in the screen\'s prompt');
+  assert.match(both.logs.find((l) => l.tier === 'full').text, /## what the agents said[\s\S]*PRIVATE-WORKSPACE-MARKER/, 'it is in the restricted log, after the screen');
   assert.ok(both.logs.some((l) => l.tier === 'full'));
 });
 

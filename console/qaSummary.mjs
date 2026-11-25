@@ -42,6 +42,7 @@ export function summaryProblem(text, { number, base }) {
   // The steps the script says as it goes, each with its time.
   const steps = [
     new RegExp(`^QA of pull request #${Number(number)} against ${ref}$`),
+    /^QA notes present$/,
     /^QA notes: \.woodshed\/qa\.md$/,
     new RegExp(`^No QA notes on ${ref}$`),
     new RegExp(`^Could not fetch ${ref}: the planner's diff will fail$`),

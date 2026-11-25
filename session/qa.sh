@@ -157,7 +157,7 @@ logBody() {
   echo
   echo '## steps'
   # The "Nothing to test" step quotes the planner's own words, and two steps name a file: only the full log has them.
-  if [ "$text" = full ]; then sed '/^$/d' "$DIR/logs/steps.log" 2>/dev/null; else sed -E '/^$/d; /Nothing to test:/d; s/^(.*Video not sent, [^:]*): .*$/\1/; s/^(.*No still sent: ffmpeg made none) from .*$/\1/' "$DIR/logs/steps.log" 2>/dev/null; fi
+  if [ "$text" = full ]; then sed '/^$/d' "$DIR/logs/steps.log" 2>/dev/null; else sed -E '/^$/d; /Nothing to test:/d; s/^(.*Video not sent, [^:]*): .*$/\1/; s/^(.*QA notes): .*$/\1 present/; s/^(.*No still sent: ffmpeg made none) from .*$/\1/' "$DIR/logs/steps.log" 2>/dev/null; fi
   echo
   local flag=''; [ "$text" = full ] || flag=--summary
   if [ -f "$DIR/logs/plan.jsonl" ] || [ ! -f "$DIR/logs/plan-started" ]; then node "$RUN_LOG" $flag plan "$DIR/logs/plan.jsonl"; else printf '## plan\nStarted; its outcome is not known yet.\n'; fi

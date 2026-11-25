@@ -46,7 +46,7 @@ function listen(handler) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runQa(t, { skip = false, app = 'running', noReport = false, leak = false, screen = null, opaque = false, pin = false } = {}) {
+async function runQa(t, { skip = false, app = 'running', noReport = false, leak = false, screen = null, opaque = false, pin = false, notes = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-sh-'));
   const sessionDir = path.join(dir, 'session');
   const bin = path.join(dir, 'fakebin');
@@ -59,7 +59,7 @@ async function runQa(t, { skip = false, app = 'running', noReport = false, leak 
   const ffmpeg = path.join(bin, 'ffmpeg-linux');
   fs.writeFileSync(ffmpeg, `#!/bin/bash\necho "$*" > "${path.join(dir, 'ffmpeg-args')}"\nprintf '\\x89PNG\\r\\n\\x1a\\nstill' > "\${@: -1}"\n`, { mode: 0o755 });
   // The base is a branch the clone has never fetched, as for a stacked pull request.
-  execFileSync('bash', ['-c', `git init -q -b main "${repo}" && cd "${repo}" && mkdir .woodshed && echo 'Sign in as demo.' > .woodshed/qa.md &&
+  execFileSync('bash', ['-c', `git init -q -b main "${repo}" && cd "${repo}" && mkdir .woodshed docs && echo 'Sign in as demo.' > .woodshed/qa.md && echo 'Custom notes.' > docs/qa-notes.md &&
     git add -A && git -c user.email=t@t -c user.name=t commit -qm base && git init -q --bare "${dir}/origin.git" &&
     git push -q "${dir}/origin.git" HEAD:refs/heads/stacked-base && git remote add origin "${dir}/origin.git"`]);
 
@@ -95,7 +95,7 @@ async function runQa(t, { skip = false, app = 'running', noReport = false, leak 
   const env = {
     ...isolatedEnv(), PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', QA_BASE: 'stacked-base',
     SESSION_ID: '0a1b2c3d', SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`,
-    STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_FFMPEG: ffmpeg, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}), ...(noReport ? { FAKE_NO_REPORT: '1' } : {}), ...(leak ? { FAKE_LEAK: '1' } : {}), ...(screen ? { FAKE_SCREEN: screen } : {}), ...(opaque ? { FAKE_OPAQUE: '1' } : {}), ...(pin ? { REGISTRY_PIN: '3999', WOODSHED_INSTALL_SECRETS: 'REGISTRY_PIN' } : {}),
+    STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_FFMPEG: ffmpeg, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}), ...(noReport ? { FAKE_NO_REPORT: '1' } : {}), ...(leak ? { FAKE_LEAK: '1' } : {}), ...(screen ? { FAKE_SCREEN: screen } : {}), ...(opaque ? { FAKE_OPAQUE: '1' } : {}), ...(notes ? { QA_NOTES: notes } : {}), ...(pin ? { REGISTRY_PIN: '3999', WOODSHED_INSTALL_SECRETS: 'REGISTRY_PIN' } : {}),
   };
   const output = await new Promise((resolve, reject) => {
     const child = spawn('bash', [QA_SH], { env });
@@ -202,7 +202,7 @@ test('the summary tier never carries what a pass printed, even when the secret s
 });
 
 test('every summary the script sends is one the console accepts, in each kind of run', async (t) => {
-  for (const options of [{}, { skip: true }, { noReport: true }, { app: 'failed' }, { opaque: true, leak: true }, { pin: true }]) {
+  for (const options of [{}, { skip: true }, { noReport: true }, { app: 'failed' }, { opaque: true, leak: true }, { pin: true }, { notes: 'docs/qa-notes.md' }]) {
     const { logs } = await runQa(t, options);
     const summaries = logs.filter((l) => l.tier === 'summary');
     assert.ok(summaries.length > 0);

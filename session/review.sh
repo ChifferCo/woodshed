@@ -322,7 +322,14 @@ logBody() {
   fi
   echo
   printf '## verdict\nVerdict: %s\n' "${VERDICT_WORD:-not yet}"
-  if [ "$text" = full ] && [ -s "$DIR/logs/details.log" ]; then echo; echo '## what the agents said'; sed '/^$/d' "$DIR/logs/details.log"; fi
+}
+
+# What the agents' own output said (an error, a sign-in diagnostic): for the full log only, appended after the model screen,
+# never into its prompt. Claude's screen is for Claude's own words: another provider's diagnostics stay on this machine until
+# they go, scrubbed by value and by pattern, to the restricted log.
+detailsBody() {
+  [ -s "$DIR/logs/details.log" ] || return 0
+  echo; echo '## what the agents said'; sed '/^$/d' "$DIR/logs/details.log"
 }
 
 postLog() {
@@ -344,6 +351,7 @@ sendLog() {
   # its other providers' diagnostics out of it, and its log is scrubbed by pattern alone.
   if withClaude || [ -z "$(reviewers)" ]; then screenLog "$DIR/logs/run.log"
   else printf '\n(No model check for secrets: Claude is not one of this review'"'"'s reviewers, so its log was scrubbed by pattern only.)\n' >> "$DIR/logs/run.log"; fi
+  detailsBody 2>&1 | node "$RUN_LOG" --redact >> "$DIR/logs/run.log"
   postLog full "$DIR/logs/run.log"
 }
 
