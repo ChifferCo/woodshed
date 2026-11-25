@@ -11,6 +11,7 @@ set -uo pipefail
 
 : "${SESSION_DIR:?}" "${REPO_DIR:?}" "${PR:?}" "${QA_BASE:?}" "${SESSION_TOKEN:?}" "${WOODSHED_CONSOLE_URL:?}"
 QA=${QA_SCRIPT:-/opt/woodshed/shared/qa/qa.mjs}
+RUN_LOG=${QA_RUN_LOG:-$(dirname "$QA")/runLog.mjs}
 DIR=$REPO_DIR/.qa
 RUNNING=${QA_RUNNING:-/tmp/qa-running}
 STATUSD=http://127.0.0.1:${STATUSD_PORT:-7682}
@@ -26,7 +27,8 @@ MAX_VIDEOS=5
 # The ffmpeg Playwright records with, for the still the QA comment shows: the image ships it beside its Chromium.
 QA_FFMPEG=${QA_FFMPEG:-$(ls -1d "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"/ffmpeg-*/ffmpeg-linux 2>/dev/null | tail -1)}
 
-say() { printf '\n[qa %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
+# Each step is kept as well as shown, for the run log the console keeps (sendLog).
+say() { printf '\n[qa %s] %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$DIR/logs/steps.log"; }
 
 # The session token goes to curl on stdin, not in its arguments, where `ps` would show it.
 statusd() {
@@ -126,9 +128,34 @@ waitForApp() {
   return 1
 }
 
+# The run log: the steps this script took, then how each claude pass ended (shared/qa/runLog.mjs). Kept on the console
+# beside the report, and sent after each pass too, so a session that is stopped before its report still leaves one.
+sendLog() {
+  local code
+  {
+    echo "QA of pull request #$PR against $QA_BASE, session ${SESSION_ID:-unknown}"
+    echo
+    echo '## steps'
+    sed '/^$/d' "$DIR/logs/steps.log" 2>/dev/null
+    echo
+    node "$RUN_LOG" plan "$DIR/logs/plan.jsonl"
+    echo
+    node "$RUN_LOG" test "$DIR/logs/test.jsonl"
+    for f in SKIP NO_PLAN; do [ -f "$DIR/plan/$f.md" ] && { echo; echo "## plan/$f.md"; head -c 2000 "$DIR/plan/$f.md"; }; done
+    [ -f "$DIR/report.md" ] || { echo; echo 'No report.md was written.'; }
+  } > "$DIR/logs/run.log" 2>&1
+  code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
+    | curl -sS --max-time 60 -o /tmp/qa-log-reply.json -w '%{http_code}' -X POST -K - -H 'content-type: text/plain' \
+      --data-binary "@$DIR/logs/run.log" "$WOODSHED_CONSOLE_URL/qa-log") || code=000
+  echo "Run log sent to the console (status: $code)"
+}
+
 sendReport() {
-  local notCovered=$1 verdict body code
-  verdict=$(node "$QA" verdict "$DIR" --not-covered "$notCovered")
+  local notCovered=$1 verdict body code ended=''
+  # No report because a pass ran out of turns or was cut off: the verdict says so, not only "no QA report".
+  if [ ! -s "$DIR/report.md" ] && [ -f "$DIR/logs/test.jsonl" ]; then ended=$(node "$RUN_LOG" --why test "$DIR/logs/test.jsonl"); fi
+  [ -n "$ended" ] || { [ -f "$DIR/logs/plan.jsonl" ] && [ ! -s "$DIR/plan/plan.md" ] && ended=$(node "$RUN_LOG" --why plan "$DIR/logs/plan.jsonl"); }
+  verdict=$(node "$QA" verdict "$DIR" --not-covered "$notCovered" --ended "$ended")
   say "Verdict: $(jq -r '"\(.conclusion), \(.passed) of \(.total) passed, \(.failed) failed, \(.unverified) unverified"' <<< "$verdict")"
   cost_of() { [ -f "$1" ] && jq -rR 'fromjson? | select(.type == "result") | .total_cost_usd // empty' "$1" | tail -1; }
   body=$(mktemp)
@@ -145,6 +172,7 @@ sendReport() {
 
 # The run ends here, whichever way it went: the report goes to the console, and the session reads as done.
 finish() {
+  sendLog
   sendReport "$1"
   rm -f "$RUNNING"
   exit 0
@@ -172,6 +200,7 @@ main() {
 
   say "Planning the tests"
   runClaude "$DIR/plan-prompt.md" "$DIR/logs/plan.jsonl" 40 --allowedTools "Bash,Read,Write,Edit"
+  sendLog
   if [ -f "$DIR/plan/SKIP.md" ]; then
     say "Nothing to test: $(head -1 "$DIR/plan/SKIP.md")"
     finish ''
@@ -194,6 +223,7 @@ main() {
   runClaude "$DIR/test-prompt.md" "$DIR/logs/test.jsonl" 200 --allowedTools "Bash,Read,Write,Edit,Glob,Grep,mcp__playwright" \
     --mcp-config "$DIR/mcp.json" --strict-mcp-config
   waitForBrowser
+  sendLog
   sendVideos
   finish ''
 }

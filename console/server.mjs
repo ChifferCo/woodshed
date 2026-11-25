@@ -258,7 +258,7 @@ import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
 import agentsRegistry from '../shared/agents.cjs';
 import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetup.mjs';
 import { createInstallation } from './installation.mjs';
-import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sessionOptions, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
+import { ACTIVE_STATUSES, activePrivateCount, canSee, isQa, linkQueryString, prUrlsOf, publicSession, sessionOptions, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
 import { WEBHOOK_SECRET } from './settings.mjs';
 import { openStore } from './store.mjs';
 import { parseHandle } from './members.mjs';
@@ -420,6 +420,7 @@ const ASSIGN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/assign$/;
 const SHARED_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(resume|delete|remove)$/;
 const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename|group)$/;
 const LIMIT_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(extend|limits)$/;
+const QA_LOG_RE = /^\/api\/sessions\/([0-9a-f]{8})\/qa-log$/;
 const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|interrupt|answer|prompt|applog|diff|transcript)$/;
 // The agents started beside a private session's own (session/agents.mjs): the list, a start, and each one's Chat routes.
 const AGENTS_RE = /^\/api\/sessions\/([0-9a-f]{8})\/agents(?:\/(agent-[2-9])\/(transcript|send|interrupt|answer|prompt|stop))?$/;
@@ -3223,6 +3224,15 @@ export function createHandler({
       const allowed = asked && projectAccess ? await projectAccess.forStart(user.login, asked) : null;
       if (asked && projectAccess && !allowed) console.log('console: open pull requests of a project not open to the person, the default\'s instead', { login: user.login, project: String(asked).slice(0, 40) });
       return openPullsReply(res, projectAccess ? allowed?.name ?? null : asked);
+    }
+    const qaLogRead = QA_LOG_RE.exec(pathname);
+    if (qaLogRead) {
+      // Whoever may open the QA session reads its run log: how its claude passes ended, and what it did.
+      const found = findFor(qaLogRead[1], user.login);
+      if (!found || !isQa(found)) return reply(res, 404, { error: 'no such QA session' });
+      if (!found.qa?.log) return reply(res, 404, { error: 'this QA session sent no run log' });
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }).end(found.qa.log);
+      return;
     }
     const qaVideo = QA_VIDEO_RE.exec(pathname);
     if (qaVideo) {

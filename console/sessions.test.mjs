@@ -293,6 +293,12 @@ test('a pull request says which of Woodshed\'s review and QA are at work on it',
   assert.deepEqual(runsOn(null), []);
 });
 
+test('publicSession keeps a QA run\'s log out of the list and says it has one', () => {
+  const view = publicSession(session({ qa: { base: 'main', log: '## test\nEnded: ran out of turns\n' } }));
+  assert.deepEqual(view.qa, { base: 'main', hasLog: true });
+  assert.deepEqual(publicSession(session({ qa: { base: 'main' } })).qa, { base: 'main' });
+});
+
 test('publicSession drops a public QA run\'s secret, and keeps the rest of its QA', () => {
   const view = publicSession(session({ qa: { base: 'main', share: 'c'.repeat(32), videos: [{ n: 1, bytes: 1 }] } }));
   assert.deepEqual(view.qa, { base: 'main', videos: [{ n: 1, bytes: 1 }] });

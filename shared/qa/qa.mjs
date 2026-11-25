@@ -3,7 +3,7 @@
 //
 //   node qa.mjs prompts <dir> --app-url <url> --base <branch> [--notes <file>]
 //       writes <dir>/plan-prompt.md, <dir>/test-prompt.md and <dir>/rubric.md
-//   node qa.mjs verdict <dir> [--not-covered <why>]
+//   node qa.mjs verdict <dir> [--not-covered <why>] [--ended <how the test pass ended>]
 //       prints {conclusion, title, status, total, passed, failed, unverified, edgeWarnings} as JSON
 import fs from 'node:fs';
 import path from 'node:path';
@@ -44,11 +44,12 @@ const headed = (report, prefix, mark) => report.split('\n')
  * anything that kept the run from a verdict is neutral, so a broken run never reads as a broken pull request. Edge
  * cases are the planner's guesses, not agreed criteria: flagged, never part of the verdict.
  * @param {{report: string|null, skip: string|null, noPlan: string|null, notCovered: string|null}} args
- *   the report, the first lines of SKIP.md and NO_PLAN.md, and why the app could not start; null for what is not there
+ *   the report, the first lines of SKIP.md and NO_PLAN.md, and why the app could not start; null for what is not there.
+ *   `endedWith` says how the test pass ended when that kept it from a report, for the status of a run with none
  * @returns {{conclusion: 'success'|'failure'|'neutral', title: string, status: string, total: number, passed: number,
  *   failed: number, unverified: number, edgeWarnings: number}}
  */
-export function verdictOf({ report, skip, noPlan, notCovered }) {
+export function verdictOf({ report, skip, noPlan, notCovered, endedWith = null }) {
   const text = report ?? '';
   const total = headed(text, 'TC');
   const passed = headed(text, 'TC', '✅');
@@ -61,7 +62,9 @@ export function verdictOf({ report, skip, noPlan, notCovered }) {
   if (notCovered) result = notCoveredBy(`🔌 **Not covered**: ${notCovered}`, `Not covered: ${notCovered}`);
   else if (skip != null) result = notCoveredBy(`⏭️ **Not covered**: ${skip}`, 'Not covered: nothing to test');
   else if (noPlan != null) result = notCoveredBy(`⚠️ **Not covered**: ${noPlan}`, 'Not covered: no test plan');
-  else if (total === 0) result = notCoveredBy('⚠️ **Not covered**: the run ended without a QA report', 'Not covered: no QA report');
+  else if (total === 0) {
+    result = notCoveredBy(`⚠️ **Not covered**: the run ended without a QA report${endedWith ? `, because ${endedWith}` : ''}`, 'Not covered: no QA report');
+  }
   else if (failed > 0) {
     result = { conclusion: 'failure', status: `❌ **Fail**: ${failed} of ${total} test cases failed`,
       title: `Fail: ${failed} of ${total} test cases failed`, ...counts };
@@ -80,17 +83,17 @@ export function verdictOf({ report, skip, noPlan, notCovered }) {
 const firstLine = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n')[0].trim() : null);
 
 /** The verdict of the run whose files are in `dir`: report.md, and plan/SKIP.md or plan/NO_PLAN.md. */
-export function verdictIn({ dir, notCovered }) {
+export function verdictIn({ dir, notCovered, endedWith }) {
   const reportFile = path.join(dir, 'report.md');
   const report = fs.existsSync(reportFile) ? fs.readFileSync(reportFile, 'utf8') : null;
   return verdictOf({ report, skip: firstLine(path.join(dir, 'plan', 'SKIP.md')),
-    noPlan: firstLine(path.join(dir, 'plan', 'NO_PLAN.md')), notCovered: notCovered || null });
+    noPlan: firstLine(path.join(dir, 'plan', 'NO_PLAN.md')), notCovered: notCovered || null, endedWith: endedWith || null });
 }
 
 function main(argv) {
   const [command, dir, ...rest] = argv;
   const { values } = parseArgs({ args: rest, options: {
-    'app-url': { type: 'string' }, base: { type: 'string' }, notes: { type: 'string' }, 'not-covered': { type: 'string' },
+    'app-url': { type: 'string' }, base: { type: 'string' }, notes: { type: 'string' }, 'not-covered': { type: 'string' }, ended: { type: 'string' },
   } });
   if (command === 'prompts' && dir && values['app-url'] && values.base) {
     const notes = values.notes && fs.existsSync(values.notes) ? fs.readFileSync(values.notes, 'utf8') : null;
@@ -98,10 +101,10 @@ function main(argv) {
     return;
   }
   if (command === 'verdict' && dir) {
-    process.stdout.write(`${JSON.stringify(verdictIn({ dir, notCovered: values['not-covered'] }))}\n`);
+    process.stdout.write(`${JSON.stringify(verdictIn({ dir, notCovered: values['not-covered'], endedWith: values.ended }))}\n`);
     return;
   }
-  throw new Error('usage: qa.mjs prompts <dir> --app-url <url> --base <branch> [--notes <file>] | verdict <dir> [--not-covered <why>]');
+  throw new Error('usage: qa.mjs prompts <dir> --app-url <url> --base <branch> [--notes <file>] | verdict <dir> [--not-covered <why>] [--ended <how>]');
 }
 
 if (isMain(import.meta.url)) {

@@ -13,6 +13,11 @@ const QA_MJS = path.join(HERE, '../shared/qa/qa.mjs');
 
 // A fake claude: the planner writes the plan (or SKIP.md), the tests write the report, and each ends with its cost.
 const FAKE_CLAUDE = `#!/bin/bash
+if [ -n "\${FAKE_NO_REPORT:-}" ] && [ -f .qa/plan/plan.md ]; then
+  echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Opening the app"},{"type":"tool_use","name":"x"}]}}'
+  echo '{"type":"result","subtype":"error_max_turns","is_error":false,"num_turns":200,"total_cost_usd":2}'
+  exit 0
+fi
 if [ ! -f .qa/plan/plan.md ]; then
   if [ -n "\${FAKE_SKIP:-}" ]; then echo 'Docs only' > .qa/plan/SKIP.md; else echo '# Plan' > .qa/plan/plan.md; fi
   echo '{"type":"result","total_cost_usd":0.5}'
@@ -33,7 +38,7 @@ function listen(handler) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runQa(t, { skip = false, app = 'running' } = {}) {
+async function runQa(t, { skip = false, app = 'running', noReport = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-sh-'));
   const sessionDir = path.join(dir, 'session');
   const bin = path.join(dir, 'fakebin');
@@ -57,6 +62,7 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
   });
   const reports = [];
   const videos = [];
+  const logs = [];
   const consoleServer = await listen((req, res) => {
     const chunks = [];
     req.on('data', (c) => { chunks.push(c); });
@@ -64,6 +70,11 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
       const body = Buffer.concat(chunks);
       if (req.url === '/qa-video' || req.url === '/qa-poster') {
         videos.push({ path: req.url, authorization: req.headers.authorization, type: req.headers['content-type'], body, before: reports.length });
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+        return;
+      }
+      if (req.url === '/qa-log') {
+        logs.push({ authorization: req.headers.authorization, type: req.headers['content-type'], text: body.toString('utf8'), reports: reports.length });
         res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
         return;
       }
@@ -76,7 +87,7 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
   const env = {
     ...isolatedEnv(), PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', QA_BASE: 'stacked-base',
     SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`,
-    STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_FFMPEG: ffmpeg, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}),
+    STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_FFMPEG: ffmpeg, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}), ...(noReport ? { FAKE_NO_REPORT: '1' } : {}),
   };
   const output = await new Promise((resolve, reject) => {
     const child = spawn('bash', [QA_SH], { env });
@@ -87,7 +98,7 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
     child.on('exit', (code) => (code === 0 ? resolve(out) : reject(new Error(`qa.sh exited ${code}: ${out}`))));
   });
   const ffmpegArgs = () => fs.readFileSync(path.join(dir, 'ffmpeg-args'), 'utf8').trim();
-  return { reports, videos, statusdCalls, output, repo, ffmpegArgs, running: path.join(dir, 'qa-running') };
+  return { reports, videos, logs, statusdCalls, output, repo, ffmpegArgs, running: path.join(dir, 'qa-running') };
 }
 
 test('a QA run plans, starts the app, tests and sends the verdict, the report, the commit and the cost', async (t) => {
@@ -129,4 +140,21 @@ test('a plan with nothing to test sends a neutral verdict and never starts the a
 test('an app that fails to start is not covered, and says so', async (t) => {
   const { reports } = await runQa(t, { app: 'failed' });
   assert.equal(reports[0].body.verdict.title, 'Not covered: the app did not start');
+});
+
+test('the run log reaches the console after each pass and with the report, and says how the passes ended', async (t) => {
+  const { logs } = await runQa(t);
+  assert.equal(logs.length, 3, 'after the plan, after the tests, and as the run finishes');
+  assert.deepEqual([logs[0].authorization, logs[0].type], ['Bearer tok', 'text/plain']);
+  assert.deepEqual(logs.map((l) => l.reports), [0, 0, 0], 'each before the report');
+  assert.match(logs[2].text, /## steps[\s\S]*Planning the tests[\s\S]*Running the tests/);
+  assert.match(logs[2].text, /## plan\nEnded: finished/);
+});
+
+test('a test pass that runs out of turns with no report says so in the verdict and the log', async (t) => {
+  const { reports, logs } = await runQa(t, { noReport: true });
+  const { verdict } = reports[0].body;
+  assert.equal(verdict.conclusion, 'neutral');
+  assert.match(verdict.status, /the run ended without a QA report, because the test pass ran out of turns before it finished \(200 turns\)/);
+  assert.match(logs.at(-1).text, /## test\nEnded: ran out of turns[\s\S]*Opening the app[\s\S]*No report\.md was written\./);
 });

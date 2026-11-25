@@ -87,7 +87,7 @@ import { isReviewAgentPath, reviewAgentTokenOf } from './reviewAgentProxy.mjs';
 import { MAX_ANSWER_CHARS, MAX_ISSUE_BODY_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
-import { MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES, MAX_REPORT_CHARS, isWebm, parseQaReport } from './qaSessions.mjs';
+import { MAX_QA_LOG_BYTES, MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES, MAX_REPORT_CHARS, isWebm, parseQaReport } from './qaSessions.mjs';
 import { MAX_QA_POSTER_BYTES, isPng } from './qaRecordings.mjs';
 import { ACTIVE_STATUSES, START_STEPS, isAsk, isQa, isReview, runsCodex } from './sessions.mjs';
 import { parseReviewReport } from './reviewSessions.mjs';
@@ -225,7 +225,7 @@ export function createSessionApi({
     }
     // Its own token, not the session token (sessionStarts.mjs).
     if (sessionStarts?.isPath(pathname)) return sessionStarts.handle(req, res);
-    const routes = ['/codex-auth', '/agent-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/issues', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress'];
+    const routes = ['/codex-auth', '/agent-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/issues', '/qa-report', '/qa-log', '/qa-video', '/qa-poster', '/review-report', '/egress'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -240,6 +240,7 @@ export function createSessionApi({
     if (pathname === '/answer') return answerReply(req, res, session, asks);
     if (pathname === '/issues') return issueReply(req, res, session, asks);
     if (pathname === '/qa-report') return qaReportReply(req, res, session, fleet);
+    if (pathname === '/qa-log') return qaLogReply(req, res, session, fleet);
     if (pathname === '/qa-video') return qaRecordingReply(req, res, session, fleet, VIDEO);
     if (pathname === '/qa-poster') return qaRecordingReply(req, res, session, fleet, POSTER);
     if (pathname === '/review-report') return reviewReportReply(req, res, session, fleet);
@@ -619,6 +620,28 @@ function qaReportReply(req, res, session, fleet) {
   return reportReply(req, res, session, {
     kind: 'QA', mine: isQa(session), sent: Boolean(session.qa?.conclusion), parse: parseQaReport, finish: fleet.qaFinished,
   });
+}
+
+// A QA session's run log (session/qa.sh): plain text, sent after each pass and before the report, and kept whole, the
+// latest replacing the last, so a run that is stopped before its report still leaves why. Never refused for being late.
+async function qaLogReply(req, res, session, fleet) {
+  if (!isQa(session) || !fleet.qaLog) {
+    req.resume();
+    return reply(res, 404, { error: 'only a QA session has a run log to send' });
+  }
+  if (Number(req.headers['content-length']) > MAX_QA_LOG_BYTES) {
+    req.resume();
+    return reply(res, 413, { error: 'too large' });
+  }
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunk of req) {
+    bytes += chunk.length;
+    if (bytes > MAX_QA_LOG_BYTES) return reply(res, 413, { error: 'too large' });
+    chunks.push(chunk);
+  }
+  fleet.qaLog(session, Buffer.concat(chunks).toString('utf8'));
+  return reply(res, 200, { saved: true });
 }
 
 // One of a QA session's browser recordings, read whole and handed to the fleet, which commits it for the QA comment.

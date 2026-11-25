@@ -390,6 +390,8 @@ h1.title { margin: 0 0 4px; font-family: "Red Hat Display", -apple-system, Blink
 .ended .resume-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; max-width: 560px; }
 .ended textarea { width: 100%; min-height: 64px; resize: vertical; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--ground); color: var(--ink); font: inherit; font-size: 13px; }
 .ended .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ended .run-log-box summary { cursor: pointer; font-size: 14px; }
+.ended .run-log { margin: 8px 0 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--ground); color: var(--ink); font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 60vh; overflow: auto; }
 .ended .hint { font-size: 12.5px; color: var(--meta); }
 /* A start's checklist. Rebuilt every second, so the current step's mark is still: an animation would restart each time. */
 .start-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; max-width: 520px; }
