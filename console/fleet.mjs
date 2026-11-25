@@ -261,6 +261,10 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
   ].join('\n');
 }
 
+// What Details lists of the messages between a person's sessions (noteMessage): the newest, each cut to a line.
+const MESSAGES_KEPT = 20;
+const MESSAGE_PREVIEW_CHARS = 200;
+
 /**
  * @param {{config: object, store: {state: object, save: () => void}, launcher: object,
  *          github: object, statusd?: typeof callStatusd, now?: () => number,
@@ -282,10 +286,6 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
  *   `repoTriggers`: each repo's label and its switches for labels and /woodshed comments (repoTriggers.mjs); without
  *   it, every repo has the console's label and both on
  */
-// What Details lists of the messages between a person's sessions (noteMessage): the newest, each cut to a line.
-const MESSAGES_KEPT = 20;
-const MESSAGE_PREVIEW_CHARS = 200;
-
 export function createFleet({
   config, store, launcher, github, statusd = callStatusd, startableRepos = null, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, qaRecordings = null, members = null, pings = null,
