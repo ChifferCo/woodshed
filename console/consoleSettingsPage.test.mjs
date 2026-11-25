@@ -217,7 +217,7 @@ const buttonIn = (el, text) => walk(el).find((e) => e.tag === 'button' && textOf
 test('Slack not set up: one sentence and Set up Slack, nothing about questions, and the dialog opens at the own app\'s steps', async () => {
   const { app, dialogs } = await loadPage(WITH_SLACK, { slack: SLACK_OFF });
   const card = cardOf(app, 'slack');
-  assert.match(textOf(card), /^SlackSlack Not set upPost each pull request a shared session opens to a channel, and answer questions people ask the bot\.Set up Slack$/, 'one line, with its button on it');
+  assert.match(textOf(card), /^SlackSlack Not set upPosts pull requests to a channel, and answers questions to the bot\.Set up Slack$/, 'one line, with its button on it');
   assert.equal(walk(card).filter((e) => e.className === 'set-fold-head').length, 0, 'nothing to open yet');
   assert.equal(cardOf(app, 'questions'), undefined, 'no Questions row');
   buttonIn(card, 'Set up Slack').listeners.click();
@@ -260,6 +260,7 @@ test('a Slack row\'s limits are in the row, with no fold of their own, and save 
   assert.equal(byId(app, 'set-maxAsks'), undefined, 'not drawn while the row is closed');
   assert.deepEqual(walk(cardOf(app, 'slack')).filter((e) => e.tag === 'button' && /^Limits/.test(textOf(e))), [], 'no Limits button');
   headOf(app, 'slack-questions').listeners.click();
+  assert.match(textOf(byId(app, 'slack-questions')), /Turning it off drops each mention\./);
   assert.equal(walk(cardOf(app, 'slack')).filter((e) => e.attrs['aria-expanded'] === 'true').length, 1);
   byId(app, 'set-maxAsks').listeners.input({ target: { value: '5' } });
   assert.match(textOf(headOf(app, 'slack-questions')), /Not saved/, 'the row says a number waits for its Save');
@@ -283,7 +284,7 @@ test('the Pull requests row opens on the picker, on the saved channel, and its S
   buttonIn(cardOf(app, 'slack'), 'Save channel').listeners.click();
   await tick();
   assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/slack', body: { channel: 'C0NEWCHAN01' } }]);
-  assert.match(textOf(cardOf(app, 'slack')), /Posted to #new-prs\./);
+  assert.match(textOf(cardOf(app, 'slack')), /Posted to #new-prs/);
   assert.match(textOf(byId(app, 'slack-pulls')), /Saved\. The next pull request goes to the new channel\./, 'said on the row that changed');
   assert.equal(pickers.at(-1).opts.value, 'C0NEWCHAN01', 'the picker starts again on the saved channel');
   // Closing the row is its Cancel: the picker is dropped, and made again on the next open.
@@ -350,7 +351,8 @@ test('Check again says it could not tell when Slack named no scopes, never that 
 
 test('a saved token Slack refuses says so on the Bot row', async () => {
   const { app } = await loadPage(WITH_SLACK, { slack: { ...SLACK_ON, bot: { ok: false, error: 'invalid_auth' } } });
-  assert.match(textOf(cardOf(app, 'slack')), /Token refused.*Slack refuses the saved token \(invalid_auth\): nothing is posted\./);
+  assert.match(textOf(cardOf(app, 'slack')), /Slack refuses the saved token \(invalid_auth\): nothing is posted\./);
+  assert.match(textOf(cardOf(app, 'slack')), /Token refused/);
 });
 
 const REPOS = {

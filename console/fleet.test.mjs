@@ -4454,6 +4454,51 @@ test('the hand-off file is written by the real attachments store and goes out in
   assert.equal(await attachments.has(first.id), false, 'nothing under the old session');
 });
 
+test('a Stop pressed while a hand-off reads the conversation ends the hand-off: nothing is attached and nothing starts', async () => {
+  const attachments = fakeAttachments();
+  const { fleet, statuses, answers, store } = setup({ attachments });
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
+  statuses[first.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+  const before = store.state.sessions.length;
+
+  // The ordinary stop's push is refused, so it stops anyway, and is done before the read is.
+  let release;
+  answers['/transcript'] = new Promise((resolve) => { release = resolve; });
+  answers['/checkpoint'] = Promise.reject(Object.assign(new Error('statusd /checkpoint answered 500'), { status: 500 }));
+  answers['/checkpoint'].catch(() => {});
+  const handing = fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'codex' });
+  await new Promise((resolve) => setImmediate(resolve));
+  await fleet.stop(first, 'stopped from the console', { by: 'joel' });
+  assert.equal(first.status, 'stopped');
+  release({ entries: [{ role: 'assistant', text: 'Half done.', at: null }] });
+  await assert.rejects(handing, { shown: true, message: /it was stopped meanwhile: nothing was handed off/ });
+  assert.equal(first.stopReason, 'stopped from the console');
+  assert.equal(first.handedOffTo, undefined);
+
+  // A stop still pushing when the read comes back ends it the same way.
+  const second = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/two' });
+  statuses[second.id] = { state: 'done', branch: 'joel/two' };
+  await fleet.tick();
+  const beforeSecond = store.state.sessions.length;
+  answers['/transcript'] = new Promise((resolve) => { release = resolve; });
+  let push;
+  answers['/checkpoint'] = new Promise((resolve) => { push = resolve; });
+  const handingSecond = fleet.handOffPrivate({ owner: 'joel', id: second.id, agent: 'codex' });
+  await new Promise((resolve) => setImmediate(resolve));
+  const stopping = fleet.stop(second, 'stopped from the console', { by: 'joel' });
+  assert.equal(second.status, 'stopping');
+  release({ entries: [] });
+  await assert.rejects(handingSecond, { shown: true, message: /it was stopped meanwhile: nothing was handed off/ });
+  push({ committed: true, head: 'def' });
+  await stopping;
+  assert.equal(second.status, 'stopped');
+  assert.equal(second.stopReason, 'stopped from the console');
+  assert.equal(store.state.sessions.length, beforeSecond, 'no new session');
+  assert.equal(beforeSecond, before + 1, 'only the second one started meanwhile');
+  assert.deepEqual(attachments.written, {}, 'no attachment');
+});
+
 test('a Stop pressed while a hand-off pushes is carried out when the push fails', async () => {
   const { fleet, statuses, answers, alive } = setup({ attachments: fakeAttachments() });
   const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });

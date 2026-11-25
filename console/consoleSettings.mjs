@@ -28,62 +28,62 @@ const retention = (config) => ({ ...DEFAULT_RETENTION, ...config.retention });
 export const SETTINGS = [
   {
     key: 'maxRunning', group: 'sessions', label: 'Shared sessions running at once', unit: 'sessions', min: 1, max: 20, step: 1,
-    help: 'The rest wait in line. My Woodshed sessions are counted on their own, below.',
+    help: 'More wait in line. My Woodshed sessions are counted separately.',
     read: (config) => config.maxRunning,
   },
   {
     key: 'maxPrivatePerPerson', group: 'sessions', label: 'My Woodshed sessions per person', unit: 'sessions', min: 1, max: 10, step: 1,
-    help: 'Running or waiting, for each person. They take none of the shared slots above.',
+    help: 'Running or waiting, per person. They take none of the shared slots.',
     read: (config) => config.maxPrivatePerPerson ?? 3,
   },
   {
     key: 'idleHours', group: 'sessions', label: 'Pause a session waiting for input after', unit: 'hours', min: 0.25, max: 24, step: 0.25,
-    help: 'Claude asked something, or its PR is in review, and nothing came in.',
+    help: 'Nothing came in after Claude asked, or while its pull request is in review.',
     read: (config) => config.limits.idleMs / HOUR_MS,
   },
   {
     key: 'lifetimeHours', group: 'sessions', label: 'Stop a working session after', unit: 'hours', min: 1, max: 24, step: 1,
-    help: 'A backstop for a session stuck in a loop. It is paused, and can be resumed.',
+    help: 'A backstop for a session stuck in a loop. It pauses, and can be resumed.',
     read: (config) => config.limits.lifetimeMs / HOUR_MS,
   },
   {
     key: 'maxAsks', group: 'questions', label: 'Questions running at once', unit: 'sessions', min: 1, max: 10, step: 1,
-    help: 'The rest wait in line. They take none of the shared or My Woodshed slots.',
+    help: 'More wait in line. They take none of the other slots.',
     read: (config) => config.maxAsks ?? ASK_DEFAULTS.maxAsks,
   },
   {
     key: 'askIdleMinutes', group: 'questions', label: 'Stop a question\'s session when idle for', unit: 'minutes', min: 1, max: 120, step: 1,
-    help: 'Counted from its last answer. A follow-up before then is answered at once; after, the session resumes with its conversation, in about 40 seconds.',
+    help: 'From the last answer. A follow-up while it runs is typed in at once; after it stops, the session resumes in about 40 seconds.',
     read: (config) => (config.limits.askIdleMs ?? ASK_DEFAULTS.idleMs) / MINUTE_MS,
   },
   {
     key: 'askLifetimeHours', group: 'questions', label: 'Stop a question\'s session after', unit: 'hours', min: 0.5, max: 8, step: 0.5,
-    help: 'However busy it is. A follow-up resumes it.',
+    help: 'However busy. A follow-up resumes it.',
     read: (config) => (config.limits.askLifetimeMs ?? ASK_DEFAULTS.lifetimeMs) / HOUR_MS,
   },
   {
     key: 'keepAfterCloseDays', group: 'retention', label: 'Delete a merged or closed session after', unit: 'days', min: 0, max: 30, step: 1,
-    help: 'Counted from when its pull request merged or closed. 0 deletes it at once.',
+    help: 'From when its pull request merged or closed. 0 deletes it at once.',
     read: (config) => retention(config).afterCloseMs / DAY_MS,
   },
   {
     key: 'keepOpenPrDays', group: 'retention', label: 'Delete a finished session whose PR stays open after', unit: 'days', min: 1, max: 90, step: 1,
-    help: 'Counted from when it last stopped. A resume starts the count again.',
+    help: 'From when it last stopped. A resume starts the count again.',
     read: (config) => retention(config).openPrMs / DAY_MS,
   },
   {
     key: 'keepWithoutPrDays', group: 'retention', label: 'Delete a paused session with no pull request after', unit: 'days', min: 1, max: 60, step: 1,
-    help: 'Counted from when it last stopped.',
+    help: 'From when it last stopped.',
     read: (config) => retention(config).withoutPrMs / DAY_MS,
   },
   {
     key: 'removeDeletedDays', group: 'retention', label: 'Take a deleted session off the list after', unit: 'days', min: 0, max: 90, step: 1,
-    help: 'Counted from when its conversation and databases were deleted. Its card says Deleted until then. 0 takes it off at once.',
+    help: 'From when its conversation and databases were deleted. The card says Deleted until then. 0 takes it off at once.',
     read: (config) => retention(config).removeAfterDeleteMs / DAY_MS,
   },
   {
     key: 'taintedRemoveHours', group: 'retention', label: 'Remove a stopped session that saw production data after', unit: 'hours', min: 1, max: 168, step: 1,
-    help: 'A My Woodshed session that used a production MCP server, counted from when it stopped. It goes with its conversation, attachments and record, and cannot be resumed after.',
+    help: 'From when it stopped. When this time is up it is removed, with its conversation, attachments and record. Resume works until then.',
     read: (config) => (config.mcp?.taintedRemoveAfterMs ?? 24 * HOUR_MS) / HOUR_MS,
   },
   {
@@ -93,7 +93,7 @@ export const SETTINGS = [
   },
   {
     key: 'qaWaitMinutes', group: 'slack', label: 'Wait for the QA check before the brief for at most', unit: 'minutes', min: 0, max: 180, step: 5,
-    help: 'Once a pull request is approved and green. Then its decision brief goes out with QA: not run.',
+    help: 'After it is approved and green. Then the brief says QA was not run.',
     read: (config) => retention(config).qaWaitMs / MINUTE_MS,
   },
 ];

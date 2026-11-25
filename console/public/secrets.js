@@ -7,8 +7,7 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
   const { h } = W;
   const MASK = '•••••••••••• hidden';
   const SESSION_EFFECT = 'New sessions start with the new value. Running sessions keep the old one until they stop.';
-  const CLIENT_SECRET_EFFECT = 'Sign-in with GitHub becomes available. The first sign-in that works makes it required on every page; '
-    + 'until then nothing changes, so a wrong Callback URL in the App’s settings locks nobody out.';
+  const CLIENT_SECRET_EFFECT = 'Sign-in with GitHub becomes available. The first sign-in that works makes it required on every page; until then a wrong Callback URL locks nobody out.';
 
   const RECEIVER = W.providerWords.webhookReceiver ?? 'the webhook receiver';
   // Slack's two keys are set on Settings' Slack card, which checks the token with Slack first (slackSetup.mjs). They
@@ -21,7 +20,7 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
   }
   const GROUPS = [
     { id: 'session', title: 'Session secrets', note: 'Every session reads these when it starts. None may hold a production credential or an integration token.' },
-    { id: 'console', title: 'Console only', note: 'Sessions cannot read these. They stay on the base box.' },
+    { id: 'console', title: 'Console only', note: 'Sessions cannot read these.' },
   ];
 
   let data = null;
@@ -104,15 +103,15 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
     const prefixInput = h('input', { type: 'text', id: 'manager-prefix', class: 'field mono', value: prefix, autocomplete: 'off', spellcheck: 'false' });
     return group({ id: 'group-manager', label: 'Where secrets are kept' },
       row({
-        id: 'secrets-manager', title: 'Secrets manager', value: `In use: ${where}. Claude tokens, session secrets and the rest are kept there.`,
+        id: 'secrets-manager', title: 'Secrets manager', value: `In use: ${where}.`,
         pill: manager.configured ? h('span', { class: 'pill is-ok' }, 'In use') : h('span', { class: 'pill is-warn' }, 'Not chosen'),
       },
         h('form', { class: 'secret-form', onsubmit: (e) => e.preventDefault() },
           h('label', { class: 'field-label' }, 'Keep secrets in', select),
           kind === 'aws' && h('label', { class: 'field-label' }, 'Name prefix', prefixInput),
           h('p', { class: 'sub' }, kind === 'aws'
-            ? 'Uses the AWS credentials this console runs with, through the AWS CLI. Each secret is created under the prefix when it is first saved.'
-            : 'Each secret is a file sealed with a key made on first use, in this console’s state folder. Nothing leaves this machine.'),
+            ? 'Uses this console\'s AWS credentials. Each secret is created under the prefix the first time it is saved.'
+            : 'A sealed file in this console\'s state folder. Nothing leaves this machine.'),
           h('div', { class: 'actions' },
             h('button', { type: 'button', class: 'btn btn-open', onclick: () => chooseManager(kind, kind === 'aws' ? prefixInput.value : undefined) },
               manager.configured ? 'Switch' : 'Use this'))),
@@ -214,8 +213,8 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
         mono(value ?? MASK, value === undefined ? 'is-masked' : ''),
         h('button', { type: 'button', class: 'btn btn-plain', 'aria-pressed': String(value !== undefined), onclick: () => reveal(s.name) }, value === undefined ? 'Show' : 'Hide'),
         value !== undefined && copyButton(s.name, value)),
-      !s.readable && h('p', { class: 'sub' }, 'Write-only: sessions never see this key, so the console never shows it either.'),
-      !replaceable && h('p', { class: 'sub' }, `${changedLine(s)}.`),
+      !s.readable && h('p', { class: 'sub' }, 'Write-only: sessions never see this key, so it is never shown.'),
+      !replaceable && s.set && h('p', { class: 'sub' }, 'There is nothing to change here.'),
       replaceable && h('h4', { class: 'secret-form-title' }, s.set ? 'Replace it' : 'Set it'),
       replaceable && formFor(s),
       noteFor(s.name));
@@ -257,7 +256,7 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
     const secret = data.secrets.find((s) => s.name === 'github-webhook-secret');
     return group({
       id: 'hook-title', label: 'GitHub webhook',
-      note: 'Labels and /woodshed comments reach the console in a second or two. Without it, the console only finds them on its 5-minute poll.',
+      note: 'Labels and /woodshed comments arrive in a second or two; without the webhook, a 5-minute poll finds them.',
     },
       row({
         id: 'hook-connection', title: 'Connection',
@@ -376,7 +375,7 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
       h('div', null,
         h('h1', { class: 'title' }, 'Settings ', W.scopePill('/secrets')),
         W.settingsTabs('/secrets'),
-        h('p', { class: 'sub' }, `Values stay hidden until you press Show. Every change asks you to confirm it first${keepsPrevious() ? ', and the value before it stays restorable in AWS' : ''}.`,
+        h('p', { class: 'sub' }, `Hidden until Show. Every change asks you to confirm${keepsPrevious() ? ', and the previous value stays restorable' : ''}.`,
           data && !data.webhook && [' ', eventsLink()])));
     if (!data) {
       const waiting = loadError && manager?.canChoose ? `${manager.configured ? 'The other secrets are listed here once the GitHub App is set up.' : 'Choose where to keep secrets first.'}` : null;
