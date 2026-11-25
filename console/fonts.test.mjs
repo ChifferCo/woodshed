@@ -17,7 +17,9 @@ test('every font file is the one its README names, and has a rule', () => {
   for (const file of files) {
     const sha = createHash('sha256').update(fs.readFileSync(path.join(FONTS, file))).digest('hex');
     assert.ok(readme.includes(`| \`${file}\` |`) && readme.includes(`\`${sha}\``), `${file} with its sha256 in the README's table`);
-    assert.match(rules, new RegExp(`/static/fonts/${file.replace(/\./g, '\\.')}\\?v=[0-9a-f]{12}`), `${file} in a rule`);
+    const at = rules.indexOf(`/static/fonts/${file}?v=`);
+    assert.ok(at >= 0, `${file} in a rule`);
+    assert.match(rules.slice(at), /^\/static\/fonts\/[\w.-]+\?v=[0-9a-f]{12}\)/, `${file} by its hash`);
   }
   assert.equal((rules.match(/@font-face/g) ?? []).length, files.length, 'no rule for a file that is not there');
 });
