@@ -605,7 +605,7 @@ const switchOf = (app, id) => walk(rowOf(app, id)).find((e) => e.attrs.role === 
 test('Sessions from GitHub: each switch is on its row and applies as it is turned, and a refusal shows with every row closed', async () => {
   const { app, calls } = await loadPage({ triggers: TRIGGERS, opened: [] });
   const group = () => groupOf(app, 'github');
-  assert.match(textOf(group()), /How a shared session on acme\/app starts from GitHub\./);
+  assert.match(textOf(group()), /How a shared session on acme\/app starts from GitHub, for someone with write access and Sessions from GitHub on People\./);
   assert.deepEqual([switchOf(app, 'switch-labels').attrs['aria-checked'], switchOf(app, 'switch-comments').attrs['aria-checked']], ['true', 'false']);
   assert.equal(switchOf(app, 'switch-labels').attrs['aria-label'], 'Start sessions from the label');
   assert.match(textOf(rowOf(app, 'switch-labels')), /On: the woodshed label on an issue starts a session, or resumes the one it had\./);

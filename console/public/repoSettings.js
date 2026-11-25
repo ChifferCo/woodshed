@@ -354,7 +354,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
     const switchesSaid = note(SWITCHES);
     return group({
       id: 'github', label: 'Sessions from GitHub',
-      note: `How a shared session on ${view.repo} starts from GitHub.`,
+      note: `How a shared session on ${view.repo} starts from GitHub, for someone with write access and Sessions from GitHub on People.`,
     },
       triggerLine({
         id: 'switch-labels', on: t.labels, label: 'Start sessions from the label', change: (on) => ({ labels: on }),
