@@ -1505,7 +1505,9 @@ async function saveHomeIfChanged() {
 // before its last few minutes. Not for a question from Slack, a QA run or a review, whose Chat nobody reads after, and
 // never once the session has seen production data: what it saw is kept nowhere that outlives it but its own home.
 const KEEPS_CONVERSATION = !ASK && !QA && process.env.SESSION_MODE !== 'review';
-const CONVERSATION_SAVE_TIMEOUT_MS = 10_000;
+// A periodic save may take its time; the stop's gives up sooner, leaving the rest of the checkpoint's to the home and the
+// push, which matter more.
+const CONVERSATION_SAVE_TIMEOUT_MS = { periodic: 10_000, stop: 5_000 };
 // The writtenAt of the record last kept, which the next read is asked against: a record nobody wrote to costs a stat.
 let conversationKeptAt = null;
 let conversationSaving = Promise.resolve();
@@ -1522,7 +1524,7 @@ async function saveConversation(why, signal) {
   const body = fitConversation(read);
   if (!body) return;
   signal?.throwIfAborted();
-  const timeout = AbortSignal.timeout(CONVERSATION_SAVE_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(CONVERSATION_SAVE_TIMEOUT_MS[why] ?? CONVERSATION_SAVE_TIMEOUT_MS.stop);
   const res = await fetch(`${CONSOLE_URL}/conversation`, {
     method: 'POST', headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body,
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
