@@ -35,6 +35,10 @@ test('a question\'s limits are settings too, with their defaults until set', () 
   settings.setMany({ values: { maxAsks: 5, askIdleMinutes: 15, askLifetimeHours: 1.5 }, by: 'joel' });
   assert.deepEqual([live.maxAsks, live.limits.askIdleMs, live.limits.askLifetimeMs], [5, 15 * 60_000, 1.5 * HOUR]);
   assert.deepEqual(settings.view().filter((s) => s.group === 'questions').map((s) => s.key), ['maxAsks', 'askIdleMinutes', 'askLifetimeHours']);
+  const help = (key) => settings.view().find((s) => s.key === key).help;
+  assert.match(help('askIdleMinutes'), /while it runs is typed in at once/);
+  assert.match(help('askIdleMinutes'), /after it stops, the session resumes in about 40 seconds/);
+  assert.match(help('taintedRemoveHours'), /Resume works until then/);
   assert.throws(() => settings.setMany({ values: { askIdleMinutes: 0 }, by: 'joel' }), (err) => err.shown && /from 1 to 120 minutes/.test(err.message));
 });
 

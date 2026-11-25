@@ -170,7 +170,7 @@
           ? sub(restore.error)
           : h('code', { class: 'value-box is-error' }, restore.error ?? 'No reason given.'),
         ...(versionProblem ? commandList(restore, ['docker']) : []),
-        h('p', { class: 'form-note' }, !sent ? 'Nothing was sent.' : atCheck ? 'Nothing was restored, and the upload is deleted.' : 'Your database was not touched, and the half-made copy is dropped. The restore stops at the first error, so a copy is the whole dump or nothing.'),
+        h('p', { class: 'form-note' }, !sent ? 'Nothing was sent.' : atCheck ? 'Nothing was restored, and the upload is deleted.' : 'Your database was not touched. The half-made copy is dropped: a copy is the whole dump or nothing.'),
         actions(pickButton(), discard('Clear')),
         versionProblem ? null : howToFold(restore),
       ];

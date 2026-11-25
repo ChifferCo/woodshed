@@ -117,7 +117,7 @@ export function localWords({ memory, cpus, databases = ['postgres', 'mongo'] }) 
       pullStarted: null,
       container: ['Booting the container', 'booting'],
     },
-    capacityNote: `Sessions are containers on the console's own machine, each held to ${readableSize(memory)} of memory and ${cpus} ${Number(cpus) === 1 ? 'CPU' : 'CPUs'}. Docker refuses none of them for room, so keep the limits to what the machine can hold.`,
+    capacityNote: `Sessions are containers on this machine, each held to ${readableSize(memory)} and ${cpus} ${Number(cpus) === 1 ? 'CPU' : 'CPUs'}. Docker will not refuse one for lack of room, so keep the limits to what the machine can hold.`,
     homesPlace: 'the homes folder',
     databasesPlace: databases.map((d) => DATABASE_NAMES[d]).join(' and ') || null,
     webhookReceiver: 'the console\'s webhook receiver',

@@ -46,6 +46,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## Settings pages
 
+- A group's note is one sentence. An open row does not repeat its closed line: it says how to change the setting, or the one consequence. A second sentence is only a warning that prevents a mistake.
 - My settings is groups of rows that open in place (`components/SettingsRows`), not a column of cards: Sign-ins,
   Sessions, Kept for you, Repos and files, Display, then Remove My Woodshed alone. A row says the setting's name, what
   it is now and its status word; several may be open at once. The groups show under My settings in the settings list

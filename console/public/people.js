@@ -100,7 +100,7 @@ window.Woodshed.settingsPage('/people', (app, life) => {
       `They can sign in straight away. ${told || 'Nothing is sent to them: tell them the link.'}`);
     return row({
       id: 'invite-card', title: hosted ? 'Add someone' : 'Invite someone',
-      value: hosted ? 'By GitHub handle, with a role' : 'By GitHub handle, with a role. They need write access to the repository',
+      value: hosted ? 'By GitHub handle and a role' : 'By GitHub handle and a role. They need write access to the repo',
     },
       h('form', {
         class: 'field-block', id: 'invite-form',
@@ -289,7 +289,7 @@ window.Woodshed.settingsPage('/people', (app, life) => {
   function membersGroup() {
     return group({
       id: 'members', label: `Members · ${data.members.length}`,
-      note: 'A role says what each person can do, and saves at once. An owner is an admin here.',
+      note: 'A role sets what someone can do, and saves at once.',
     },
       h('div', { class: 'table-scroll' }, h('table', { class: 'people-table' },
         h('thead', null, h('tr', null,
@@ -309,8 +309,8 @@ window.Woodshed.settingsPage('/people', (app, life) => {
         h('h1', { class: 'title' }, 'Settings ', W.scopePill('/people')),
         W.settingsTabs('/people'),
         h('p', { class: 'sub' }, hosted
-          ? 'Only these people can sign in. Owners are admins here, and choose what each person can do.'
-          : 'Only these people can sign in, and each still needs write access to the repository. Admins choose what each member can do.')));
+          ? 'Who can sign in. Owners choose what each person can do.'
+          : 'Who can sign in. Each person also needs write access to the repo.')));
     const body = data ? [requestsGroup(), membersGroup()]
       : h('p', { class: 'empty' }, loadError ? `Could not load the list: ${loadError}` : 'Loading…');
     // A row's head is a new node after each draw: draw gives it its focus back.

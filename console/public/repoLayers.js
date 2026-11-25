@@ -73,7 +73,7 @@
       return [pathHead(filePath), ...(each.length || !filePath ? each : [h('p', { class: 'layer-text is-none' }, 'Nothing.')])].filter(Boolean);
     });
     return layer('session', 'Set by the session', parts.length ? parts : h('p', { class: 'layer-text is-none' }, 'Nothing.'),
-      h('p', { class: 'sub' }, 'Woodshed writes these last, with the session\'s databases, ports and URLs, so they win whatever the layers above say.'));
+      h('p', { class: 'sub' }, 'Written last, so they win: the session\'s databases, ports and URLs.'));
   }
 
   // A row of one path (`row.path`, where a key's files differ) is read against that path's wiring.
@@ -124,7 +124,7 @@
 
   window.WoodshedRepoLayers = {
     INSTRUCTIONS_MAX_BYTES: 16 * 1024,
-    NO_CREDENTIALS: 'No production credentials or integration tokens: sessions run unattended, and anything here can end up in a log, a commit or a pull request.',
+    NO_CREDENTIALS: 'No production credentials or integration tokens. A session runs unattended, and this text can land in a log or a commit.',
     LAYER_WORDS, bytesOf, plural, pathsOf, labelOf, andList, savedLine, layer, keyList, githubFile, sharedNote, defaultsLayer, sessionLayer, keyTable, repoRules,
   };
 })();
