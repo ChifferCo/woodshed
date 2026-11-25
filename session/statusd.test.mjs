@@ -1758,3 +1758,19 @@ exec '${process.execPath}' '${standIn}' claude '${records}' "$PWD" "$@"
   assert.deepEqual((await call('GET', '/agents', 'sess')).body.agents[0].deliveredIds, ['msg-00000001']);
   await call('POST', '/agents/agent-2/stop', 'sess', '{}');
 });
+
+// hc types no text without its Enter: a file dropped on an agent in Herdr is saved and its path answered untyped, for
+// the page to type through the terminal's own connection (console/public/terminal.js), never sent with an Enter.
+test('in Herdr, an upload to the agent is saved and answered as not typed, and nothing reaches hc', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-upload-hc-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const hc = await standInHc(dir);
+  const uploads = path.join(dir, 'uploads');
+  const { call } = await statusdWithApp(t, { env: { WOODSHED_TERMINAL: 'herdr', WOODSHED_HC_BIN: hc.file, UPLOADS_DIR: uploads } });
+  const up = await call('POST', '/upload?name=shot.png&pane=agent', 'sess', 'png bytes');
+  assert.equal(up.status, 200, JSON.stringify(up.body));
+  assert.equal(up.body.typed, false);
+  assert.equal(path.dirname(up.body.path), uploads);
+  assert.equal(await fs.readFile(up.body.path, 'utf8'), 'png bytes');
+  assert.deepEqual((await hc.calls()).filter(([command]) => command === 'send' || command === 'keys'), [], 'no Enter sent with it');
+});

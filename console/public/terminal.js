@@ -383,13 +383,16 @@
   }
 
   // ---- files pasted or dropped: saved in the session, their paths typed with no Enter ----
-  async function attachToSession(sessionId, pane, files) {
+  // statusd types each path in tmux. An agent in Herdr cannot be typed into without an Enter, so statusd answers `typed:
+  // false` there and the paths go in from here, as a paste on the terminal's own connection, as the person's ⌘V would.
+  async function attachToSession(sessionId, pane, files, term) {
     if (files.length > MAX_FILES) return toast(`At most ${MAX_FILES} files at a time`);
     const big = files.find((f) => f.size > MAX_FILE_MB * 1024 * 1024);
     if (big) return toast(`${big.name || 'That file'} is over ${MAX_FILE_MB} MB`);
     if (files.reduce((n, f) => n + f.size, 0) > MAX_TOTAL_MB * 1024 * 1024) return toast(`Those add up to more than ${MAX_TOTAL_MB} MB`);
     toast(files.length === 1 ? `Attaching ${files[0].name || 'the file'}…` : `Attaching ${files.length} files…`);
     let typed = 0;
+    const untyped = [];
     for (const file of files) {
       // A pasted screenshot has no name; its type gives it one.
       const name = file.name || `pasted.${(file.type.split('/')[1] || 'png').replace(/[^a-z0-9]/g, '')}`;
@@ -398,18 +401,64 @@
       }).catch(() => null);
       const body = await res?.json().catch(() => ({}));
       if (!res?.ok) return toast(body?.error ? `Not attached: ${body.error}` : 'Attach failed');
-      typed++;
+      // A statusd from before `typed` typed it whenever it could.
+      if (body?.typed === false && typeof body.path === 'string') untyped.push(body.path);
+      else typed++;
+    }
+    if (untyped.length) {
+      if (!term) return toast(`Saved in the session as ${untyped.join(' ')}: type ${untyped.length === 1 ? 'its path' : 'their paths'} at the prompt`);
+      term.paste(`${untyped.join(' ')} `);
+      term.focus();
+      typed += untyped.length;
     }
     toast(`${typed} path${typed === 1 ? '' : 's'} typed at the prompt: add your question and press enter`);
   }
 
+  // Ctrl+V in an agent's pane pastes, as ⌘V and Ctrl+Shift+V do: claude and codex name it as their paste for pictures,
+  // and a terminal in the browser would send it on as ^V, to an agent whose own clipboard (the session's) holds nothing.
+  // The Terminal tab's shell keeps ^V.
+  function isCtrlV(e) {
+    return e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'v';
+  }
+
+  /**
+   * The clipboard as a paste would bring it: its pictures and files, else its text. Read on a Mac only, where Ctrl+V
+   * is no paste of the browser's own, so the browser asks the person first (or offers its Paste button).
+   * @returns {Promise<{files: File[]}|{text: string}|null>}  null when it may not be read, or holds nothing
+   */
+  async function readClipboard(win) {
+    const clip = win.navigator.clipboard;
+    try {
+      if (clip?.read) {
+        const files = [];
+        let text = '';
+        for (const item of await clip.read()) {
+          const type = item.types.find((t) => t.startsWith('image/')) || item.types.find((t) => t !== 'text/plain' && t !== 'text/html' && t !== 'text/uri-list');
+          if (type) {
+            const blob = await item.getType(type);
+            files.push(new win.File([blob], '', { type }));
+          } else if (item.types.includes('text/plain')) {
+            text += await (await item.getType('text/plain')).text();
+          }
+        }
+        if (files.length) return { files };
+        return text ? { text } : null;
+      }
+      const text = await clip?.readText();
+      return text ? { text } : null;
+    } catch {
+      return null;
+    }
+  }
+
   function bindFiles(doc, sessionId, pane) {
+    const win = doc.defaultView;
     const take = (e, list) => {
       const files = [...(list || [])];
       if (!files.length) return;
       e.preventDefault();
       e.stopPropagation();
-      attachToSession(sessionId, pane, files);
+      attachToSession(sessionId, pane, files, win?.term);
     };
     doc.addEventListener('paste', (e) => take(e, e.clipboardData?.files), true);
     doc.addEventListener('dragover', (e) => {
@@ -418,6 +467,22 @@
       e.dataTransfer.dropEffect = 'copy';
     }, true);
     doc.addEventListener('drop', (e) => take(e, e.dataTransfer?.files), true);
+    if (pane === 'terminal') return;
+    doc.addEventListener('keydown', (e) => {
+      if (!isCtrlV(e)) return;
+      // Kept from xterm, which would send ^V. Elsewhere the browser's own paste follows, as for Ctrl+Shift+V, and the
+      // listener above or xterm's takes it.
+      e.stopImmediatePropagation();
+      if (!MAC) return;
+      e.preventDefault();
+      readClipboard(win).then((got) => {
+        const term = win?.term;
+        if (got?.files) return attachToSession(sessionId, pane, got.files, term);
+        if (got?.text) return term?.paste(got.text);
+        // Nothing the browser would hand over: the key goes on as the agent's own ^V.
+        return term?.input('\x16');
+      });
+    }, true);
   }
 
   // ---- scrolling back: the browser's own history of the pane, or tmux's ----
