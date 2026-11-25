@@ -1237,7 +1237,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
           onclick: () => flipWebhooks('slack', on),
         }),
         h('span', { class: 'toggle-label', id: 'webhooks-switch-slack' }, SLACK_SWITCH.label),
-        h('p', { class: 'sub' }, on ? 'Off, each mention is dropped.' : 'On, each mention is answered in a session that changes nothing.'),
+        h('p', { class: 'sub' }, on ? 'Turning it off drops each mention.' : 'Turning it on answers each mention in a session that changes nothing.'),
         switchError?.source === 'slack' && h('p', { class: 'form-error', role: 'alert' }, switchError.text)),
       !v.signingSecret && h('p', { class: 'cap-note' }, 'No signing secret is saved, so every mention is refused. Replace keys on the Bot row to add it.'),
       !v.eventsUrl && h('p', { class: 'sub' }, 'No events Request URL. The Set up Slack dialog says where to find it.'),

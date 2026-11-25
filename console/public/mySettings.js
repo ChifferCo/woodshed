@@ -270,7 +270,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       }),
       h('span', { class: 'toggle-label', id: 'own-shared-label' }, 'Also use it for shared sessions I start from GitHub'),
       h('p', { class: 'sub' }, on
-        ? 'On: sessions you start from GitHub run on your plan. Everyone can still see them. Your token stays in the console.'
+        ? 'On: sessions you start from GitHub run on your plan. Everyone can see them and type into them, on your plan. Your token stays in the console.'
         : 'Off: those sessions run on the team key.'),
       !saved && h('p', { class: 'why-off' }, 'Save a token above to turn this on.'));
   }
@@ -393,7 +393,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     const several = labels.length > 1;
     const named = labels.join(' and ');
     return [
-      `A ${named} database called `, h('code', null, db.name),
+      several ? `A ${named} database, each called ` : `A ${named} database called `, h('code', null, db.name),
       `. Copied from the shared template. Only your private sessions connect, and the user reaches nothing else. Open ${several ? 'them' : 'it'} from Open ▾.`,
     ];
   }
@@ -416,7 +416,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     }, tunnelCopied ? 'Copied' : 'Copy');
     return h('div', { class: 'tunnel' },
       h('h3', null, 'From your computer'),
-      h('p', { class: 'sub' }, 'Run the command, then connect to the ', tunnel.kinds.length === 1 ? 'string' : 'strings', ' it prints. Needs Node 18.3 or later. The token lasts 12 hours; Revoke ends it.'),
+      h('p', { class: 'sub' }, 'Run the command, then connect to the ', tunnel.kinds.length === 1 ? 'string' : 'strings', ' it prints. Needs Node 18.3 or later. The token lasts 12 hours. Making a new one, or Revoke, ends it and closes its connections.'),
       command && h('div', { class: 'value-row' }, h('code', { class: 'value-box' }, command), copy),
       command && h('p', { class: 'form-note' }, 'Shown this once: the console keeps only a hash of it.'),
       !command && tunnel.expiresAt && h('p', { class: 'form-note' }, `A token works until ${W.when(tunnel.expiresAt)}.`),
@@ -833,7 +833,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     return row({ id: 'my-timeouts', title: 'My session timeouts', pill: h('span', { class: custom ? 'pill is-ok' : 'pill' }, custom ? 'Your own' : 'Console defaults'), value },
       h('p', { class: 'sub' }, 'When your sessions pause or stop. Work is pushed first, and Resume picks it up. An empty box uses the console\'s number. Running sessions pick up a change within seconds. Shared sessions use the numbers on ', W.isAdmin() ? h('a', { href: '/console-settings#card-sessions' }, 'Settings') : 'Settings (admins)', '.'),
       h('div', { class: 'lgrid2' },
-        h('label', { class: 'field-label', for: 'limit-idle' }, h('span', null, 'Pause when idle (hours, 0.25 to 24)'), limitInputs.idleHours),
+        h('label', { class: 'field-label', for: 'limit-idle' }, h('span', null, 'Pause when waiting for input (hours, 0.25 to 24)'), limitInputs.idleHours),
         h('label', { class: 'field-label', for: 'limit-lifetime' }, h('span', null, 'Stop when working (hours, 1 to 24)'), limitInputs.lifetimeHours)),
       h('div', { class: 'set-actions' },
         h('button', { type: 'button', class: 'btn btn-open', disabled: busy.has('limits'), onclick: () => saveLimits({ idleHours: limitInputs.idleHours.value, lifetimeHours: limitInputs.lifetimeHours.value }, 'Saved.') }, 'Save'),

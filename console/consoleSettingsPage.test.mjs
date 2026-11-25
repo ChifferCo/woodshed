@@ -260,6 +260,7 @@ test('a Slack row\'s limits are in the row, with no fold of their own, and save 
   assert.equal(byId(app, 'set-maxAsks'), undefined, 'not drawn while the row is closed');
   assert.deepEqual(walk(cardOf(app, 'slack')).filter((e) => e.tag === 'button' && /^Limits/.test(textOf(e))), [], 'no Limits button');
   headOf(app, 'slack-questions').listeners.click();
+  assert.match(textOf(byId(app, 'slack-questions')), /Turning it off drops each mention\./);
   assert.equal(walk(cardOf(app, 'slack')).filter((e) => e.attrs['aria-expanded'] === 'true').length, 1);
   byId(app, 'set-maxAsks').listeners.input({ target: { value: '5' } });
   assert.match(textOf(headOf(app, 'slack-questions')), /Not saved/, 'the row says a number waits for its Save');

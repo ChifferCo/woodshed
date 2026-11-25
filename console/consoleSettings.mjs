@@ -53,7 +53,7 @@ export const SETTINGS = [
   },
   {
     key: 'askIdleMinutes', group: 'questions', label: 'Stop a question\'s session when idle for', unit: 'minutes', min: 1, max: 120, step: 1,
-    help: 'From the last answer. A later follow-up resumes the session, in about 40 seconds.',
+    help: 'From the last answer. A follow-up while it runs is typed in at once; after it stops, the session resumes in about 40 seconds.',
     read: (config) => (config.limits.askIdleMs ?? ASK_DEFAULTS.idleMs) / MINUTE_MS,
   },
   {
@@ -83,7 +83,7 @@ export const SETTINGS = [
   },
   {
     key: 'taintedRemoveHours', group: 'retention', label: 'Remove a stopped session that saw production data after', unit: 'hours', min: 1, max: 168, step: 1,
-    help: 'A My Woodshed session that used a production MCP server, from when it stopped. It cannot be resumed.',
+    help: 'From when it stopped. When this time is up it is removed, with its conversation, attachments and record. Resume works until then.',
     read: (config) => (config.mcp?.taintedRemoveAfterMs ?? 24 * HOUR_MS) / HOUR_MS,
   },
   {
