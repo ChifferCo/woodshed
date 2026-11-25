@@ -2832,9 +2832,16 @@ ${DARK_PALETTE}
       } else if (tag === 'IMG' || tag === 'VIDEO') {
         var src = webUrl(node.getAttribute('src'));
         if (!src) return null;
-        made.src = src;
         if (tag === 'VIDEO') made.controls = true;
-        else made.alt = node.getAttribute('alt') || '';
+        else {
+          made.alt = node.getAttribute('alt') || '';
+          if (src.startsWith('https://github.com/') && src.endsWith('?raw=true')) {
+            made.addEventListener('error', function loadWithGitHubAccess() {
+              made.src = '/reviews/' + state.session + '/image?src=' + encodeURIComponent(src);
+            }, { once: true });
+          }
+        }
+        made.src = src;
         var w = parseInt(node.getAttribute('width'), 10);
         if (w > 0) made.style.width = Math.min(w, 2000) + 'px';
       } else if (tag === 'TH' || tag === 'TD') {

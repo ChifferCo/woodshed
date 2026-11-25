@@ -12,12 +12,40 @@
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 import { run } from './exec.mjs';
 import { aiReviewsOf } from './aiReviews.mjs';
 import { checkRunsOf } from './prChecks.mjs';
 
 const GH_TIMEOUT_MS = 30_000;
+const execFileAsync = promisify(execFile);
+const REVIEW_IMAGE_TYPES = new Map([
+  ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'],
+  ['.gif', 'image/gif'], ['.webp', 'image/webp'], ['.avif', 'image/avif'],
+]);
+
+// prAssets.sh links to a commit, including for private repositories where the
+// browser's cross-site request to github.com may have no GitHub cookie.
+export async function fetchPrImage({ slug, src }) {
+  const match = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/blob\/([a-f0-9]{40})\/([^?#]+)\?raw=true$/i.exec(src || '');
+  if (!match || match[1].toLowerCase() !== slug.toLowerCase()) return null;
+  const [, , sha, rawPath] = match;
+  try {
+    const parts = rawPath.split('/').map(decodeURIComponent);
+    if (parts.some((part) => !part || part === '.' || part === '..' || /[/\\\x00-\x1f\x7f]/.test(part))) return null;
+    const type = REVIEW_IMAGE_TYPES.get(path.extname(parts.at(-1)).toLowerCase());
+    if (!type) return null;
+    const file = parts.map(encodeURIComponent).join('/');
+    const { stdout } = await execFileAsync('gh', [
+      'api', `repos/${slug}/contents/${file}?ref=${sha}`, '-H', 'Accept: application/vnd.github.raw',
+    ], { encoding: 'buffer', timeout: GH_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 });
+    return stdout.length ? { type, bytes: stdout } : null;
+  } catch {
+    return null;
+  }
+}
 // The three things a review can say, and nothing else reaches argv. A map
 // rather than a check-then-interpolate, so an unknown action cannot become a
 // flag.
@@ -462,11 +490,9 @@ export async function fetchReviewState({ pr, slug }) {
     description: {
       author: node.author?.login || 'someone',
       body: (node.body || '').trim(),
-      // GitHub's own rendering, which is the only way to show an image on a
-      // private repository: its links come back signed for about five
-      // minutes, where the markdown's point at github.com and need a login
-      // cookie a cross-site image request does not carry. The page rebuilds
-      // it through an allowlist rather than inserting it.
+      // GitHub signs some image URLs in its own rendering. The page rebuilds
+      // that HTML through an allowlist and can retry unsigned repository
+      // screenshots through the review's image route.
       html: node.bodyHTML || '',
       at: node.createdAt || null,
       url: node.url || null,

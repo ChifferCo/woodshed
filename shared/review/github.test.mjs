@@ -20,7 +20,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { graphqlArgv } from './github.mjs';
+import { fetchPrImage, graphqlArgv } from './github.mjs';
+
+test('review images require a commit-pinned raster URL on the pull request repository', async () => {
+  const slug = 'acme/web';
+  const sha = 'a'.repeat(40);
+  for (const src of [
+    `https://github.com/acme/other/blob/${sha}/proof.png?raw=true`,
+    'https://github.com/acme/web/blob/main/proof.png?raw=true',
+    `https://github.com/acme/web/blob/${sha}/proof.svg?raw=true`,
+    `https://github.com/acme/web/blob/${sha}/%2e%2e/proof.png?raw=true`,
+    `https://github.com/acme/web/blob/${sha}/nested%2fproof.png?raw=true`,
+    `https://github.com/acme/web/blob/${sha}/proof.png?raw=true&ref=main`,
+  ]) {
+    assert.equal(await fetchPrImage({ slug, src }), null, src);
+  }
+});
 
 /** The values of every -F flag in an argv. */
 function typedFields(args) {

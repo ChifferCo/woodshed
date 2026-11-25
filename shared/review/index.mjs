@@ -26,7 +26,7 @@ import { parseUnifiedDiff } from './diff.mjs';
 import { run } from './exec.mjs';
 import {
   originSlug, fetchPrMeta, submitPrReview, fetchViewedFiles, setFileViewed, ghAccount,
-  setPrTitle, fetchReviewState, fetchPrChecks, addPendingComment, deletePendingComment, discardPendingReview,
+  setPrTitle, fetchReviewState, fetchPrImage, fetchPrChecks, addPendingComment, deletePendingComment, discardPendingReview,
   submitPendingReview, postLineComment, deletePostedComment, deleteIssueComment, hideComment,
 } from './github.mjs';
 import { parseTarget, prBranchFor, reviewBranchFor, describeTarget } from './target.mjs';
@@ -1002,6 +1002,25 @@ export async function handleReviewRequest(req, res, ctx) {
   const session = match[1];
   const section = match[2] || '';
   const tail = match[3] ? match[3].slice(1) : '';
+
+  if (req.method === 'GET' && section === '/image' && !tail) {
+    const got = await prContextFor(ctx, session);
+    const src = url.searchParams.get('src');
+    const image = got.ok && src?.length <= 2048 ? await fetchPrImage({ slug: got.slug, src }) : null;
+    if (!image) {
+      json(res, 404, { ok: false, error: 'review image unavailable' });
+    } else {
+      ctx.log('review.image_loaded', { pr: got.live.number, type: image.type, bytes: image.bytes.length });
+      res.writeHead(200, {
+        'content-type': image.type,
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+        'cross-origin-resource-policy': 'same-origin',
+      });
+      res.end(image.bytes);
+    }
+    return true;
+  }
 
   if (req.method === 'GET' && !section) {
     json(res, 200, statusPayload(session));

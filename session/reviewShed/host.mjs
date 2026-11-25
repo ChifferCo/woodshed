@@ -177,6 +177,11 @@ export function createReviewHost({
     }
     shed ??= await load(repoDir);
     const reqId = randomBytes(4).toString('hex');
+    if (req.method === 'GET' && sectionOf(pathname) === 'image' &&
+        !writesAllowed({ sessionKind, account: await accountNow() })) {
+      json(res, 403, { ok: false, error: 'review images require a My Woodshed session with GitHub connected' });
+      return true;
+    }
     let writable = null;
     if (isGithubWrite({ method: req.method, pathname }) || (req.method === 'GET' && pathname.startsWith('/reviews/') && !sectionOf(pathname))) {
       writable = writesAllowed({ sessionKind, account: await accountNow() });

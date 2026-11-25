@@ -209,12 +209,17 @@ a template literal — which is precisely what rule 4 exists to keep rare.
 Every string on that page — PR titles, diff hunks, model output — comes from
 somewhere untrusted. The small markdown renderer exists because the model
 returns markdown into a `textContent`-only DOM. The one piece of HTML the page
-accepts is a pull request description's `bodyHTML`, fetched because its image
-links are the only ones signed to load without a GitHub login. It is never
-inserted: `renderGithubHtml` parses it into an inert `DOMParser` document and
+accepts is a pull request description's `bodyHTML`, which can carry image
+links GitHub signed to load without a GitHub login. `renderGithubHtml` parses
+it into an inert `DOMParser` document and
 rebuilds it with `createElement` from a tag and attribute allowlist, copying a
 URL only when it is `http(s)`. Widen that list rather than reaching for
 `innerHTML`.
+
+When a commit-pinned GitHub `blob/…?raw=true` image fails in the browser, the
+page retries through `GET /reviews/<session>/image`. The route reads raster
+images up to 10 MiB from the pull request's repository via `gh api`. Woodshed
+allows that read in a My Woodshed session with GitHub connected.
 
 ## Things that are the way they are on purpose
 
