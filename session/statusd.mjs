@@ -626,15 +626,13 @@ async function newestTranscript() {
 }
 
 // The agents a person starts beside the session's own (agents.mjs): in a private coding session alone, never a shared
-// one, a question, a QA run or a review, and only beside Claude Code or Codex (shared/agents.cjs, teamCredential): a
-// Grok Build or OpenCode session runs on its owner's own sign-in and nothing else, and has no claude or codex set up to
-// start, nor records of theirs to keep apart from its own (the entrypoint writes neither for it). The entrypoint writes the claude flags they start with, and says when codex is
+// one, a question, a QA run or a review. The entrypoint writes the claude flags they start with, and says when codex is
 // set up (configureCodex). WOODSHED_AGENT_BIN, WOODSHED_AGENT_CLAUDE_FLAGS_FILE, WOODSHED_CODEX_READY_FILE and
 // WOODSHED_AGENT_STATE_DIR move them
 // for the dev console's made-up sessions (console/bin/devChatSession.mjs): the fleet never sets them, so they are in no
 // PER_SESSION_ENV (providers/aws/ecsLauncher.mjs).
 const CODEX_READY_FILE = process.env.WOODSHED_CODEX_READY_FILE || '/tmp/woodshed-codex-ready';
-const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.env.SESSION_MODE !== 'review' && AGENTS.agent(AGENT).teamCredential ? createAgents({
+const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.env.SESSION_MODE !== 'review' ? createAgents({
   run,
   repoDir: REPO_DIR,
   bin: process.env.WOODSHED_AGENT_BIN || path.join(import.meta.dirname, 'bin'),
@@ -651,7 +649,7 @@ const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.
   hcBin: process.env.WOODSHED_HC_BIN || 'hc',
 }) : null;
 
-// A Codex agent beside claude: its sign-in, the owner's own from My settings when they saved one, which the console sends
+// An extra Codex agent: its sign-in, the owner's own from My settings when they saved one, which the console sends
 // with the start (console/server.mjs, agentAction) and nothing here asks for, written into codex's home as configureCodex
 // writes it; with none, the console's proxy and the team key (session/bin/codex). In a Codex session codex has its own.
 // A start that fails after it takes back a sign-in it wrote.
@@ -940,7 +938,7 @@ const readAgent = stateReader({ qa: QA, agent: AGENT, terminal: TERMINAL });
 // ChatGPT's refresh token rotates, so the sign-in saved on My settings stops working once a session used it. The
 // console keeps the copy only for an owner who saved one, and says 409 to anyone else.
 async function keepCodexAuth() {
-  // A Codex agent beside claude in a session that has since seen production data sends nothing back (the console refuses
+  // An extra Codex agent in a session that has since seen production data sends nothing back (the console refuses
   // it too): its sign-in file is the session's to write.
   if (!(CODEX || (agents?.ranCodex() && !tainted())) || !CONSOLE_URL || process.env.SESSION_KIND !== 'private') return;
   try {

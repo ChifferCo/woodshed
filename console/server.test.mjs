@@ -2854,9 +2854,10 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   assert.equal((await call('/api/sessions/2c3d4e5f/agents', { agent: 'claude' })).status, 409, 'a tainted session starts none');
   assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'grok' })).status, 400, 'Grok Build and OpenCode never start beside another');
   assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'opencode', model: 'openai/gpt-5' })).status, 400);
-  assert.equal((await call('/api/sessions/3d4e5f6a/agents', { agent: 'claude' })).status, 409, 'a Grok Build session runs on its owner\'s own sign-in alone');
-  assert.equal((await call('/api/sessions/3d4e5f6a/agents', undefined, 'GET')).status, 409);
   assert.equal(asked.length, 1, 'nothing refused reached the session');
+  assert.equal((await call('/api/sessions/3d4e5f6a/agents', { agent: 'claude' })).status, 200);
+  assert.equal((await call('/api/sessions/3d4e5f6a/agents', undefined, 'GET')).status, 200);
+  assert.deepEqual(allowed.at(-1), ['3d4e5f6a', 'claude']);
 
   assert.equal((await call('/api/sessions/0a1b2c3d/agents', undefined, 'GET')).status, 200);
   assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/transcript?limit=50&since=x', undefined, 'GET')).status, 200);
@@ -2864,7 +2865,7 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/interrupt', { keys: 'rm -rf /' })).status, 200);
   assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/stop', {})).status, 200);
   assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-1/stop', {})).status, 404, 'not an agent beside the session\'s own');
-  assert.deepEqual(asked.slice(1).map((a) => [a.method, a.url, a.body]), [
+  assert.deepEqual(asked.slice(3).map((a) => [a.method, a.url, a.body]), [
     ['GET', '/agents', ''],
     ['GET', '/agents/agent-2/transcript?limit=50', ''],
     ['POST', '/agents/agent-2/send', '{"text":"hi","id":"msg-00000001"}'],

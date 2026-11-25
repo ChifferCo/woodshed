@@ -1063,7 +1063,7 @@ installSyncedPlugins() {
 # How codex reaches OpenAI. The owner's own sign-in goes into codex's home as auth.json: an API key as the key file codex
 # reads, a ChatGPT login as it was saved. With none, session/bin/codex uses the console's proxy and the team key. The
 # rules go in codex's own AGENTS.override.md, which it reads at every start, so the terminal shows only the request.
-# `beside`: for a Codex agent a person may start beside claude (session/agents.mjs), whose sign-in statusd asks the console
+# `beside`: for an extra Codex agent (session/agents.mjs), whose sign-in statusd asks the console
 # for only when one starts. Its home and rules are made here all the same.
 configureCodex() {
   [ ! -L "$CODEX_HOME_DIR" ] || die "codex's home is a symlink"
@@ -1423,12 +1423,9 @@ startClaude() {
     *) claudeFlags > /tmp/woodshed-claude-flags ;;
   esac
   # The agents a person starts beside this one (session/agents.mjs, statusd's /agents) take the session's own flags for
-  # claude, without the model, effort and mode New session picked: they pick their own. Only beside Claude Code or Codex:
-  # a Grok Build or OpenCode session runs on its owner's own sign-in and nothing else, so none starts beside it.
+  # claude, without the model, effort and mode New session picked: they pick their own.
   if [ "${SESSION_KIND:-}" = private ] && [ -z "${SESSION_MODE:-}" ] && ! tainted; then
-    case "${AGENT:-claude}" in
-      claude | codex) MODEL='' EFFORT='' PERMISSION_MODE=default claudeFlags > /tmp/woodshed-agent-claude-flags ;;
-    esac
+    MODEL='' EFFORT='' PERMISSION_MODE=default claudeFlags > /tmp/woodshed-agent-claude-flags
   fi
   # A terminal its owner's Herdr makes comes once the session runs, after statusd opened the tunnel it comes through:
   # the agent is typed into it then, in the background, as into the session's own. Handed to the init like progress's
@@ -1592,13 +1589,12 @@ runSession() {
       restorePlugins
       installDefaultPlugins
       installSyncedPlugins
-      # A private session's owner may start a Codex agent beside claude (session/agents.mjs): its home is made now, and a
-      # problem with it never stops claude's start.
-      if [ "${SESSION_KIND:-}" = private ] && [ -z "${SESSION_MODE:-}" ] && ! tainted; then
-        if (configureCodex beside); then touch "$CODEX_READY_FILE"; else log "WARNING: codex not set up, no Codex agent can start beside claude"; fi
-      fi
       ;;
   esac
+  # Set up an extra Codex agent's home without interrupting the session's own agent if setup fails.
+  if [ "${AGENT:-claude}" != codex ] && [ "${SESSION_KIND:-}" = private ] && [ -z "${SESSION_MODE:-}" ] && ! tainted; then
+    if (configureCodex beside); then touch "$CODEX_READY_FILE"; else log "WARNING: codex not set up, no extra Codex agent can start"; fi
+  fi
   # Both have read it: the env files are written, and the instructions are in the rules (and each agent's own copy).
   rm -f "$REPO_SETTINGS_JSON"
   progress env

@@ -2141,12 +2141,6 @@ export function createHandler({
       req.resume();
       return reply(res, 409, { error: 'the session is not running' });
     }
-    // Only beside Claude Code or Codex (shared/agents.cjs, teamCredential): a Grok Build or OpenCode session runs on its
-    // owner's own sign-in and nothing else, and its statusd starts no other agent.
-    if (!agentsRegistry.agent(agentsRegistry.agentOfSession(session)).teamCredential) {
-      req.resume();
-      return reply(res, 409, { error: 'this session runs on its owner\'s own sign-in alone: no other agent starts in it' });
-    }
     const url = new URL(req.url, 'http://console.invalid');
     if (!agentId) {
       if (req.method === 'GET') return toStatusd(req, res, session, { method: 'GET', path: '/agents' });
@@ -2168,12 +2162,12 @@ export function createHandler({
       if (!agentsRegistry.agent(picked.agent).teamCredential) return reply(res, 400, { error: 'the agent must be claude or codex' });
       const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
       if (prompt.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in the first message` });
-      // A Codex agent beside claude runs on its owner's own Codex sign-in, handed to the session with the start itself and
+      // An extra Codex agent runs on its owner's own Codex sign-in, handed to the session with the start itself and
       // never asked for by it; with none, on the team's key through the console's proxy, which the session may use only
       // once the agent has started (fleet.allowAgent). A start the session refuses is allowed nothing.
-      const besideClaude = picked.agent === 'codex' && session.options?.agent !== 'codex';
+      const extraCodex = picked.agent === 'codex' && session.options?.agent !== 'codex';
       let codexAuth = null;
-      if (besideClaude && userSettings) {
+      if (extraCodex && userSettings) {
         try {
           codexAuth = await userSettings.codexAuth(session.owner);
         } catch (err) {
@@ -2185,7 +2179,7 @@ export function createHandler({
       }
       console.log('console: another agent asked for', {
         id: session.id, agent: picked.agent, model: picked.model || null, effort: picked.effort || null, permissionMode: picked.permissionMode,
-        prompt: Boolean(prompt.trim()), ...(besideClaude && { ownCodex: Boolean(codexAuth) }),
+        prompt: Boolean(prompt.trim()), ...(extraCodex && { ownCodex: Boolean(codexAuth) }),
       });
       return toStatusd(req, res, session, {
         method: 'POST', path: '/agents', body: { ...picked, prompt, ...(codexAuth ? { codexAuth } : {}) },
