@@ -59,7 +59,9 @@ export function redact(text, env = process.env) {
 // A result event is read from a file the run's own code can write, so what is printed from it is validated: a count is a
 // whole number and a subtype is a short lowercase word, never a string that could carry anything else.
 const count = (n) => (Number.isInteger(n) && n >= 0 ? n : null);
-const subtypeOf = (t) => (typeof t === 'string' && /^[a-z_]{1,40}$/.test(t) ? t : 'unknown');
+// The result subtypes claude writes; any other value is shown as `unknown`, so a value a run made up never gets printed.
+export const SUBTYPES = ['success', 'error_max_turns', 'error_during_execution', 'error_max_budget_usd', 'error_max_structured_output_retries'];
+const subtypeOf = (t) => (SUBTYPES.includes(t) ? t : 'unknown');
 
 const clip = (text, max) => (text.length > max ? `${text.slice(0, max)}…` : text);
 const oneLine = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();

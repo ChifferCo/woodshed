@@ -415,6 +415,10 @@ test('a QA session sends its run log through /qa-log, as often as it likes and e
   assert.equal(refused.status, 400);
   assert.ok(!JSON.stringify(refused.body).includes('zzOpaque7788'), 'and its answer does not repeat it');
   assert.ok(!kept.some((k) => k.text.includes('zzOpaque7788')), 'nothing of it was kept');
+  // A private value in the one field a summary takes from the run's own files, shaped like a result subtype.
+  const subtype = await request(port, { path: '/qa-log?tier=summary', authorization: 'Bearer qa-token', body: summary.replace('(error_max_turns)', '(opaque_registry_credential)') });
+  assert.equal(subtype.status, 400);
+  assert.ok(!kept.some((k) => k.text.includes('opaque_registry_credential')), 'a subtype claude does not write is refused');
   assert.deepEqual(kept.map((k) => k.tier), ['full', 'full', 'summary'], 'full unless it says it is the summary');
   // Last: a body that says it is too big is refused before it is read, and leaves its connection waiting for the rest.
   assert.equal((await send('Bearer qa-token', 'x', { 'content-length': String(1024 * 1024) })).status, 413);

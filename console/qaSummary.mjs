@@ -5,6 +5,8 @@
 // request's number, its base branch) must name this session's. Anything else is refused whole. The full log is not
 // checked here: it is read only by an admin and whoever started the run.
 
+// The result subtypes claude writes (shared/qa/runLog.mjs): the one value in a summary that comes from the run's own files.
+const SUBTYPES = ['success', 'error_max_turns', 'error_during_execution', 'error_max_budget_usd', 'error_max_structured_output_retries'];
 const ENDED = ['ran out of turns before it finished', 'hit an error while it ran', 'ran out of its budget', 'ended in an error', 'finished'];
 const CATEGORY = '(?:timeout|connection refused|not found|permission denied|server error|other)';
 
@@ -16,7 +18,7 @@ const LINES = [
   /^Started; its outcome is not known yet\.$/,
   /^No report\.md was written\.$/,
   /^The planner found nothing to test \(its explanation is in the full log\)\.$/,
-  new RegExp(`^Ended: (?:${ENDED.join('|')}) \\([a-z_]{1,40}(?:, is_error)?\\)$`),
+  new RegExp(`^Ended: (?:${ENDED.join('|')}) \\((?:${SUBTYPES.join('|')}|unknown)(?:, is_error)?\\)$`),
   /^Ended: no result from claude, so it was stopped or crashed before it finished\.$/,
   /^Ran: \d{1,9} turns, \d{1,9} tool calls(?:, \d{1,9} s)?(?:, \$\d{1,6}\.\d\d)?$/,
   /^Permission denied: \d{1,6} calls?$/,

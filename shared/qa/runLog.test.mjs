@@ -123,6 +123,9 @@ test('the summary tier has counts and fixed words, and nothing claude or its too
 test('a result event\'s odd fields never reach the verdict or the summary: counts are whole numbers, subtypes short words', () => {
   const stream = line({ type: 'result', subtype: 'error_max_turns', num_turns: 'PRIVATE-MARKER', duration_ms: 'x', total_cost_usd: 'y' });
   assert.equal(whyEnded('test', stream), 'the test pass ran out of turns before it finished');
+  const lower = line({ type: 'result', subtype: 'opaque_registry_credential', num_turns: 3 });
+  assert.match(summarize('test', lower, { text: false }), /\(unknown\)/, 'a lowercase word that claude does not write is not printed');
+  assert.doesNotMatch(summarize('test', lower, { text: false }), /opaque_registry/);
   const odd = line({ type: 'result', subtype: 'PRIVATE-MARKER https://x', is_error: false, num_turns: 3 });
   assert.doesNotMatch(summarize('test', odd, { text: false }), /PRIVATE/);
   assert.match(summarize('test', odd, { text: false }), /\(unknown\)/);

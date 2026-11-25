@@ -40,6 +40,7 @@ test('a summary with any other text is refused, wherever the text is', () => {
     GOOD.replace('Said: 4 messages', `Said: ${secret}`),
     GOOD.replace('[qa 10:02:13] Planning the tests', `[qa 10:02:13] ${secret}`),
     GOOD.replace('Ended: finished (success)', `Ended: finished (${secret})`),
+    GOOD.replace('Ended: finished (success)', 'Ended: finished (opaque_registry_credential)'),
     GOOD.replace('(2 timeout, 1 connection refused)', `(2 timeout, 1 ${secret})`),
     GOOD.replace('Ran: 22 turns', `Ran: ${secret} turns`),
     GOOD.replace('Permission denied: 2 calls', `Permission denied: 2 calls (${secret})`),
