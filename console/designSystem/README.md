@@ -157,12 +157,15 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## Agent
 
-- New session's **Agent** is choice cards (`components/ChoiceCards`), under the prompt and Continue a PR or branch, right
-  over Model, effort and permissions: every agent, each its
-  name and what it runs on (`Your Claude plan`), the pick in the `amber` outline. An agent with no sign-in saved stays,
-  disabled, its line a link to its box on My settings. The prompt's placeholder names the pick.
-- Model, effort and permissions follow the pick, under a fold of their own (**Model, effort and permissions**), open on
-  a desktop and folded on a phone to one line of what is picked.
+- New session's **Agent** is choice cards (`components/ChoiceCards`), under the prompt and Continue a PR or branch:
+  every agent, each its name, what it runs on (`Your Claude plan`) and, in `meta` mono under it, what it would start
+  with (`opus · high · auto`; effort only when one is picked). The pick is in the `amber` outline. An agent with no
+  sign-in saved stays, disabled, its line a link to its box on My settings and no settings line. The prompt's
+  placeholder names the pick.
+- Under the cards, the picked agent's Model, Effort and Permissions are a panel headed `<Agent>'s settings`: the pick's
+  `amber` border on `amber-tint`, the field labels in `amber-ink`, open on every width. Each agent keeps its own
+  settings while the page is open, so picking Codex again finds what was picked for it. Never orange: the panel is the
+  pick's, not the page's primary action.
 
 ## Work on
 

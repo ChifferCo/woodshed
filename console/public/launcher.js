@@ -46,22 +46,26 @@
   W.agentChoices = { AGENTS, MODELS, EFFORTS, MODES, CODEX_MODES };
 
   // New session's agent, as choice cards (designSystem/components/ChoiceCards): every agent stays shown, each saying what
-  // it runs on, and one with no sign-in saved is disabled with where to save it. `onPick` hears a person's pick.
+  // it runs on and, in mono under it, the model, effort and permissions it would start with; one with no sign-in saved is
+  // disabled with where to save it. `onPick` hears a person's pick.
   function createAgentCards(onPick) {
     let value = AGENTS[0][0];
     const cards = new Map(AGENTS.map(([id, name, title]) => {
       const input = h('input', { id: `l-agent-${id}`, type: 'radio', name: 'l-agent', value: id, 'aria-describedby': `l-agent-${id}-line`,
         onchange: () => { value = id; paint(); onPick(id); } });
       const line = h('span', { class: 'choice-line', id: `l-agent-${id}-line` });
+      const meta = h('span', { class: 'choice-meta', id: `l-agent-${id}-meta` }, 'default \u00b7 auto');
       const card = h('label', { class: 'choice-card', for: `l-agent-${id}`, title },
-        input, h('span', { class: 'radio', 'aria-hidden': 'true' }), h('span', { class: 'choice-title' }, name), line);
-      return [id, { card, input, line }];
+        input, h('span', { class: 'radio', 'aria-hidden': 'true' }), h('span', { class: 'choice-title' }, name), line, meta);
+      return [id, { card, input, line, meta }];
     }));
     function paint() {
       for (const [id, c] of cards) {
         c.input.checked = id === value;
         c.card.classList.toggle('is-on', id === value);
         c.card.classList.toggle('is-off', c.input.disabled);
+        c.meta.hidden = c.input.disabled;
+        c.input.setAttribute('aria-describedby', c.input.disabled ? `l-agent-${id}-line` : `l-agent-${id}-line l-agent-${id}-meta`);
         // Drawn again only when the agent's availability changed, so a focused link keeps its focus.
         if (c.off === c.input.disabled) continue;
         c.off = c.input.disabled;
@@ -78,6 +82,10 @@
       set value(id) { value = id; paint(); },
       /** @returns {string[]}  the agents a session can start on now, in their order */
       get offered() { return [...cards].filter(([, c]) => !c.input.disabled).map(([id]) => id); },
+      /** What the agent would start with, on its card: `opus · high · auto`. */
+      settings(id, text) {
+        cards.get(id).meta.textContent = text;
+      },
       /** Which agents have what they run on: the rest stay shown, disabled, saying where to save it. */
       offer(ids) {
         for (const [id, c] of cards) c.input.disabled = !ids.includes(id);
@@ -555,8 +563,8 @@
     const workOn = h('input', { id: 'l-on', class: 'field mono', autocomplete: 'off', placeholder: 'Search open PRs, or type PR #123 or a branch' });
     const agent = createAgentCards(() => {
       agentPicked = true;
-      // A model name is one agent's own (OpenCode's `provider/model`, Grok's `grok-…`): another agent starts from its default.
-      modelText.value = '';
+      // A model name is one agent's own (OpenCode's `provider/model`, Grok's `grok-…`): another agent starts from its own,
+      // kept from its last pick, or its default (showAgent).
       grokTyped = false;
       showAgent();
       if (me) update(me);
@@ -611,12 +619,16 @@
     });
     // Until the person picks one, the agent follows their sign-ins: Codex for someone with only a Codex sign-in saved.
     let agentPicked = false;
-    // Model, effort and permissions, folded on a phone to one line of what is picked, and open on a desktop as before.
-    const picked = h('span', { class: 'loptions-picked' });
-    const showPicked = () => {
-      const modelWord = typedModel() ? modelText.value.trim() || 'default' : model.selectedOptions[0]?.textContent ?? '';
-      picked.textContent = [modelWord, ...[effort, mode].filter((s) => !s.hidden).map((s) => s.selectedOptions[0]?.textContent ?? '')].join(' · ');
+    // The picked agent's model, effort and permissions, in a panel under the cards; its card says them in one line, and
+    // each agent keeps its own while the page is open: picking Codex again finds the model picked for it.
+    const settingsHead = h('p', { class: 'lsettings-head' });
+    const words = () => {
+      const modelWord = typedModel() ? modelText.value.trim() || 'default' : model.value ? model.selectedOptions[0]?.textContent ?? '' : 'default';
+      return [modelWord, ...(!effort.hidden && effort.value ? [effort.value] : []), mode.selectedOptions[0]?.textContent ?? ''].join(' \u00b7 ');
     };
+    const showPicked = () => agent.settings(agent.value, words());
+    const kept = {};
+    let shownAgent = agent.value;
     function fill(select, options) {
       select.replaceChildren(...options.map(([value, label, title]) => h('option', { value, title }, label)));
     }
@@ -699,6 +711,12 @@
       if (agent.value === 'grok') keepPick(effort, grokEffortOptions());
     });
     function showAgent() {
+      if (shownAgent && shownAgent !== agent.value) {
+        kept[shownAgent] = { model: model.value, text: modelText.value, effort: effort.value, mode: mode.value };
+      }
+      const switched = shownAgent !== agent.value;
+      shownAgent = agent.value;
+      if (switched) modelText.value = kept[agent.value]?.text ?? '';
       const codex = agent.value === 'codex';
       const grok = agent.value === 'grok';
       const own = ownAgent();
@@ -717,13 +735,21 @@
       if (grok) loadGrokCatalog();
       showCatalogNote();
       prompt.placeholder = `What should ${a.name} do? Type / for the repo\u2019s skills.`;
+      settingsHead.textContent = `${a.name}\u2019s settings`;
+      const was = switched && kept[agent.value];
+      if (was) {
+        for (const [s, v] of [[model, was.model], [effort, was.effort], [mode, was.mode]]) {
+          if ([...s.options].some((o) => o.value === v)) s.value = v;
+        }
+        if (codex) keepPick(effort, codexEffortOptions());
+        if (grok) keepPick(effort, grokEffortOptions());
+      }
       showPicked();
     }
     for (const s of [model, effort, mode]) s.addEventListener('change', showPicked);
     modelText.addEventListener('input', showPicked);
-    showPicked();
-    const options = h('details', { class: 'loptions', open: !window.matchMedia('(max-width: 720px)').matches },
-      h('summary', null, h('span', { class: 'field-label' }, 'Model, effort and permissions'), picked),
+    showAgent();
+    const options = h('div', { class: 'lsettings', role: 'group', 'aria-label': 'The agent\u2019s model, effort and permissions' }, settingsHead,
       h('div', { class: 'lgrid3' }, field('l-model', 'Model', h('div', { class: 'lmodel' }, model, modelText)), effortField, field('l-mode', 'Permissions', mode)), catalogNote);
     // Where a blocked repo's fix card goes, in place of the rest of the form: the picker above stays.
     const blockedSlot = h('div', { class: 'launch-setup', hidden: true });
