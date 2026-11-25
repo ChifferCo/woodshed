@@ -63,7 +63,7 @@
         c.card.classList.toggle('is-on', id === value);
         c.card.classList.toggle('is-off', c.input.disabled);
         c.line.replaceChildren(...(c.input.disabled
-          ? [h('a', { href: `/settings#${id}` }, 'Sign in on My settings')]
+          ? [h('a', { href: `/settings#${id}`, 'aria-label': `Sign in to ${A.agent(id).product} on My settings` }, 'Sign in on My settings')]
           : [cardLine(id)]));
       }
     }
