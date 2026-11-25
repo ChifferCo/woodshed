@@ -16,7 +16,7 @@ A card shows the title and its tag (on Everyone, and on Mine for a session you s
 CPU and memory badge are in the pane bar, not on the card. **Assigned sessions.** The person who adds the `woodshed` label, or writes the first `/woodshed` comment, has the shared session
 if they *Can be assigned* (a switch per member on People, off for a new member, which needs Sessions from GitHub; an admin
 turns it on, see "Sign-in"). A starter who cannot be assigned leaves it unassigned. **Mine** lists your private sessions and the shared ones you
-started (your label or `/woodshed` comment, on your Claude plan when your switch is on) or that are assigned to you: **Needs you** (stopped sessions waiting on you; **Move to Stopped** in a card's ⋯ menu marks one stopped by you, which moves it to Stopped and leaves Resume as it was), then **Active** (those waiting on you first), **Finished** (assigned shared sessions whose pull request is in Slack) and **Stopped**; **Everyone** lists every shared session with **Unassigned** at the top. Both end with **Reviews and QA**, folded until opened: the review and QA sessions the console starts on pull requests, which run by themselves, so they are never Unassigned and cannot be assigned: no Take it, and no Assign in their ⋯ menu. A console one person uses has one list of
+started (your label or `/woodshed` comment, on your Claude plan when your switch is on) or that are assigned to you: **Needs you** (stopped sessions waiting on you; **Move to Stopped** in a card's ⋯ menu marks one stopped by you, which moves it to Stopped and leaves Resume as it was), then **Active** (those waiting on you first), **Finished** (assigned shared sessions whose pull request is in Slack) and **Stopped**; **Everyone** lists every shared session with **Unassigned** at the top. Both end with **Reviews and QA**, folded until opened: the review and QA sessions the console starts on pull requests, which run by themselves, so they are never Unassigned and cannot be assigned: no Take it, and no Assign in their ⋯ menu. It lists each one still going and the last ended run of each kind on each pull request; the console takes an ended run off the list once a later run on its pull request replaced it, or its pull request merged or closed (the last QA run stays while the recordings its comment links are kept). A console one person uses has one list of
 every session, with no switch, and its head reads **My sessions** (`/all` opens it): one nobody signs in to (it listens on
 loopback alone), one whose People list has a single member, or one whose `WOODSHED_ONE_PERSON` is `1`. The setting
 decides when set, `0` keeping the two views (the dev console sets it, `DEV_CONSOLE_ONE_PERSON=1` for the one list);
@@ -844,9 +844,12 @@ you would any other, and save a new one. Saving a new token or removing it
 reaches running sessions only at their next start.
 
 New session opens on **Codex** for someone with a Codex sign-in saved and no Claude token, and on Claude otherwise,
-until they pick an agent. Its **Agent** menu lists only the agents set up to run (`agents` in `GET /api/my`): Claude with a
-Claude token saved, Codex with a Codex sign-in saved or the team's `openai-api-key`. With one, the menu is greyed out
-on it, and a Codex start with neither is refused (409). Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
+until they pick an agent. Its **Agent** is a card per agent (`createAgentCards` in `public/launcher.js`), each saying what
+it runs on; only the agents set up to run can be picked (`agents` in `GET /api/my`): Claude with a Claude token saved,
+Codex with a Codex sign-in saved or the team's `openai-api-key`. The others stay shown, disabled, with a link to their
+box on My settings, and a Codex start with neither is refused (409). Each card says, in one line, the model, effort and
+permissions that agent would start with; the picked one's menus are a panel under the cards, and each agent keeps its own
+while the page is open, so the next session started from it offers them again. Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
 (`codexModels.mjs`): `GET https://chatgpt.com/backend-api/codex/models?client_version=<codex's version>`, asked with
 your own Codex sign-in, or the team's OpenAI key with none, kept 10 minutes. A model OpenAI ships shows the day it
 ships, and a start is refused with a model or effort the list does not offer. The console never refreshes a ChatGPT
@@ -855,7 +858,7 @@ answering, the menus are your last list read, or else codex's built-in list (`BU
 --bundled` of the image's codex), and a line under them says so. `CODEX_CLIENT_VERSION` follows the image's
 `CODEX_VERSION`, which `codexModels.test.mjs` checks; refresh `BUILT_IN` with it.
 
-**Grok Build** and **OpenCode** are on the Agent menu too (`shared/agents.cjs`), each only for someone whose own sign-in
+**Grok Build** and **OpenCode** have Agent cards too (`shared/agents.cjs`), each only for someone whose own sign-in
 for it is saved on My settings: they run on nothing else, since the console holds no team key or proxy for them. The
 sign-in is `users/<login>/grok-auth` (an xAI key, `xai-…`, or `~/.grok/auth.json` from `grok login`) or `opencode-auth`
 (`~/.local/share/opencode/auth.json` from `opencode auth login`), saved with `POST /api/my/agent-auth/<agent>` and

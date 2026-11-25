@@ -1667,7 +1667,8 @@
   }
 
   function railBody() {
-    const all = railListing();
+    // An earlier review or QA run on a pull request is left out of the cards and every chip's count alike.
+    const all = W.latestPullChecks(railListing());
     const onProject = railProject();
     const listed = onProject ? all.filter((s) => s.project === onProject) : all;
     const emptyText = all.length && onProject ? `No sessions on ${onProject} here. All shows the other projects'.`
