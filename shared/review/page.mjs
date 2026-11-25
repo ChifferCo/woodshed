@@ -2835,7 +2835,7 @@ ${DARK_PALETTE}
         if (tag === 'VIDEO') made.controls = true;
         else {
           made.alt = node.getAttribute('alt') || '';
-          if (src.startsWith('https://github.com/') && src.endsWith('?raw=true')) {
+          if (/^https:[/][/]github[.]com[/][A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+[/]blob[/][a-f0-9]{40}[/][^?#]+[?]raw=true$/i.test(src)) {
             made.addEventListener('error', function loadWithGitHubAccess() {
               made.src = '/reviews/' + state.session + '/image?src=' + encodeURIComponent(src);
             }, { once: true });
