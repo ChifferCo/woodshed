@@ -604,12 +604,19 @@ export async function setupCommand(args, ctx) {
       if (current.code !== EXIT.done || !isReviewChoice(current.last?.config?.reviews)) return childError('review-choice', current, 'Could not read your reviewer choice.');
       const prior = current.last.config.reviews;
       let value = opts['--reviews'];
+      // An answer they typed, as against Enter, which keeps the current choice. `default` already reads as the current
+      // choice for someone still on the previous review default, who saved none. Writing it, from `--reviews default`
+      // or from typing it, is what accepts the wider one.
+      let typed = false;
       if (!value && choose) {
         const answer = await choose(`Who should review your pull requests (${REVIEW_CHOICES_TEXT})? Enter keeps ${prior}. `);
-        if (answer !== null) value = answer || prior;
+        if (answer !== null) {
+          typed = answer !== '';
+          value = answer || prior;
+        }
       }
       if (!isReviewChoice(value)) return stop('review-choice', EXIT.waiting, `Choose who reviews your pull requests with --reviews ${REVIEW_CHOICES.join('|')} or reviewers joined with + (claude+grok), or use --skip-reviews. Current choice: ${prior}.`);
-      if (value !== prior) {
+      if (value !== prior || opts['--reviews'] === 'default' || (typed && value === 'default')) {
         const set = await call('config set reviews', 'config', 'set', 'reviews', value);
         if (set.code !== EXIT.done) return childError('review-choice', set, 'Could not save your reviewer choice.');
       }

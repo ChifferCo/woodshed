@@ -25,10 +25,13 @@
 //   POST /api/my/agent-auth/<agent>  {"value": ...}   my own Grok Build or OpenCode sign-in (shared/agents.cjs)
 //   POST /api/my/agent-auth/<agent>/remove
 //   POST /api/my/agent-auth/<agent>/reviews  {"on": true|false}   reviews of my pull requests may run Grok Build or
-//                                     OpenCode on this sign-in, when I pick it below (reviewAgents.mjs)
+//                                     OpenCode on this sign-in (reviewAgents.mjs): the default includes it while on,
+//                                     except a sign-in already saved when that default shipped, or found in the
+//                                     secret store without a save on My settings since
 //   GET  /api/my/reviews              who reviews my pull requests, and the choices this console can run for me
-//   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|"claude+grok"|…|null}   null is the most
-//                                     there is; any reviewers joined with + (shared/agents.cjs, reviewersOf)
+//   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|"claude+grok"|…|null}   null is every
+//                                     reviewer that can run, and accepts that default for someone still on the
+//                                     previous one; any reviewers joined with + (shared/agents.cjs, reviewersOf)
 //   POST /api/my/terminal             {"terminal": "tmux"|"herdr"}   what my private sessions run their agent in
 //   POST /api/my/claude-token/remove
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
@@ -1988,7 +1991,17 @@ export function createHandler({
         }
         if (agentMatch[2]) await userSettings.removeAgentAuth(login, agentMatch[1]);
         else {
-          await userSettings.setAgentAuth(login, agentMatch[1], body.value);
+          // A first save from the command line (woodshed sign-in push, and setup's send of the same file) is a sign-in
+          // for private sessions. The reviews switch would otherwise come on with it, and with no reviewer choice saved
+          // the next review of a private pull request would run that agent. The off flag is stored before the secret
+          // (setAgentAuth's reviews: false), and again in the same settings update as the sign-in. A stop after the
+          // secret lands is a discovery, and an author who already accepted the wider default keeps it, so the switch
+          // would read as on unless that flag is already stored. My settings' Save still comes on with the sign-in,
+          // and replacing one already saved leaves the switch as it is.
+          const id = agentMatch[1];
+          const had = Boolean(userSettings.view(login).agentAuth?.[id]?.set);
+          const reviewsOff = !had && carriesCliToken(req.headers) && agentsRegistry.agent(id).reviews;
+          await userSettings.setAgentAuth(login, id, body.value, reviewsOff ? { reviews: false } : undefined);
           await firstDatabases(login);
         }
         // As for Codex: the Grok models list was read on the sign-in that is gone.
@@ -2529,8 +2542,8 @@ export function createHandler({
   /** My settings' Reviews card: who reviews my pull requests, and what this console can run for me (reviewAgents.mjs). */
   async function myReviewsView(login) {
     if (!reviewAgents) return { available: Object.fromEntries(agentsRegistry.REVIEW_AGENT_IDS.map((id) => [id, false])), best: 'none', choice: null };
-    const { available, own, ownWhy, best } = await reviewAgents.options(login);
-    return { available, own, ownWhy, best, choice: userSettings?.reviewAgents(login) ?? null };
+    const { available, own, ownWhy, best, expanded } = await reviewAgents.options(login);
+    return { available, own, ownWhy, best, expanded, choice: userSettings?.reviewAgents(login) ?? null };
   }
 
   // `woodshed review start`: the console's review of one of the person's own open pull requests, now (fleet.mjs,
@@ -2916,7 +2929,7 @@ export function createHandler({
   }
   function cliWrite(req, res, pathname, login) {
     // An own sign-in saved from the command line (woodshed sign-in push): the page's own save, answered with whether one
-    // is saved now and when, never the page's whole view.
+    // is saved now and when, never the page's whole view. A first save leaves that agent's reviews switch off (myWrite).
     const agentAuth = CLI_AGENT_AUTH_RE.exec(pathname);
     if (agentAuth) {
       const id = agentAuth[1];

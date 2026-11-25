@@ -1970,7 +1970,7 @@ test('My settings\' Reviews card: each person picks who reviews their pull reque
   const get = async () => (await fetch(`http://127.0.0.1:${port}/api/my/reviews`, { headers: as })).json();
 
   const off = { grok: false, opencode: false };
-  assert.deepEqual(await get(), { available: { claude: true, codex: false, ...off }, own: { claude: false, codex: false, ...off }, ownWhy: { grok: null, opencode: null }, best: 'claude', choice: null },
+  assert.deepEqual(await get(), { available: { claude: true, codex: false, ...off }, own: { claude: false, codex: false, ...off }, ownWhy: { grok: null, opencode: null }, best: 'claude', expanded: true, choice: null },
     'the team Anthropic key alone: Claude Code is the most there is');
   const none = await post(port, '/api/my/reviews', { choice: 'none', login: 'joel' }, as);
   assert.equal(none.status, 200);
@@ -1984,7 +1984,8 @@ test('My settings\' Reviews card: each person picks who reviews their pull reque
   // Grok Build reviews only on the person's own sign-in, switched on for reviews: offered once one is saved.
   assert.equal((await post(port, '/api/my/agent-auth/grok/reviews', { on: true }, as)).status, 409, 'no sign-in saved yet');
   assert.equal((await post(port, '/api/my/agent-auth/grok', { value: 'xai-made-up-mia-0123456789' }, as)).status, 200);
-  assert.deepEqual([(await get()).available.grok, (await get()).own.grok], [true, true]);
+  const withGrok = await get();
+  assert.deepEqual([withGrok.available.grok, withGrok.own.grok, withGrok.choice, withGrok.best], [true, true, null, 'claude+grok'], 'the default includes Grok Build once its sign-in is on for reviews');
   const picked = await post(port, '/api/my/reviews', { choice: 'grok+claude' }, as);
   assert.equal(picked.body.choice, 'claude+grok');
   const offNow = await post(port, '/api/my/agent-auth/grok/reviews', { on: false }, as);

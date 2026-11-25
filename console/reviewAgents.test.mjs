@@ -28,29 +28,36 @@ const AGENT_SIGN_INS = {
   },
 };
 
-function setup({ team = { claude: true, codex: true }, claudeOwn = [], codexOwn = [], agentOwn = {}, choices = {}, keysFail = false, agentAuthFails = false } = {}) {
+function setup({ team = { claude: true, codex: true }, claudeOwn = [], codexOwn = [], agentOwn = {}, choices = {}, legacy = [], keysFail = false, agentAuthFails = false } = {}) {
   const userSettings = {
     reviewAgents: (login) => choices[login] ?? null,
     usesOwnTokenForShared: (login) => claudeOwn.includes(login),
     usesOwnCodexForReviews: (login) => codexOwn.includes(login),
     codexAuth: async (login) => SIGN_INS[login] ?? null,
     usesOwnAgentForReviews: (login, id) => (agentOwn[id] ?? []).includes(login),
+    usesExpandedReviewDefault: (login) => !legacy.includes(login),
     agentAuth: async (login, id) => { if (agentAuthFails) throw new Error('Secrets Manager timed out'); return AGENT_SIGN_INS[id]?.[login] ?? null; },
   };
   const connected = async () => { if (keysFail) throw new Error('Secrets Manager timed out'); return { ...team }; };
   return createReviewAgents({ userSettings, connected, now: () => NOW });
 }
 
-test('the default is the most there is: both, else the one there is, else none', () => {
+test('the default is every reviewer that can run', () => {
   assert.equal(bestChoice({ claude: true, codex: true }), 'both');
   assert.equal(bestChoice({ claude: true, codex: false }), 'claude');
   assert.equal(bestChoice({ claude: false, codex: true }), 'codex');
   assert.equal(bestChoice({ claude: false, codex: false }), 'none');
+  assert.equal(bestChoice({ claude: true, codex: true, grok: true, opencode: true }), 'claude+codex+grok+opencode');
+  assert.equal(bestChoice({ claude: true, codex: false, grok: true }), 'claude+grok');
+  assert.equal(bestChoice({ grok: true, opencode: true }), 'grok+opencode');
+  assert.equal(bestChoice({}), 'none');
+  assert.equal(bestChoice({ claude: true, codex: true, grok: true, opencode: true }, { expanded: false }), 'both', 'the previous default is Claude Code and Codex');
+  assert.equal(bestChoice({ grok: true }, { expanded: false }), 'none');
 });
 
 test('with no choice saved, a review runs both when the team keys can, on the team keys', async () => {
   const agents = setup();
-  assert.deepEqual(await agents.forReview({ login: 'bo' }), { agents: ['claude', 'codex'], choice: null, codexLogin: null, codexVia: 'key', why: null, keysUnread: false });
+  assert.deepEqual(await agents.forReview({ login: 'bo' }), { agents: ['claude', 'codex'], choice: null, codexLogin: null, codexVia: 'key', why: null, keysUnread: false, expanded: true });
 });
 
 test('each choice runs what it says: none, Claude Code, Codex or both', async () => {
@@ -64,9 +71,9 @@ test('each choice runs what it says: none, Claude Code, Codex or both', async ()
 test('what is offered follows the tokens: the team keys, or the person\'s own sign-ins', async () => {
   const none = setup({ team: { claude: false, codex: false } });
   const nothing = { claude: false, codex: false, grok: false, opencode: false };
-  assert.deepEqual(await none.options('bo'), { available: nothing, own: nothing, ownWhy: { grok: null, opencode: null }, best: 'none' });
+  assert.deepEqual(await none.options('bo'), { available: nothing, own: nothing, ownWhy: { grok: null, opencode: null }, best: 'none', expanded: true });
   const own = setup({ team: { claude: false, codex: false }, claudeOwn: ['ana'], codexOwn: ['ana'] });
-  assert.deepEqual(await own.options('ana'), { available: { ...nothing, claude: true, codex: true }, own: { ...nothing, claude: true, codex: true }, ownWhy: { grok: null, opencode: null }, best: 'both' });
+  assert.deepEqual(await own.options('ana'), { available: { ...nothing, claude: true, codex: true }, own: { ...nothing, claude: true, codex: true }, ownWhy: { grok: null, opencode: null }, best: 'both', expanded: true });
   assert.equal((await own.options('bo')).best, 'none', 'someone else\'s sign-ins are not theirs');
   const claudeTeam = setup({ team: { claude: true, codex: false } });
   assert.equal((await claudeTeam.options('bo')).best, 'claude');
@@ -76,7 +83,7 @@ test('what is offered follows the tokens: the team keys, or the person\'s own si
 
 test('with nothing to run a review on, the default is no review', async () => {
   const agents = setup({ team: { claude: false, codex: false } });
-  assert.deepEqual(await agents.forReview({ login: 'bo' }), { agents: [], choice: null, codexLogin: null, codexVia: null, why: null, keysUnread: false });
+  assert.deepEqual(await agents.forReview({ login: 'bo' }), { agents: [], choice: null, codexLogin: null, codexVia: null, why: null, keysUnread: false, expanded: true });
 });
 
 test('a choice that cannot run now keeps what of it can, else falls back to the most there is, and says why', async () => {
@@ -91,9 +98,9 @@ test('a choice that cannot run now keeps what of it can, else falls back to the 
 
 test('Codex runs on the author\'s own sign-in when they use it for reviews, as it is, and on the team key otherwise', async () => {
   const agents = setup({ team: { claude: true, codex: true }, codexOwn: ['ana', 'cy'] });
-  assert.deepEqual(await agents.forReview({ login: 'ana' }), { agents: ['claude', 'codex'], choice: null, codexLogin: 'ana', codexVia: 'chatgpt', codexAccount: 'acct-ana', why: null, keysUnread: false });
-  assert.deepEqual(await agents.forReview({ login: 'cy' }), { agents: ['claude', 'codex'], choice: null, codexLogin: 'cy', codexVia: 'key', why: null, keysUnread: false });
-  assert.deepEqual(await agents.forReview({ login: null }), { agents: ['claude', 'codex'], choice: null, codexLogin: null, codexVia: 'key', why: null, keysUnread: false }, 'nobody\'s own');
+  assert.deepEqual(await agents.forReview({ login: 'ana' }), { agents: ['claude', 'codex'], choice: null, codexLogin: 'ana', codexVia: 'chatgpt', codexAccount: 'acct-ana', why: null, keysUnread: false, expanded: true });
+  assert.deepEqual(await agents.forReview({ login: 'cy' }), { agents: ['claude', 'codex'], choice: null, codexLogin: 'cy', codexVia: 'key', why: null, keysUnread: false, expanded: true });
+  assert.deepEqual(await agents.forReview({ login: null }), { agents: ['claude', 'codex'], choice: null, codexLogin: null, codexVia: 'key', why: null, keysUnread: false, expanded: true }, 'nobody\'s own');
 });
 
 test('an author whose ChatGPT login has expired gets Codex on the team key, and is told why', async () => {
@@ -136,11 +143,33 @@ test('a choice is saved as a preset\'s name or the reviewers joined with +, and 
   assert.equal((await agents.forReview({ login: 'odd' })).choice, null);
 });
 
-test('Grok Build and OpenCode are never in the default: they review only when the author picks them', async () => {
+test('with no choice saved, a review runs every reviewer that can, Grok Build and OpenCode included', async () => {
   const agents = setup({ agentOwn: { grok: ['gil'], opencode: ['gil'] } });
-  assert.deepEqual((await agents.forReview({ login: 'gil' })).agents, ['claude', 'codex']);
-  const options = await agents.options('gil');
-  assert.deepEqual([options.available.grok, options.own.opencode, options.best], [true, true, 'both']);
+  const r = await agents.forReview({ login: 'gil' });
+  assert.deepEqual([r.agents, r.choice, r.why], [['claude', 'codex', 'grok', 'opencode'], null, null]);
+  assert.deepEqual(r.ownSignIns, { grok: { login: 'gil', via: 'key' }, opencode: { login: 'gil', provider: 'anthropic' } });
+  assert.equal((await agents.options('gil')).best, 'claude+codex+grok+opencode');
+  const picked = setup({ agentOwn: { grok: ['gil'], opencode: ['gil'] }, choices: { gil: 'both' } });
+  assert.deepEqual((await picked.forReview({ login: 'gil' })).agents, ['claude', 'codex'], 'a saved choice still leaves them out');
+  const dead = setup({ team: { claude: true, codex: false }, agentOwn: { grok: ['gil'] }, choices: { gil: 'codex' } });
+  const fell = await dead.forReview({ login: 'gil' });
+  assert.deepEqual(fell.agents, ['claude', 'grok'], 'none of the saved choice can run: the default runs, and Grok Build is in it');
+  assert.match(fell.why, /the author chose codex, which this console cannot run now/);
+  const grokOnly = setup({ team: { claude: false, codex: false }, agentOwn: { grok: ['gil'] } });
+  assert.deepEqual([(await grokOnly.forReview({ login: 'gil' })).agents, (await grokOnly.options('gil')).best], [['grok'], 'grok']);
+});
+
+test('a Grok Build or OpenCode sign-in saved before the wider default stays out until that default is accepted', async () => {
+  const agents = setup({ agentOwn: { grok: ['gil'], opencode: ['gil'] }, legacy: ['gil'] });
+  const r = await agents.forReview({ login: 'gil' });
+  assert.deepEqual([r.agents, r.ownSignIns, r.choice, r.expanded], [['claude', 'codex'], undefined, null, false]);
+  assert.deepEqual([(await agents.options('gil')).best, (await agents.options('gil')).expanded], ['both', false]);
+  const picked = setup({ agentOwn: { grok: ['gil'] }, choices: { gil: 'claude+grok' }, legacy: ['gil'] });
+  assert.deepEqual((await picked.forReview({ login: 'gil' })).agents, ['claude', 'grok'], 'a saved choice that names Grok Build still runs it');
+  const dead = setup({ team: { claude: true, codex: false }, agentOwn: { grok: ['gil'] }, choices: { gil: 'codex' }, legacy: ['gil'] });
+  const fell = await dead.forReview({ login: 'gil' });
+  assert.deepEqual([fell.agents, fell.expanded], [['claude'], false], 'a saved choice that cannot run falls back to Claude Code, not Grok Build');
+  assert.match(fell.why, /the author chose codex/);
 });
 
 test('Grok Build reviews on the author\'s key or unexpired login, and is left out, saying why, when it cannot', async () => {

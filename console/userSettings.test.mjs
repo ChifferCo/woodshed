@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import { ownFilesBodyLimit } from '../shared/ownFiles.mjs';
 import { checkClaudeToken, checkCodexAuth, createUserSettings, userSecretName } from './userSettings.mjs';
+import { createReviewAgents } from './reviewAgents.mjs';
+import { openServiceStore } from './store.mjs';
 import agents from '../shared/agents.cjs';
 
 
@@ -162,6 +164,35 @@ test('the switches for reviews on your own Grok Build and OpenCode sign-ins work
   assert.equal(settings.usesOwnAgentForReviews('joel', 'grok'), false, 'no sign-in, no effect');
 });
 
+test('a Grok Build or OpenCode sign-in already saved keeps the previous review default until reviews is set back to it', (t) => {
+  t.mock.method(console, 'log', () => {});
+  const store = {
+    state: {
+      people: {
+        joel: { agentAuthAt: { grok: '2026-01-01T00:00:00.000Z' } },
+        mia: { claudeTokenAt: '2026-01-01T00:00:00.000Z' },
+      },
+    },
+    save() {},
+  };
+  const settings = createUserSettings({ store, secrets: fakeSecrets() });
+  assert.equal(store.state.reviewDefaultKept, true);
+  assert.equal(store.state.people.joel.reviewDefault, 'legacy');
+  assert.equal(store.state.people.mia.reviewDefault, undefined, 'no Grok Build or OpenCode sign-in: nothing to keep');
+  assert.equal(settings.usesExpandedReviewDefault('joel'), false);
+  assert.equal(settings.usesExpandedReviewDefault('mia'), true);
+  assert.equal(settings.usesExpandedReviewDefault('new'), true, 'someone with no record gets the wider default');
+  assert.equal(settings.view('joel').expandedReviewDefault, false);
+  settings.setReviewAgents('joel', 'both');
+  assert.equal(settings.usesExpandedReviewDefault('joel'), false, 'a saved choice does not accept the wider default');
+  settings.setReviewAgents('joel', null);
+  assert.equal(settings.usesExpandedReviewDefault('joel'), true);
+  assert.equal(store.state.people.joel.reviewDefault, 'all');
+  store.state.people.neo = { agentAuthAt: { opencode: '2026-02-01T00:00:00.000Z' } };
+  createUserSettings({ store, secrets: fakeSecrets() });
+  assert.equal(store.state.people.neo.reviewDefault, undefined, 'a sign-in saved after the first start joins the wider default');
+});
+
 test('a review choice is a preset or reviewers joined with +, saved in the registry\'s order', (t) => {
   t.mock.method(console, 'log', () => {});
   const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: fakeSecrets() });
@@ -225,6 +256,161 @@ test('Grok Build and OpenCode sign-ins are each kept under the person\'s login, 
   await assert.rejects(settings.setAgentAuth('octocat', 'codex', 'sk-x'), /no own sign-in for codex/);
   await assert.rejects(settings.setAgentAuth('octocat', 'grok', 'not a key hunter2'), (err) => err.shown && !err.message.includes('hunter2'));
   await assert.rejects(settings.setAgentAuth('octocat', 'opencode', '{"x":{"type":"magic"}}'), /OpenCode auth.json/);
+});
+
+test('a command-line reviews deny is taken back when the secret write throws', async () => {
+  const secrets = fakeSecrets();
+  const store = { state: { reviewDefaultKept: true, people: { mia: { reviewDefault: 'all', agentAuthAt: { opencode: '2026-11-01T00:00:00.000Z' } } } }, save() {} };
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-11-25T00:00:00Z') });
+  // OpenCode's switch is turned off while this upload's secret write is in flight. The failure puts back only Grok's flag.
+  secrets.save = async () => {
+    settings.setOwnAgentForReviews('mia', 'opencode', false);
+    throw new Error('store down');
+  };
+  await assert.rejects(settings.setAgentAuth('mia', 'grok', 'xai-made-up-mia-0123456789', { reviews: false }), /store down/);
+  assert.equal(store.state.people.mia.agentAuthAt?.grok, undefined);
+  assert.equal(store.state.people.mia.ownAgentForReviews.grok, undefined, 'the failed upload\'s own flag is taken back');
+  assert.equal(store.state.people.mia.ownAgentForReviews.opencode, false, 'the other agent\'s switch stays off');
+  secrets.values.set('users/mia/opencode-auth', '{"openai":{"type":"api","key":"sk-openai-made-up"}}');
+  const reviews = createReviewAgents({ userSettings: settings, connected: async () => ({ claude: true, codex: true }) });
+  assert.deepEqual((await reviews.forReview({ login: 'mia' })).agents, ['claude', 'codex']);
+  assert.equal(secrets.values.has('users/mia/grok-auth'), false);
+});
+
+test('a command-line sign-in is not saved when the service store rejects the reviews-off write', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const store = await openServiceStore({
+    load: async () => ({ reviewDefaultKept: true, people: { mia: { reviewDefault: 'all' } } }),
+    save: async () => { throw new Error('down'); },
+  }, { retryMs: 60_000 });
+  t.after(() => store.close());
+  const saved = [];
+  const secrets = { read: async () => null, save: async (name) => { saved.push(name); }, remove: async () => {} };
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-11-25T00:00:00Z') });
+  await assert.rejects(settings.setAgentAuth('mia', 'grok', 'xai-made-up-mia-0123456789', { reviews: false }), /reviews switch could not be saved/);
+  assert.deepEqual(saved, [], 'the secret is not written when the deny did not land');
+});
+
+test('a command-line sign-in is not saved when the service store has already closed', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const persisted = [];
+  const store = await openServiceStore({
+    load: async () => ({ reviewDefaultKept: true, people: { mia: { reviewDefault: 'all' } } }),
+    save: async (state) => { persisted.push(structuredClone(state)); },
+  });
+  await store.close();
+  const saved = [];
+  const secrets = { read: async () => null, save: async (name) => { saved.push(name); }, remove: async () => {} };
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-11-25T00:00:00Z') });
+  await assert.rejects(settings.setAgentAuth('mia', 'grok', 'xai-made-up-mia-0123456789', { reviews: false }), /reviews switch could not be saved/);
+  assert.deepEqual(saved, [], 'the secret is not written when the store has closed');
+  assert.equal(persisted.length, 0, 'a closed store does not take the reviews-off write');
+});
+
+test('a command-line reviews deny is durable on the service store before the secret is saved', async () => {
+  let release;
+  const open = new Promise((resolve) => { release = resolve; });
+  let held;
+  const persisted = [];
+  const store = await openServiceStore({
+    load: async () => ({ reviewDefaultKept: true, people: { mia: { reviewDefault: 'all' } } }),
+    save: async (state) => {
+      persisted.push(structuredClone(state));
+      if (persisted.length === 1) {
+        held();
+        await open;
+      }
+    },
+  });
+  const gate = new Promise((resolve) => { held = resolve; });
+  const values = new Map();
+  let secretsWhenSaved = null;
+  const secrets = {
+    values,
+    read: async (name) => values.get(name) ?? null,
+    save: async (name, value) => {
+      secretsWhenSaved = persisted.length;
+      values.set(name, value);
+    },
+    remove: async (name) => { values.delete(name); },
+  };
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-11-25T00:00:00Z') });
+  const pending = settings.setAgentAuth('mia', 'grok', 'xai-made-up-mia-0123456789', { reviews: false });
+  try {
+    await gate;
+    assert.equal(values.size, 0, 'the secret waits until the reviews-off write has finished');
+  } finally {
+    release();
+  }
+  await pending;
+  assert.equal(secretsWhenSaved, 1, 'the secret is saved once the reviews-off write has been accepted');
+  const atSecret = persisted[0];
+  assert.equal(atSecret.people.mia.ownAgentForReviews.grok, false);
+  assert.equal(atSecret.people.mia.agentAuthAt?.grok, undefined);
+  assert.equal(atSecret.people.mia.reviewDefault, 'all');
+  const restarted = createUserSettings({ store: { state: structuredClone(atSecret), save() {} }, secrets, now: () => Date.parse('2026-11-25T00:00:00Z') });
+  await restarted.refresh('mia', { force: true });
+  assert.equal(restarted.usesExpandedReviewDefault('mia'), true);
+  assert.equal(restarted.usesOwnAgentForReviews('mia', 'grok'), false);
+  const reviews = createReviewAgents({ userSettings: restarted, connected: async () => ({ claude: true, codex: true }) });
+  assert.deepEqual((await reviews.forReview({ login: 'mia' })).agents, ['claude', 'codex'], 'a restart after the secret lands does not put Grok Build in the default');
+});
+
+test('a Grok Build or OpenCode sign-in found in the store after startup stays on the previous review default', async (t) => {
+  const lines = [];
+  t.mock.method(console, 'log', (...args) => lines.push(args));
+  const secrets = fakeSecrets();
+  // The one-time mark already ran, on a record that did not know about the sign-in yet: the old release wrote it
+  // straight into the store, and this console had not looked it up.
+  const store = { state: { reviewDefaultKept: true, people: {} }, save() {} };
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-11-25T00:00:00Z') });
+  secrets.values.set('users/joel/grok-auth', 'xai-made-up-joel-0123456789');
+  await settings.refresh('joel', { force: true });
+  assert.equal(store.state.people.joel.reviewDefault, 'legacy');
+  assert.equal(settings.usesExpandedReviewDefault('joel'), false);
+  assert.equal(settings.view('joel').expandedReviewDefault, false);
+  assert.equal(settings.view('joel').agentAuth.grok.set, true);
+  const followed = lines.find((args) => args[0] === 'userSettings: sign-ins follow the secret store');
+  assert.equal(followed?.[1]?.reviewDefault, 'legacy');
+  assert.equal(JSON.stringify(followed).includes('xai-'), false, 'the log never carries the sign-in');
+
+  await settings.setAgentAuth('mia', 'grok', 'xai-made-up-mia-0123456789');
+  await settings.refresh('mia', { force: true });
+  assert.equal(store.state.people.mia.reviewDefault, undefined, 'a save on My settings after the mark joins the wider default');
+  assert.equal(settings.usesExpandedReviewDefault('mia'), true);
+
+  // A different sign-in written straight into the store afterwards is still uncached. It keeps the previous default
+  // until she accepts the wider one, which also takes the sign-in she saved back out until then.
+  secrets.values.set('users/mia/opencode-auth', '{"openai":{"type":"api","key":"sk-x"}}');
+  await settings.refresh('mia', { force: true });
+  assert.equal(store.state.people.mia.reviewDefault, 'legacy');
+  assert.equal(settings.usesExpandedReviewDefault('mia'), false);
+  assert.equal(settings.view('mia').agentAuth.opencode.set, true);
+
+  // The upgrade order the mark misses: Grok was already in the store, with no metadata, and OpenCode is saved through
+  // My settings before the first refresh. That save must not hide the uncached Grok sign-in.
+  secrets.values.set('users/ada/grok-auth', 'xai-made-up-ada-0123456789');
+  await settings.setAgentAuth('ada', 'opencode', '{"openai":{"type":"api","key":"sk-x"}}');
+  assert.equal(store.state.people.ada.reviewDefault, undefined, 'saving one sign-in does not look the other up');
+  await settings.refresh('ada', { force: true });
+  assert.equal(store.state.people.ada.reviewDefault, 'legacy');
+  assert.equal(settings.usesExpandedReviewDefault('ada'), false);
+  assert.equal(settings.view('ada').agentAuth.grok.set, true);
+  assert.equal(settings.view('ada').agentAuth.opencode.set, true);
+  assert.equal(JSON.stringify(lines).includes('xai-made-up-ada'), false, 'the log never carries the sign-in');
+
+  settings.setReviewAgents('joel', null);
+  assert.equal(store.state.people.joel.reviewDefault, 'all');
+  secrets.values.set('users/joel/opencode-auth', '{"openai":{"type":"api","key":"sk-x"}}');
+  await settings.refresh('joel', { force: true });
+  assert.equal(store.state.people.joel.reviewDefault, 'all', 'accepting the wider default is not undone by a sign-in found later');
+  assert.equal(settings.usesExpandedReviewDefault('joel'), true);
+
+  secrets.values.set('users/neo/claude-token', 'sk-ant-oat01-neo');
+  secrets.values.set('users/neo/codex-auth', 'sk-neo');
+  await settings.refresh('neo', { force: true });
+  assert.equal(store.state.people.neo.reviewDefault, undefined, 'a Claude token or Codex sign-in never keeps the previous default');
+  assert.equal(settings.usesExpandedReviewDefault('neo'), true);
 });
 
 test('an own sign-in written straight into the store counts as set, as a Claude token does', async (t) => {

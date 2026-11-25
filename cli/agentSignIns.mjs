@@ -5,6 +5,8 @@
 // The file's content is read, checked with the registry's checkSignIn (shared/agents.cjs) and sent over the command
 // line's sign-in, and nothing else: it is never printed, logged or put in an error, here or in --json. A file that is
 // not a sign-in is refused before anything is sent. One already saved on the console is replaced only with --replace.
+// A first save leaves that agent's reviews switch off: woodshed config set grok-reviews on (or opencode-reviews) turns
+// it on. Replacing a sign-in already saved leaves the switch as it is.
 //
 // Where each agent keeps it, as the agent itself finds it:
 //   Grok Build  $GROK_AUTH_PATH when set, else $GROK_HOME/auth.json, else <home>/.grok/auth.json, the home being HOME on
@@ -22,7 +24,9 @@ export const SIGN_IN_USAGE = `Usage: woodshed sign-in push <${agents.OWN_SIGN_IN
 Sends this computer's own sign-in for ${agents.OWN_SIGN_IN_AGENTS.map((id) => agents.agent(id).product).join(' or ')} to the console, as
 your sign-in for that agent's private sessions, from the file its own login saved:
 ${agents.OWN_SIGN_IN_AGENTS.map((id) => `  ${id.padEnd(9)}${agents.agent(id).signIn.steps[0].command} saves it in ${defaultFileText(id)}`).join('\n')}
-It is checked here first, and never printed. --replace replaces one the console has already.`;
+It is checked here first, and never printed. --replace replaces one the console has already.
+A first save leaves reviews of your pull requests off for that agent until you turn them on
+(woodshed config set grok-reviews on, or opencode-reviews). Replacing a saved sign-in leaves that switch as it is.`;
 
 function defaultFileText(id) {
   return id === 'grok' ? '~/.grok/auth.json (or $GROK_HOME/auth.json)' : '~/.local/share/opencode/auth.json (or $XDG_DATA_HOME/opencode/auth.json)';
