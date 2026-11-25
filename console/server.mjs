@@ -93,6 +93,7 @@
 //   GET  /api/sessions/<id>/image?path=<path>   a picture a terminal path names, from the session
 //   GET  /qa/<id>/video/<n>       a QA run's recording, for whoever may open the session (qaRecordings.mjs)
 //   GET  /qa-poster/<id>/<secret>.png   its still, with no sign-in: the QA comment shows it, through GitHub's image proxy
+//   GET  /qa-video/<id>/<secret>/<n>.webm  a public repo's QA recording (pullRequests.qa.recordings: public), with no sign-in
 //   POST /api/sessions/<id>/scroll  {"steps": -3, "pane": "agent"}   a swipe or wheel past the browser's own scrollback
 //   GET  /api/skills             the repo's skills and commands, for New session's / list
 //   GET  /api/pulls?project=<name>   the project's open pull requests, for New session's Work on list
@@ -250,7 +251,7 @@ import { answerWithView, CLI_CONFIG_PATH, configView, isConfigWrite } from './cl
 import { handleCliSettings } from './cliSettings.mjs';
 import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
-import { QA_POSTER_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
+import { QA_POSTER_RE, QA_PUBLIC_VIDEO_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
 import { CONNECTION_PATH } from './dbTunnel.mjs';
 import { checkGh } from './github.mjs';
 import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
@@ -3135,6 +3136,15 @@ export function createHandler({
     // A QA comment's still: GitHub's image proxy fetches it with no sign-in, so its unguessable name is its only lock.
     const poster = req.method === 'GET' && QA_POSTER_RE.exec(url.pathname);
     if (poster) return qaRecordings ? qaRecordings.servePoster(req, res, { id: poster[1], secret: poster[2] }) : reply(res, 404, { error: 'this console keeps no QA recordings' });
+    // A public QA run's video (pullRequests.qa.recordings: public): its run's secret is its only lock, as the still's
+    // name is, and it opens that run's videos and nothing else.
+    const openVideo = (req.method === 'GET' || req.method === 'HEAD') && QA_PUBLIC_VIDEO_RE.exec(url.pathname);
+    if (openVideo) {
+      if (!qaRecordings) return reply(res, 404, { error: 'this console keeps no QA recordings' });
+      const n = Number(openVideo[3]);
+      if (!fleet.publicQaVideo(openVideo[1], openVideo[2], n)) return qaRecordings.gone(res);
+      return qaRecordings.serveVideo(req, res, { id: openVideo[1], n });
+    }
     if (await authRoute(req, res, url)) return;
     const user = await signedIn(req, res, url);
     if (!user) return;

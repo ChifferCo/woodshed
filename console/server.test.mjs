@@ -168,6 +168,38 @@ test('a QA recording plays only for someone signed in who may open its session, 
   assert.deepEqual(served, [['video', { id: '0a1b2c3d', n: 1 }], ['poster', { id: '0a1b2c3d', secret }]]);
 });
 
+test('a public repo\'s QA video plays with no sign-in at its run\'s secret name, and no other name opens it', async (t) => {
+  const share = 'c'.repeat(32);
+  const session = { id: '0a1b2c3d', status: 'stopped', kind: 'pr', number: 7, title: 'QA', qa: { base: 'main', share, videos: [{ n: 1, bytes: 4 }] } };
+  const asked = [];
+  const fleet = {
+    sessions: () => [session], find: (id) => (id === session.id ? session : null),
+    publicQaVideo: (id, secret, n) => { asked.push([id, secret, n]); return id === session.id && secret === share && n === 1 ? session : null; },
+  };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
+  const served = [];
+  const qaRecordings = {
+    serveVideo: async (_req, res, which) => { served.push(which); res.writeHead(200, { 'content-type': 'video/webm' }).end('webm'); },
+    gone: (res) => { res.writeHead(410, { 'content-type': 'text/plain' }).end('no longer kept'); },
+  };
+  const handle = createHandler({ config, fleet, auth, qaRecordings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  assert.equal((await getWith(port, `/qa-video/0a1b2c3d/${share}/1.webm`, { accept: 'text/html' })).status, 200, 'a reader of the comment, signed in nowhere');
+  assert.equal((await getWith(port, `/qa-video/0a1b2c3d/${'d'.repeat(32)}/1.webm`)).status, 410, 'another secret');
+  assert.equal((await getWith(port, `/qa-video/0a1b2c3d/${share}/2.webm`)).status, 410, 'a video it never sent');
+  assert.equal((await getWith(port, `/qa-video/0a1b2c3d/${share}/1.mp4`)).status, 401, 'anything else under it is behind sign-in');
+  assert.equal((await getWith(port, '/qa/0a1b2c3d/video/1')).status, 401, 'the signed-in name stays behind sign-in');
+  assert.deepEqual(served, [{ id: '0a1b2c3d', n: 1 }]);
+  assert.equal(asked.length, 3);
+});
+
 test('the Diff tab\'s read goes to the running session\'s statusd, with its token, and a stopped session is refused', async (t) => {
   const asked = [];
   const statusd = http.createServer((req, res) => {

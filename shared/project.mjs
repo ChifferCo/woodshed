@@ -76,7 +76,7 @@ export const PROJECT_FIELDS = Object.freeze({
   pullRequests: ['review', 'suites', 'qa', 'mergeRisk', 'runsOn'],
   'pullRequests.review': ['author', 'heading', 'workflow', 'rerun', 'commentAuthor', 'runner'],
   'pullRequests.suites': ['name', 'workflow', 'jobs', 'rerun'],
-  'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner', 'autoLabel'],
+  'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner', 'autoLabel', 'recordings'],
   'pullRequests.mergeRisk': ['check'],
   workflowLinks: ['label', 'workflow'],
 });
@@ -462,6 +462,9 @@ function app(value, where = 'app', names = PROJECT_FIELDS.app) {
 // Where QA runs: `actions` in the repo's own CI, which posts the check (.github/actions/qa), `woodshed` in a QA session
 // the console starts when the label goes on (console/qaSessions.mjs).
 export const QA_RUNNERS = Object.freeze(['actions', 'woodshed']);
+// Who may watch a QA session's videos from its comment: `signed-in` whoever may open the session on the console,
+// `public` anyone with the comment's link, for a public repo whose readers are not the installation's.
+export const QA_RECORDINGS = Object.freeze(['signed-in', 'public']);
 
 // What the console's Start app sends and statusd and the console show: short, and safe in a URL, a menu and a log line.
 const APP_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -542,18 +545,21 @@ function pullRequests(value) {
     };
   });
   const qa = nullable(p.qa, 'pullRequests.qa', (q) => {
-    const f = fields(q, 'pullRequests.qa', PROJECT_FIELDS['pullRequests.qa'], { runner: 'actions', author: null, autoLabel: false });
+    const f = fields(q, 'pullRequests.qa', PROJECT_FIELDS['pullRequests.qa'], { runner: 'actions', author: null, autoLabel: false, recordings: 'signed-in' });
     if (!QA_RUNNERS.includes(f.runner)) fail(`pullRequests.qa.runner must be one of ${QA_RUNNERS.join(', ')} (it is ${JSON.stringify(f.runner)})`);
     const autoLabel = boolean(f.autoLabel, 'pullRequests.qa.autoLabel');
     // The console adds the label on new pull requests, and the label waits for the review's approval, so it needs both
     // the session runner and a review to wait for.
     if (autoLabel && (f.runner !== 'woodshed' || !review)) fail('pullRequests.qa.autoLabel needs runner: woodshed and pullRequests.review');
+    if (!QA_RECORDINGS.includes(f.recordings)) fail(`pullRequests.qa.recordings must be one of ${QA_RECORDINGS.join(', ')} (it is ${JSON.stringify(f.recordings)})`);
+    // Only a QA session records the browser: the repo's own CI keeps its recordings where its workflow puts them.
+    if (f.recordings !== 'signed-in' && f.runner !== 'woodshed') fail('pullRequests.qa.recordings needs runner: woodshed');
     // A QA session's report is the console's check, so `woodshed` has no comment author to trust (sessions comment as the App).
     if (f.runner !== 'woodshed' && !Object.hasOwn(q, 'author')) fail('pullRequests.qa is missing author');
     const author = f.runner === 'woodshed' && !Object.hasOwn(q, 'author') ? null : string(f.author, 'pullRequests.qa.author');
     return {
       check: string(f.check, 'pullRequests.qa.check'), label: string(f.label, 'pullRequests.qa.label'),
-      heading: string(f.heading, 'pullRequests.qa.heading'), author, runner: f.runner, autoLabel,
+      heading: string(f.heading, 'pullRequests.qa.heading'), author, runner: f.runner, autoLabel, recordings: f.recordings,
     };
   });
   const mergeRisk = nullable(p.mergeRisk, 'pullRequests.mergeRisk', (m) => {

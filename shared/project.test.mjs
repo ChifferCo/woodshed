@@ -263,7 +263,7 @@ const REVIEW = { author: 'ci[bot]', heading: '## Review', workflow: '.github/wor
 const PULL_REQUESTS = {
   review: REVIEW,
   suites: [{ name: 'e2e suite', workflow: '.github/workflows/e2e.yml', jobs: 'e2e run', rerun: null }],
-  qa: { check: 'QA', label: 'qa', heading: '## QA', author: 'ci[bot]', runner: 'actions', autoLabel: false },
+  qa: { check: 'QA', label: 'qa', heading: '## QA', author: 'ci[bot]', runner: 'actions', autoLabel: false, recordings: 'signed-in' },
   mergeRisk: { check: 'Merge risk' },
 };
 
@@ -324,6 +324,10 @@ test('a wrong pullRequests section names the field', () => {
   assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...PULL_REQUESTS.qa, autoLabel: 'yes' } }), /pullRequests\.qa\.autoLabel must be true or false/);
   assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noRunner, autoLabel: true } }), /autoLabel needs runner: woodshed and pullRequests\.review/);
   assert.throws(() => full({ ...PULL_REQUESTS, review: null, mergeRisk: null, qa: { ...noRunner, runner: 'woodshed', autoLabel: true } }), /autoLabel needs/);
+  assert.equal(full({ ...PULL_REQUESTS, qa: noRunner }).pullRequests.qa.recordings, 'signed-in', 'left out, only whoever may open the session watches');
+  assert.equal(full({ ...PULL_REQUESTS, qa: { ...noRunner, runner: 'woodshed', recordings: 'public' } }).pullRequests.qa.recordings, 'public');
+  assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noRunner, runner: 'woodshed', recordings: true } }), /pullRequests\.qa\.recordings must be one of signed-in, public/);
+  assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noRunner, recordings: 'public' } }), /pullRequests\.qa\.recordings needs runner: woodshed/);
 });
 
 test('editor is true or false, and off when left out, so a branch from before it still starts', () => {
