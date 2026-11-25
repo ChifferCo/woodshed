@@ -1925,6 +1925,7 @@ test('session send --wait types a message in, waits for the turn on it, and prin
   const session = at(c.sessions, 'c0c0aa01');
   const said = (role, text, ms) => statusd.entries.push({ role, text, at: iso(c.now() + ms) });
   said('assistant', 'An earlier answer.', -60_000);
+  statusd.entries.push({ role: 'user', text: 'A time that is not one.', at: '2026-11-25T\u001b[2J1:00Z' });
   steps.push(() => { session.state = 'working'; said('user', 'Use cents.', 0); });
   steps.push(() => { session.state = 'done'; said('assistant', 'Totals are in cents now.\n\u001b[2JTests pass.', 0); });
 
@@ -1934,6 +1935,9 @@ test('session send --wait types a message in, waits for the turn on it, and prin
   assert.match(sent.out, /^Sent to session c0c0aa01\.\nSession c0c0aa01 is done\.\n\[said \d\d:\d\d\] Totals are in cents now\.\n \[2JTests pass\.\n$/, 'its lines kept, the escape not');
   assert.doesNotMatch(sent.out, /An earlier answer/, 'only what it said after the message');
 
+  const odd = await c.run(['session', 'read', 'c0c0aa01', '--last', '10']);
+  assert.match(odd.out, /^\[asked\] A time that is not one\.$/m, 'no escape from its time');
+  assert.doesNotMatch(odd.out, /\u001b/);
   const read = await c.run(['session', 'read', 'c0c0aa01', '--last', '2']);
   assert.equal(read.code, EXIT.done, read.err);
   assert.match(read.out, /^\[asked \d\d:\d\d\] Use cents\.\n\[said \d\d:\d\d\] Totals are in cents now\.\n \[2JTests pass\.\n$/);

@@ -1186,7 +1186,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
   }
 
   // Its lines kept, each cleaned as any text from the console is, so no escape reaches this terminal.
-  const entryText = (e) => `[${e.role === 'assistant' ? 'said' : 'asked'}${e.at ? ` ${String(e.at).slice(11, 16)}` : ''}] ${e.text.trim().slice(0, 20_000).split(/\r?\n/).map((line) => printable(line, 20_000)).join('\n')}`;
+  // Its time only when it reads as one: the slice is the transcript's own text, which no terminal is handed as is.
+  const timeOf = (at) => { const hm = String(at ?? '').slice(11, 16); return /^\d\d:\d\d$/.test(hm) ? ` ${hm}` : ''; };
+  const entryText = (e) => `[${e.role === 'assistant' ? 'said' : 'asked'}${timeOf(e.at)}] ${e.text.trim().slice(0, 20_000).split(/\r?\n/).map((line) => printable(line, 20_000)).join('\n')}`;
 
   // 0 done with its turn, 2 it needs you (a message still held behind its question too), 1 it stopped first or never took the message up.
   const turnCode = ({ s: x, ended, noReply }) => (ended || noReply ? EXIT.failed : x.state === 'needs-you' ? EXIT.waiting : EXIT.done);
