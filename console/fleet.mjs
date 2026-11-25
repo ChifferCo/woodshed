@@ -2545,10 +2545,13 @@ export function createFleet({
    * for the console's page to show (GET /api/sessions/<id>/qa-log) whether or not the run ever got to its report.
    * @param {object} session
    * @param {string} text
+   * @param {'summary'|'full'} [tier]
    */
-  function qaLog(session, text) {
-    update(session, { qa: { ...session.qa, log: text } });
-    console.log('fleet: QA run log kept', { id: session.id, number: session.number, bytes: Buffer.byteLength(text) });
+  function qaLog(session, text, tier = 'full') {
+    // The summary holds counts and fixed words only: whoever may open the session reads it. The full log holds what claude
+    // and its tools printed, which only an admin or the person who started the run reads (GET /api/sessions/<id>/qa-log).
+    update(session, { qa: { ...session.qa, [tier === 'summary' ? 'summaryLog' : 'log']: text } });
+    console.log('fleet: QA run log kept', { id: session.id, number: session.number, tier, bytes: Buffer.byteLength(text) });
   }
 
   /**

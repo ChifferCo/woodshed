@@ -3227,11 +3227,14 @@ export function createHandler({
     }
     const qaLogRead = QA_LOG_RE.exec(pathname);
     if (qaLogRead) {
-      // Whoever may open the QA session reads its run log: how its claude passes ended, and what it did.
+      // Whoever may open the QA session reads its run log's summary (counts and fixed words). The full log, which holds
+      // what claude and its tools printed, is for an admin and whoever started the run (or owns the session).
       const found = findFor(qaLogRead[1], user.login);
       if (!found || !isQa(found)) return reply(res, 404, { error: 'no such QA session' });
-      if (!found.qa?.log) return reply(res, 404, { error: 'this QA session sent no run log' });
-      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }).end(found.qa.log);
+      const full = (isAdmin(user) || (user.login && (found.startedBy === user.login || found.owner === user.login))) && found.qa?.log;
+      const text = full ? found.qa.log : found.qa?.summaryLog;
+      if (!text) return reply(res, 404, { error: 'this QA session sent no run log' });
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-qa-log-tier': full ? 'full' : 'summary' }).end(text);
       return;
     }
     const qaVideo = QA_VIDEO_RE.exec(pathname);

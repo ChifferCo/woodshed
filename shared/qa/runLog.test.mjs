@@ -108,3 +108,14 @@ test('a credential in a prefixed name, as an app prints its env file, is taken o
   assert.doesNotMatch(clean, /opaqueStripe99|opaqueDb77|opaqueTok55/);
   assert.match(clean, /PORT=3000/);
 });
+
+test('the summary tier has counts and fixed words, and nothing claude or its tools printed', () => {
+  const stream = [said('registry said zzOpaque7788'), toolError('Timeout 30000ms exceeded; token zzOpaque7788'), toolError('net::ERR_CONNECTION_REFUSED'),
+    `stderr zzOpaque7788`, line({ type: 'result', subtype: 'error_max_turns', num_turns: 9, duration_ms: 5000, total_cost_usd: 1 })].join('\n');
+  const text = summarize('test', stream, { text: false });
+  assert.doesNotMatch(text, /zzOpaque7788|registry said|Timeout 30000/);
+  assert.match(text, /Ended: ran out of turns/);
+  assert.match(text, /Tool errors: 2 \(1 timeout, 1 connection refused\)/);
+  assert.match(text, /Said: 1 message\nOther output: 1 line/);
+  assert.match(summarize('test', stream), /zzOpaque7788|registry said/, 'the full tier keeps them');
+});

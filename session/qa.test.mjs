@@ -80,8 +80,8 @@ async function runQa(t, { skip = false, app = 'running', noReport = false, leak 
         res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
         return;
       }
-      if (req.url === '/qa-log') {
-        logs.push({ authorization: req.headers.authorization, type: req.headers['content-type'], text: body.toString('utf8'), reports: reports.length });
+      if (req.url.startsWith('/qa-log')) {
+        logs.push({ tier: new URL(req.url, 'http://x').searchParams.get('tier'), authorization: req.headers.authorization, type: req.headers['content-type'], text: body.toString('utf8'), reports: reports.length });
         res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
         return;
       }
@@ -150,8 +150,9 @@ test('an app that fails to start is not covered, and says so', async (t) => {
 });
 
 test('the run log reaches the console after each pass and with the report, and says how the passes ended', async (t) => {
-  const { logs } = await runQa(t);
-  assert.equal(logs.length, 4, 'after the plan, as the tests begin, after the tests, and as the run finishes');
+  let { logs } = await runQa(t);
+  assert.equal(logs.length, 8, 'a summary and a full log after the plan, as the tests begin, after the tests, and as the run finishes');
+  logs = logs.filter((l) => l.tier === 'full');
   assert.deepEqual([logs[0].authorization, logs[0].type], ['Bearer tok', 'text/plain']);
   assert.deepEqual(logs.map((l) => l.reports), [0, 0, 0, 0], 'each before the report');
   assert.match(logs[1].text, /Test pass started; if the run is stopped now/);
@@ -186,4 +187,15 @@ test('the model\'s secret screen blanks the lines it names, and a screen that ca
   assert.match(second.logs.at(-1).text, /\[line removed: the secret screen found a secret in it\]/);
   const failed = await runQa(t, { screen: 'fail' });
   assert.match(failed.logs.at(-1).text, /model check for secrets did not run/);
+});
+
+test('the summary tier never carries what a pass printed, even when the secret screen misses it, while the full log does', async (t) => {
+  const { logs } = await runQa(t, { opaque: true, screen: 'NONE' });
+  const summary = logs.filter((l) => l.tier === 'summary');
+  const full = logs.filter((l) => l.tier === 'full');
+  assert.ok(summary.length > 0 && full.length > 0);
+  for (const l of summary) assert.doesNotMatch(l.text, /zzOpaque7788/);
+  assert.match(full.at(-1).text, /zzOpaque7788/, 'the screen missed it: only the full log, for admins and the starter, has it');
+  const failed = await runQa(t, { opaque: true, screen: 'fail' });
+  for (const l of failed.logs.filter((x) => x.tier === 'summary')) assert.doesNotMatch(l.text, /zzOpaque7788/, 'a screen that cannot run leaves the summary safe');
 });

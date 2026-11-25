@@ -146,27 +146,45 @@ screenLog() {
     && mv "$file.screened" "$file"
 }
 
-# The run log: the steps this script took, then how each claude pass ended (shared/qa/runLog.mjs). Kept on the console
-# beside the report, and sent after each pass too, so a session that is stopped before its report still leaves one.
-sendLog() {
-  local code
-  {
-    echo "QA of pull request #$PR against $QA_BASE, session ${SESSION_ID:-unknown}"
-    echo
-    echo '## steps'
-    sed '/^$/d' "$DIR/logs/steps.log" 2>/dev/null
-    echo
-    node "$RUN_LOG" plan "$DIR/logs/plan.jsonl"
-    echo
-    if [ -f "$DIR/logs/test.jsonl" ] || [ ! -f "$DIR/logs/test-started" ]; then node "$RUN_LOG" test "$DIR/logs/test.jsonl"; else printf '## test\nStarted; its outcome is not known yet.\n'; fi
+# The run log, in two tiers (shared/qa/runLog.mjs). The summary holds the steps this script took and, for each claude pass, how
+# it ended, its numbers and counts, and nothing claude or its tools printed: every console member who can open the session
+# reads it. The full log adds claude's last words and the tool errors' text, which a credential could be in, so only admins
+# and whoever started the run read it, and it is scrubbed by value, by pattern and by a model's second look (screenLog).
+# Both are sent after each pass too, so a session that is stopped before its report still leaves them.
+logBody() {
+  local text=$1
+  echo "QA of pull request #$PR against $QA_BASE, session ${SESSION_ID:-unknown}"
+  echo
+  echo '## steps'
+  # The "Nothing to test" step quotes the planner's own words: only the full log has them.
+  if [ "$text" = full ]; then sed '/^$/d' "$DIR/logs/steps.log" 2>/dev/null; else sed '/^$/d; /Nothing to test:/d' "$DIR/logs/steps.log" 2>/dev/null; fi
+  echo
+  local flag=''; [ "$text" = full ] || flag=--summary
+  node "$RUN_LOG" $flag plan "$DIR/logs/plan.jsonl"
+  echo
+  if [ -f "$DIR/logs/test.jsonl" ] || [ ! -f "$DIR/logs/test-started" ]; then node "$RUN_LOG" $flag test "$DIR/logs/test.jsonl"; else printf '## test\nStarted; its outcome is not known yet.\n'; fi
+  if [ "$text" = full ]; then
     for f in SKIP NO_PLAN; do [ -f "$DIR/plan/$f.md" ] && { echo; echo "## plan/$f.md"; head -c 2000 "$DIR/plan/$f.md"; }; done
-    [ -f "$DIR/report.md" ] || { echo; echo 'No report.md was written.'; }
-  } 2>&1 | node "$RUN_LOG" --redact > "$DIR/logs/run.log"
-  screenLog "$DIR/logs/run.log"
+  elif [ -f "$DIR/plan/SKIP.md" ]; then
+    echo; echo '## plan'; echo 'The planner found nothing to test (its explanation is in the full log).'
+  fi
+  [ -f "$DIR/report.md" ] || { echo; echo 'No report.md was written.'; }
+}
+
+postLog() {
+  local tier=$1 file=$2 code
   code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
     | curl -sS --max-time 10 -o /tmp/qa-log-reply.json -w '%{http_code}' -X POST -K - -H 'content-type: text/plain' \
-      --data-binary "@$DIR/logs/run.log" "$WOODSHED_CONSOLE_URL/qa-log") || code=000
-  echo "Run log sent to the console (status: $code)"
+      --data-binary "@$file" "$WOODSHED_CONSOLE_URL/qa-log?tier=$tier") || code=000
+  echo "Run log ($tier) sent to the console (status: $code)"
+}
+
+sendLog() {
+  logBody summary 2>&1 | node "$RUN_LOG" --redact > "$DIR/logs/run-summary.log"
+  postLog summary "$DIR/logs/run-summary.log"
+  logBody full 2>&1 | node "$RUN_LOG" --redact > "$DIR/logs/run.log"
+  screenLog "$DIR/logs/run.log"
+  postLog full "$DIR/logs/run.log"
 }
 
 sendReport() {

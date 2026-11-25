@@ -2487,6 +2487,7 @@
   // A QA run's log, read when it is opened: how each claude pass ended and what the run did, for a run with no verdict.
   function qaRunLog(s) {
     const body = h('pre', { class: 'run-log' }, 'Loading…');
+    const note = h('p', { class: 'hint' });
     let loaded = false;
     const load = async () => {
       if (loaded) return;
@@ -2495,13 +2496,16 @@
         const res = await fetch(`/api/sessions/${s.id}/qa-log`, { cache: 'no-store' });
         if (!res.ok) loaded = false;
         body.textContent = res.ok ? await res.text() : `The run log was not read (${res.status}).`;
+        // The full text is for admins and whoever started the run: anyone else reads the summary, and is told so.
+        note.textContent = res.ok && res.headers.get('x-qa-log-tier') === 'summary'
+          ? 'This is the summary: how each pass ended and its counts. What claude said and what its tools printed is for admins and whoever started the run.' : '';
       } catch {
         loaded = false;
         body.textContent = 'The run log was not read: the console did not answer.';
       }
     };
     return h('details', { class: 'run-log-box', ontoggle: (e) => e.target.open && load() },
-      h('summary', null, 'Run log'), body);
+      h('summary', null, 'Run log'), note, body);
   }
 
   // A pause says which limit it hit, from the console's reason: `idle for 1 h` or `ran for 8 h`.

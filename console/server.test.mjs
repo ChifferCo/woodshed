@@ -168,40 +168,50 @@ test('a QA recording plays only for someone signed in who may open its session, 
   assert.deepEqual(served, [['video', { id: '0a1b2c3d', n: 1 }], ['poster', { id: '0a1b2c3d', secret }]]);
 });
 
-test('a QA run\'s log reads only for someone signed in who may open its session, as plain text', async (t) => {
-  const log = '## test\nEnded: ran out of turns\n';
+test('a QA run\'s log reads for anyone who may open its session as a summary, and in full only for an admin or whoever started it', async (t) => {
+  const log = '## test\nEnded: ran out of turns\nLast said: PRIVATE-WORDS\n';
+  const summaryLog = '## test\nEnded: ran out of turns\nSaid: 1 message\n';
   const sessions = [
-    { id: '0a1b2c3d', status: 'stopped', kind: 'pr', number: 7, title: 'QA', qa: { base: 'main', log } },
+    { id: '0a1b2c3d', status: 'stopped', kind: 'pr', number: 7, title: 'QA', startedBy: 'starter', qa: { base: 'main', log, summaryLog } },
     { id: '0a1b2c3e', status: 'stopped', kind: 'pr', number: 7, title: 'QA', qa: { base: 'main' } },
     { id: '0a1b2c3f', status: 'stopped', kind: 'pr', number: 7, title: 'Work' },
-    { id: '0a1b2c40', status: 'stopped', kind: 'pr', number: 7, title: 'Theirs', owner: 'someone-else', qa: { base: 'main', log: 'SECRET' } },
+    { id: '0a1b2c40', status: 'stopped', kind: 'pr', number: 7, title: 'Theirs', owner: 'someone-else', qa: { base: 'main', log: 'SECRET', summaryLog: 'SECRET' } },
   ];
   const fleet = { sessions: () => sessions, find: (id) => sessions.find((x) => x.id === id) ?? null };
   const config = {
     host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
     maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
   };
-  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => (String(cookie).includes('woodshed_session=good') ? { login: 'octo' } : null) };
-  const handle = createHandler({ config, fleet, auth });
+  const logins = { admin: 'admin', starter: 'starter', plain: 'plain' };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => {
+    const who = Object.keys(logins).find((k) => String(cookie).includes(`woodshed_session=${k}`));
+    return who ? { login: logins[who] } : null;
+  } };
+  const members = { hasAdmin: () => true, isAdmin: (login) => login === 'admin', hasGithubSessions: () => true, isMember: () => true, currentRole: () => 'member', hosted: false };
+  const handle = createHandler({ config, fleet, auth, members });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
-  const good = { cookie: 'woodshed_session=good' };
-  const read = (id, headers = good) => new Promise((resolve, reject) => {
+  const as = (who) => (who ? { cookie: `woodshed_session=${who}` } : {});
+  const read = (id, headers) => new Promise((resolve, reject) => {
     http.get({ host: '127.0.0.1', port, path: `/api/sessions/${id}/qa-log`, headers: { host: `localhost:${port}`, ...headers } }, (res) => {
       let body = '';
       res.on('data', (c) => { body += c; });
-      res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], nosniff: res.headers['x-content-type-options'], body }));
+      res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], nosniff: res.headers['x-content-type-options'], tier: res.headers['x-qa-log-tier'], body }));
     }).on('error', reject);
   });
 
-  const ok = await read('0a1b2c3d');
-  assert.deepEqual([ok.status, ok.type, ok.nosniff, ok.body], [200, 'text/plain; charset=utf-8', 'nosniff', log]);
-  assert.equal((await read('0a1b2c3e')).status, 404, 'a QA session that sent no log');
-  assert.equal((await read('0a1b2c3f')).status, 404, 'a session that is not QA');
-  const hidden = await read('0a1b2c40');
+  const asAdmin = await read('0a1b2c3d', as('admin'));
+  assert.deepEqual([asAdmin.status, asAdmin.type, asAdmin.nosniff, asAdmin.tier, asAdmin.body], [200, 'text/plain; charset=utf-8', 'nosniff', 'full', log]);
+  assert.deepEqual([(await read('0a1b2c3d', as('starter'))).tier, (await read('0a1b2c3d', as('starter'))).body], ['full', log], 'whoever started the run');
+  const plain = await read('0a1b2c3d', as('plain'));
+  assert.deepEqual([plain.status, plain.tier, plain.body], [200, 'summary', summaryLog]);
+  assert.ok(!plain.body.includes('PRIVATE-WORDS'), 'a member who is neither reads no text claude or its tools printed');
+  assert.equal((await read('0a1b2c3e', as('admin'))).status, 404, 'a QA session that sent no log');
+  assert.equal((await read('0a1b2c3f', as('admin'))).status, 404, 'a session that is not QA');
+  const hidden = await read('0a1b2c40', as('plain'));
   assert.deepEqual([hidden.status, hidden.body.includes('SECRET')], [404, false], 'a session this person cannot open');
-  assert.equal((await read('0a1b2c3d', {})).status, 401, 'signed out');
+  assert.equal((await read('0a1b2c3d', as(null))).status, 401, 'signed out');
 });
 
 test('a public repo\'s QA video plays with no sign-in at its run\'s secret name, and no other name opens it', async (t) => {

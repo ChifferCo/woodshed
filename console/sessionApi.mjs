@@ -622,7 +622,7 @@ function qaReportReply(req, res, session, fleet) {
   });
 }
 
-// A QA session's run log (session/qa.sh): plain text, sent after each pass and before the report, and kept whole, the
+// A QA session's run log (session/qa.sh), in two tiers (`?tier=summary`, else full; see fleet.qaLog): plain text, sent after each pass and before the report, and kept whole, the
 // latest replacing the last, so a run that is stopped before its report still leaves why. Never refused for being late.
 async function qaLogReply(req, res, session, fleet) {
   if (!isQa(session) || !fleet.qaLog) {
@@ -640,7 +640,8 @@ async function qaLogReply(req, res, session, fleet) {
     if (bytes > MAX_QA_LOG_BYTES) return reply(res, 413, { error: 'too large' });
     chunks.push(chunk);
   }
-  fleet.qaLog(session, Buffer.concat(chunks).toString('utf8'));
+  const tier = new URL(req.url || '/', 'http://x').searchParams.get('tier') === 'summary' ? 'summary' : 'full';
+  fleet.qaLog(session, Buffer.concat(chunks).toString('utf8'), tier);
   return reply(res, 200, { saved: true });
 }
 
