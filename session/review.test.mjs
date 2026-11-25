@@ -225,7 +225,7 @@ test('a Codex that fails leaves Claude Code\'s review, which says Codex wrote no
   const { reports, output } = await runReview(t, { agents: 'claude codex', codex: '#!/bin/bash\necho "the console has no OpenAI key" >&2\nexit 1\n' });
   assert.match(output, /Codex ended \(exit=1\)/);
   assert.equal(reports[0].body.conclusion, 'APPROVE');
-  assert.match(reports[0].body.summary, /Codex wrote no verdict/);
+  assert.match(reports[0].body.summary, /Codex \(.+\) wrote no verdict/);
   assert.deepEqual(reports[0].body.agents, ['claude']);
 });
 
@@ -235,7 +235,7 @@ test('a Claude Code failure reports Codex as the sole contributor to a dual revi
   const { body } = reports[0];
   assert.equal(body.conclusion, 'REQUEST_CHANGES');
   assert.deepEqual(body.agents, ['codex']);
-  assert.match(body.summary, /Claude Code wrote no verdict/);
+  assert.match(body.summary, /Claude Code \(.+\) wrote no verdict/);
 });
 
 test('with Codex alone, claude is never run and Codex\'s verdict is the one sent, as its own', async (t) => {
@@ -302,7 +302,7 @@ test('a Codex that takes too long is stopped, and Claude Code\'s review goes out
   assert.ok(Date.now() - started < 20_000, 'it did not wait for codex');
   assert.match(output, /Codex took longer than 0\.02 minutes and was stopped/);
   assert.equal(reports[0].body.conclusion, 'APPROVE');
-  assert.match(reports[0].body.summary, /Codex wrote no verdict/);
+  assert.match(reports[0].body.summary, /Codex \(.+\) wrote no verdict/);
 });
 
 test('with Grok Build beside Claude Code, grok reaches the console with only the session\'s token, and both verdicts merge', async (t) => {
@@ -348,7 +348,7 @@ test('a refusal from the console reaches the pane, naming the reviewer', async (
   const refused = `#!/bin/bash\necho '{"type":"error","message":"Forbidden (403) from x: permission_error: @gil no longer has their Grok Build sign-in on for reviews"}'\nexit 1\n`;
   const { output, reports } = await runReview(t, { agents: 'claude grok', grok: refused });
   assert.match(output, /Grok Build: @gil no longer has their Grok Build sign-in on for reviews/);
-  assert.match(reports.find((r) => r.path === '/review-report').body.summary, /Grok Build wrote no verdict/);
+  assert.match(reports.find((r) => r.path === '/review-report').body.summary, /Grok Build \(.+\) wrote no verdict/);
 });
 
 // A pull request that commits a verdict where a reviewer writes its own: the branch's verdict is never read, whoever reviews.

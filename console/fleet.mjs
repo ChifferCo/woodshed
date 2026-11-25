@@ -2879,7 +2879,7 @@ export function createFleet({
    * @param {{conclusion: 'APPROVE'|'REQUEST_CHANGES'|'COMMENT'|null, summary: string, comment: string, agents?: string[]|null,
    *   mergeRisk: {tier: string|null, reason: string, summary: string}, sha: string, costUsd: number|null}} result
    */
-  async function reviewFinished(session, { conclusion, summary, comment, mergeRisk, inlineComments = [], resolved = [], sha, costUsd, agents }) {
+  async function reviewFinished(session, { conclusion, summary, comment, mergeRisk, inlineComments = [], resolved = [], sha, costUsd, agents, why = '' }) {
     const project = projectFor(config, session);
     const gh = githubOf(project);
     const hold = conclusion === 'APPROVE' && await qaWillRun(project, session.number);
@@ -2888,8 +2888,8 @@ export function createFleet({
     const ours = conclusion ? await submitReview(session, gh, { conclusion, heading, summary, comment, mergeRisk, inlineComments, sha, hold }) : false;
     if (ours && conclusion === 'APPROVE' && !hold) await resolveFixedThreads(session, gh, resolved);
     if (!conclusion) {
-      console.warn('fleet: review session wrote no verdict, nothing submitted', { id: session.id, number: session.number });
-      await postReviewEnded(session, project, 'the session wrote no verdict');
+      console.warn('fleet: review session wrote no verdict, nothing submitted', { id: session.id, number: session.number, why });
+      await postReviewEnded(session, project, why ? `the session wrote no verdict (${why.replace(/[;\s]+$/, '')})` : 'the session wrote no verdict');
     } else if (!comment && session.review.runningPosted && session.review.commentId) {
       console.log('fleet: review wrote no comment, its running comment closed', { id: session.id, number: session.number, conclusion });
       await postReviewComment(session, gh, reviewDoneComment({ conclusion, tier: mergeRisk?.tier ?? null }));

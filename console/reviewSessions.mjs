@@ -101,6 +101,7 @@ export function parseReviewReport(raw) {
   const agents = Array.isArray(body.agents) ? agentsRegistry.REVIEW_AGENT_IDS.filter((agent) => body.agents.includes(agent)) : [];
   return {
     conclusion: body.conclusion,
+    ...(body.why ? { why: String(body.why).slice(0, 500) } : {}),
     ...(agents.length ? { agents } : {}),
     summary: String(body.summary ?? '').slice(0, MAX_REPORT_CHARS),
     comment: String(body.comment ?? '').slice(0, MAX_REPORT_CHARS),

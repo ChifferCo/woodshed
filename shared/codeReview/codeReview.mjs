@@ -20,6 +20,7 @@ import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { isMain } from '../isMain.mjs';
 import agentRegistry from '../agents.cjs';
+import { failureReason } from './failureReason.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CONCLUSIONS = ['APPROVE', 'REQUEST_CHANGES', 'COMMENT'];
@@ -124,6 +125,11 @@ export function verdictIn(dir) {
   };
 }
 
+/** Why the reviewer in `dir` wrote no verdict, as session/review.sh left it (empty when it did not). */
+function reasonIn(dir) {
+  try { return fs.readFileSync(path.join(dir, 'why-no-verdict.txt'), 'utf8').trim(); } catch { return ''; }
+}
+
 const STRICTNESS = { APPROVE: 0, COMMENT: 1, REQUEST_CHANGES: 2 };
 const TIER_ORDER = { Low: 0, Medium: 1, High: 2 };
 // As many inline comments as the console posts in one review (console/reviewSessions.mjs).
@@ -156,13 +162,15 @@ function combinedMergeRisk(reviews) {
  * when every reviewer with a verdict found it fixed. A reviewer that wrote no verdict is left out, and the comment says
  * so; with neither, the conclusion is null.
  * @param {{name: string, verdict: ReturnType<typeof verdictIn>}[]} reviews
- * @param {{authors?: Map<number, string>}} [options]  each earlier comment's writer, from commentAuthorsIn
+ * @param {{authors?: Map<number, string>, reasons?: Record<string, string>}} [options]  each earlier comment's writer, from
+ *   commentAuthorsIn, and why a reviewer wrote no verdict, by name (failureReason)
  */
-export function mergeVerdicts(reviews, { authors = new Map() } = {}) {
+export function mergeVerdicts(reviews, { authors = new Map(), reasons = {} } = {}) {
   const done = reviews.filter((r) => r.verdict.conclusion);
   const missing = reviews.filter((r) => !r.verdict.conclusion).map((r) => r.name);
-  if (!done.length) return { ...reviews[0].verdict, conclusion: null };
-  const missingNote = missing.length ? `${missing.join(' and ')} wrote no verdict, so this is ${done.map((r) => r.name).join(' and ')}'s alone.` : '';
+  if (!done.length) return { ...reviews[0].verdict, conclusion: null, why: missing.map((n) => `${n}: ${reasons[n] || 'no reason found'}`).join('; ') };
+  const whyNot = (name) => (reasons[name] ? ` (${reasons[name]})` : '');
+  const missingNote = missing.length ? `${missing.map((n) => `${n}${whyNot(n)}`).join(' and ')} wrote no verdict, so this is ${done.map((r) => r.name).join(' and ')}'s alone.` : '';
   const conclusion = done.map((r) => r.verdict.conclusion).reduce((a, b) => (STRICTNESS[b] > STRICTNESS[a] ? b : a));
   const mergeRisk = combinedMergeRisk(done);
   // The note goes after every reviewer's section too, so a partial run of three or more reads as one.
@@ -196,6 +204,16 @@ function main([command, dir, other, ...more]) {
     process.stdout.write(`${JSON.stringify({ ...verdict, agents: [agentRegistry.REVIEW_AGENT_IDS.includes(other) ? other : 'claude'] })}\n`);
     return;
   }
+  if (command === 'reason' && dir) {
+    // reason <agent-dir> <log> [exit]: writes <agent-dir>/why-no-verdict.txt when the reviewer wrote no verdict.
+    const [log, exit] = [other, more[0]];
+    if (verdictIn(dir).conclusion) return;
+    let text = '';
+    try { text = fs.readFileSync(log, 'utf8'); } catch { /* no log: said so in the reason */ }
+    const why = failureReason({ log: text, exit: exit === undefined || exit === '' ? null : Number(exit) });
+    fs.writeFileSync(path.join(dir, 'why-no-verdict.txt'), `${why}\n`);
+    return;
+  }
   if (command === 'merge' && dir && other) {
     // Each reviewer named with its directory, or the two from before others reviewed: Claude Code's and Codex's.
     const named = [dir, other, ...more].every((arg) => /^[a-z]+=./.test(arg));
@@ -204,8 +222,12 @@ function main([command, dir, other, ...more]) {
       throw new Error(`merge names each reviewer once, of ${agentRegistry.REVIEW_AGENT_IDS.join(', ')}`);
     }
     const reviews = pairs.map(([agent, path]) => ({ agent, name: agentRegistry.agent(agent).product, verdict: verdictIn(path) }));
-    const verdict = mergeVerdicts(reviews, { authors: commentAuthorsIn(pairs[0][1], reviews.map((r) => r.name)) });
-    if (!verdict.conclusion) process.exit(3);
+    const reasons = Object.fromEntries(reviews.map((r, i) => [r.name, reasonIn(pairs[i][1])]).filter(([, why]) => why));
+    const verdict = mergeVerdicts(reviews, { authors: commentAuthorsIn(pairs[0][1], reviews.map((r) => r.name)), reasons });
+    if (!verdict.conclusion) {
+      process.stderr.write(`${verdict.why}\n`);
+      process.exit(3);
+    }
     const agents = reviews.filter((r) => r.verdict.conclusion).map((r) => r.agent);
     process.stdout.write(`${JSON.stringify({ ...verdict, agents })}\n`);
     return;
