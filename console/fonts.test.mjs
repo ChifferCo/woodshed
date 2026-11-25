@@ -13,7 +13,7 @@ test('every font file is the one its README names, and has a rule', () => {
   const readme = fs.readFileSync(path.join(FONTS, 'README.md'), 'utf8');
   const rules = fontFaces();
   const files = fs.readdirSync(FONTS).filter((f) => f.endsWith('.woff2')).sort();
-  assert.equal(files.length, 14, 'Merriweather 700, Red Hat Display 400 to 700, JetBrains Mono 400 and 500, two subsets each');
+  assert.equal(files.length, 4, 'Red Hat Display and Red Hat Mono, one variable file per subset each');
   for (const file of files) {
     const sha = createHash('sha256').update(fs.readFileSync(path.join(FONTS, file))).digest('hex');
     assert.ok(readme.includes(`| \`${file}\` |`) && readme.includes(`\`${sha}\``), `${file} with its sha256 in the README's table`);
@@ -24,15 +24,26 @@ test('every font file is the one its README names, and has a rule', () => {
   assert.equal((rules.match(/@font-face/g) ?? []).length, files.length, 'no rule for a file that is not there');
 });
 
-test('each rule says its face, weight and subset as Google\'s stylesheet did', () => {
+test('each rule says its face, its weights and its subset as Google\'s stylesheet did', () => {
   const rules = fontFaces();
   const rule = (file) => rules.split('\n').find((line) => line.includes(`/static/fonts/${file}?`)) ?? '';
-  const latin = rule('red-hat-display-latin-600-normal.woff2');
-  assert.match(latin, /font-family: 'Red Hat Display'; font-style: normal; font-weight: 600; font-display: swap;/);
+  const latin = rule('red-hat-display-latin-wght-normal.woff2');
+  assert.match(latin, /font-family: 'Red Hat Display'; font-style: normal; font-weight: 300 900; font-display: swap;/);
   assert.match(latin, /unicode-range: U\+0000-00FF,/);
-  assert.match(rule('red-hat-display-latin-ext-600-normal.woff2'), /unicode-range: U\+0100-02BA,/);
-  assert.match(rule('merriweather-latin-700-normal.woff2'), /font-family: 'Merriweather'; font-style: normal; font-weight: 700;/);
-  assert.match(rule('jetbrains-mono-latin-500-normal.woff2'), /font-family: 'JetBrains Mono'; font-style: normal; font-weight: 500;/);
+  assert.match(rule('red-hat-display-latin-ext-wght-normal.woff2'), /unicode-range: U\+0100-02BA,/);
+  assert.match(rule('red-hat-mono-latin-wght-normal.woff2'), /font-family: 'Red Hat Mono'; font-style: normal; font-weight: 300 700;/);
+});
+
+test('the console names no face it does not serve', () => {
+  // The design system's families, and every stylesheet and page of the console's: a face named but not served draws in
+  // the system's font with no error.
+  const served = new Set(['Red Hat Display', 'Red Hat Mono']);
+  const tokens = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, 'designSystem/tokens.json'), 'utf8'));
+  for (const stack of Object.values(tokens.type.families)) assert.ok(served.has(stack.match(/^"?([^",]+)/)[1]), stack);
+  for (const file of ['public/style.css', 'cliSignIn.mjs', 'desktopSignIn.mjs', 'public/terminalPage.js']) {
+    const text = fs.readFileSync(path.join(import.meta.dirname, file), 'utf8');
+    assert.doesNotMatch(text, /Merriweather|JetBrains/, file);
+  }
 });
 
 test('a page loads its fonts from the console, kept by hash, and asks Google for nothing', async (t) => {
@@ -47,7 +58,7 @@ test('a page loads its fonts from the console, kept by hash, and asks Google for
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => server.close());
-  const url = /url\((\/static\/fonts\/red-hat-display-latin-400-normal\.woff2\?v=[0-9a-f]{12})\)/.exec(html)[1];
+  const url = /url\((\/static\/fonts\/red-hat-display-latin-wght-normal\.woff2\?v=[0-9a-f]{12})\)/.exec(html)[1];
   const res = await fetch(`http://127.0.0.1:${server.address().port}${url}`);
   assert.equal(res.status, 200);
   assert.equal(res.headers.get('content-type'), 'font/woff2');

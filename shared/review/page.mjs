@@ -83,7 +83,7 @@ export const REVIEW_HTML = `<!doctype html>
        it reads as a different application. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Red+Hat+Display:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700&family=Red+Hat+Mono:wght@400;500&display=swap">
   <style>
     :root {
       color-scheme: light dark;
@@ -191,7 +191,7 @@ ${DARK_PALETTE}
     .tree-dir { color: var(--muted); }
     .tree-dir .tname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tree-file .tname {
-      font: 12px/1.5 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      font: 12px/1.5 "Red Hat Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .tree-file.added .tname { color: var(--add); }
@@ -271,7 +271,7 @@ ${DARK_PALETTE}
       display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 0.75rem;
       border-bottom: 1px solid var(--rule);
     }
-    .chat-head b { font-family: Merriweather, Georgia, serif; font-size: 0.95rem; flex: 1; min-width: 0; }
+    .chat-head b { font-family: "Red Hat Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-weight: 700; font-size: 0.95rem; flex: 1; min-width: 0; }
     /* Collapse, not close: the conversation is kept and the button at the
        corner brings it back. A chevron toward the edge it goes to says that
        in less room than the word did, and stops a control the size of the
@@ -404,11 +404,11 @@ ${DARK_PALETTE}
     .prose pre {
       background: var(--sunk); border: 1px solid var(--rule); border-radius: 4px;
       padding: 0.5rem 0.6rem; overflow-x: auto; font-size: 12px; margin: 0 0 0.6rem;
-      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-family: "Red Hat Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     }
-    h1 { margin: 0 0 0.25rem; font-family: Merriweather, Georgia, serif; font-size: 1.6rem; }
+    h1 { margin: 0 0 0.25rem; font-family: "Red Hat Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-weight: 700; font-size: 1.6rem; }
     a { color: var(--slate); }
-    code { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+    code { font-family: "Red Hat Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
 
     /* The UA rule for [hidden] is display:none at (0,1,0), so any author rule
        that sets display on the same element beats it and the element stays on
@@ -486,11 +486,11 @@ ${DARK_PALETTE}
     /* The page's only heading now, so it is set at h1 size: a standing
        "Review a change" above it said the same thing on every review and
        spent the top inch of the page saying it. */
-    .prtitle { font-family: Merriweather, Georgia, serif; font-size: 1.6rem; margin: 0 0 0.35rem; }
+    .prtitle { font-family: "Red Hat Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-weight: 700; font-size: 1.6rem; margin: 0 0 0.35rem; }
     /* The word, not the name — quieter than what follows it, so the title
        still reads first. */
     .prtitle .kind { color: var(--muted); font-weight: 400; }
-    .prnum { color: var(--accent); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.8em; }
+    .prnum { color: var(--accent); font-family: "Red Hat Mono", ui-monospace, monospace; font-size: 0.8em; }
     /* Six facts of quite different weight, which read as one grey chain when
        they are set as one. The branches are what the eye goes to first, so
        they are the only thing boxed; the counts carry the page's own green and
@@ -499,7 +499,7 @@ ${DARK_PALETTE}
        with the chips in there the dots were only noise. */
     .prmeta {
       display: flex; align-items: center; gap: 0.4rem 0.8rem; flex-wrap: wrap;
-      font: 12px/1.6 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      font: 12px/1.6 "Red Hat Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
       color: var(--faint); margin-bottom: 1rem;
     }
     .prmeta .who { color: var(--muted); }
@@ -529,7 +529,7 @@ ${DARK_PALETTE}
        it is a way to another page, not a fact about this change. */
     .reviewswitch {
       display: flex; align-items: center; gap: 0.3rem 0.5rem; flex-wrap: wrap;
-      font: 12px/1.6 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      font: 12px/1.6 "Red Hat Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
       color: var(--faint); margin-bottom: 0.6rem;
     }
     .reviewswitch .lead { color: var(--muted); margin-right: 0.2rem; }
@@ -680,7 +680,7 @@ ${DARK_PALETTE}
        happens where the title is rather than in a box somewhere else. */
     .retitle-form { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; }
     .retitle-form input {
-      flex: 1; min-width: 0; font-family: Merriweather, Georgia, serif;
+      flex: 1; min-width: 0; font-family: "Red Hat Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-weight: 700;
       font-size: 1.5rem; line-height: 1.25; font-weight: 700;
       padding: 0.15rem 0.5rem; color: var(--ink); background: var(--panel);
       border: 1px solid var(--rule-strong); border-radius: 5px;
@@ -725,7 +725,7 @@ ${DARK_PALETTE}
     .status .aside, .livenote .aside { color: var(--faint); font-size: 11.5px; }
 
     .status {
-      font: 12px/1.5 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      font: 12px/1.5 "Red Hat Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
       color: var(--muted);
     }
     .status .what { color: var(--ink); }
@@ -740,7 +740,7 @@ ${DARK_PALETTE}
       color: var(--muted);
     }
     .livenote b { color: var(--ink); font-weight: 600; }
-    .livenote .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+    .livenote .mono { font-family: "Red Hat Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
     .livenote .bad { color: var(--del); }
     .livenote .dim { color: var(--faint); }
 
@@ -1186,7 +1186,7 @@ ${DARK_PALETTE}
       display: flex; align-items: center; gap: 0.6rem;
       padding: 0.85rem 1rem; border-bottom: 1px solid var(--rule);
     }
-    .sheet-head b { font-family: Merriweather, Georgia, serif; font-size: 1rem; flex: 1; min-width: 0; }
+    .sheet-head b { font-family: "Red Hat Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-weight: 700; font-size: 1rem; flex: 1; min-width: 0; }
     .sheet-x {
       display: flex; align-items: center; justify-content: center; flex: none;
       width: 26px; height: 26px; padding: 0; border: 0; border-radius: 5px;
@@ -1283,7 +1283,7 @@ ${DARK_PALETTE}
        directory ahead of it does. */
     .fpath {
       display: flex; align-items: baseline; min-width: 0;
-      font: 12.5px/1.4 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      font: 12.5px/1.4 "Red Hat Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     }
     .fpath .fdir {
       color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1318,7 +1318,7 @@ ${DARK_PALETTE}
     /* --- diff --- */
     .dlines {
       border-top: 1px solid var(--rule);
-      font: 12px/1.6 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      font: 12px/1.6 "Red Hat Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     }
     .dhunk {
       background: var(--sunk); color: var(--faint); font-size: 11px;
