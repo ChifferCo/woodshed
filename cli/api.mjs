@@ -97,7 +97,8 @@ export async function runCommand(entry, args, { origin, token, fetch: fetchFn = 
     out.code = await main(argv, {
       env: {}, stdout, stderr, stdin: Readable.from(stdin ? [Buffer.from(stdin)] : []), fetch: fetchWith, sleep, signal,
       token, hc: nothing, openBrowser: () => {}, isTerminal: false,
-      confirm: async () => false, terminal: async () => ({ status: 'refused', message: 'no terminal here' }), interactive: false,
+      // Nobody to ask (null), as with no terminal: a confirmation the command needs waits on the person, exit 2.
+      confirm: async () => null, terminal: async () => ({ status: 'refused', message: 'no terminal here' }), interactive: false,
     });
   } catch (err) {
     if (!out.stopped && !(err instanceof Stopped)) throw err;
