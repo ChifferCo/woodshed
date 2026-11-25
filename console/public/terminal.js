@@ -13,6 +13,7 @@
   const { h } = W;
   const SCROLL = window.WoodshedTerminalScroll;
   const FIND = window.WoodshedTerminalFind;
+  const PASTE = window.WoodshedTerminalPaste;
   const MAC = /Mac|iPhone|iPad/.test(window.navigator.platform || window.navigator.userAgent);
   const TERM_POLL_MS = 250;
   // The terminal page sets window.term as its scripts run: a slow network can hold them that long.
@@ -25,9 +26,6 @@
   const SWIPE_PX = 20;
   const MAX_URL_ROWS = 16;
   const EDGE_COLS = 2;
-  const MAX_FILES = 8;
-  const MAX_FILE_MB = 25;
-  const MAX_TOTAL_MB = 40;
   const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
   const URL_STOP = new Set([' ', '\t', '<', '>', '"', '\'', '`']);
   const URL_TRAIL = new Set(['.', ',', ';', ':', ')', ']', '}', '!', '?']);
@@ -382,42 +380,15 @@
     doc.addEventListener('mouseleave', hidePeek, true);
   }
 
-  // ---- files pasted or dropped: saved in the session, their paths typed with no Enter ----
-  async function attachToSession(sessionId, pane, files) {
-    if (files.length > MAX_FILES) return toast(`At most ${MAX_FILES} files at a time`);
-    const big = files.find((f) => f.size > MAX_FILE_MB * 1024 * 1024);
-    if (big) return toast(`${big.name || 'That file'} is over ${MAX_FILE_MB} MB`);
-    if (files.reduce((n, f) => n + f.size, 0) > MAX_TOTAL_MB * 1024 * 1024) return toast(`Those add up to more than ${MAX_TOTAL_MB} MB`);
-    toast(files.length === 1 ? `Attaching ${files[0].name || 'the file'}…` : `Attaching ${files.length} files…`);
-    let typed = 0;
-    for (const file of files) {
-      // A pasted screenshot has no name; its type gives it one.
-      const name = file.name || `pasted.${(file.type.split('/')[1] || 'png').replace(/[^a-z0-9]/g, '')}`;
+  // ---- files pasted or dropped, and Ctrl+V: saved in the session, their paths typed with no Enter (terminalPaste.cjs) ----
+  function bindFiles(doc, sessionId, pane) {
+    const upload = async (file, name) => {
       const res = await fetch(`/api/sessions/${sessionId}/upload?${new URLSearchParams({ name, pane })}`, {
         method: 'POST', headers: { 'x-woodshed': '1', 'content-type': 'application/octet-stream' }, body: file,
-      }).catch(() => null);
-      const body = await res?.json().catch(() => ({}));
-      if (!res?.ok) return toast(body?.error ? `Not attached: ${body.error}` : 'Attach failed');
-      typed++;
-    }
-    toast(`${typed} path${typed === 1 ? '' : 's'} typed at the prompt: add your question and press enter`);
-  }
-
-  function bindFiles(doc, sessionId, pane) {
-    const take = (e, list) => {
-      const files = [...(list || [])];
-      if (!files.length) return;
-      e.preventDefault();
-      e.stopPropagation();
-      attachToSession(sessionId, pane, files);
+      });
+      return { ok: res.ok, body: await res.json().catch(() => ({})) };
     };
-    doc.addEventListener('paste', (e) => take(e, e.clipboardData?.files), true);
-    doc.addEventListener('dragover', (e) => {
-      if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'copy';
-    }, true);
-    doc.addEventListener('drop', (e) => take(e, e.dataTransfer?.files), true);
+    PASTE.bind(doc, { pane, mac: MAC, upload, toast });
   }
 
   // ---- scrolling back: the browser's own history of the pane, or tmux's ----

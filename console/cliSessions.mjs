@@ -11,6 +11,7 @@
 //   POST /api/my/sessions                   woodshed session new: a private session of theirs
 //   POST /api/my/sessions/<id>/resume       woodshed session resume: one of their private sessions
 //   POST /api/my/sessions/<id>/remove       woodshed session remove: one of their private sessions
+//   POST /api/my/sessions/<id>/handoff      woodshed session handoff: one of their running private sessions, to another agent
 //   POST /api/sessions/<id>/stop            woodshed session stop: a session they may stop on the console's page
 //   POST /api/sessions/<id>/extend          woodshed session extend: its pause or stop an hour later, in its last minutes
 //   POST /api/sessions/<id>/limits          woodshed session limits: its own pause and stop. These two are a private
@@ -29,6 +30,11 @@
 //   GET  /api/review-readiness?repo=        woodshed review enable and status: whether a repo of theirs can be
 //                                           reviewed in a session, and what is missing (reviewReadiness.mjs)
 //   GET  /api/cli/config, and a few My settings writes   woodshed config: their choices, never a secret (cliConfig.mjs)
+//   POST /api/my/agent-auth/<agent>         woodshed sign-in push, and setup: their own Grok Build or OpenCode sign-in
+//                                           from this computer's file, saved as My settings' Save does (setAgentAuth,
+//                                           its turn and checkSignIn). The token's own person's alone: the path names no
+//                                           one. Never its removal, and never read back: the answer says whether one is
+//                                           saved and when (CLI_AGENT_AUTH_RE, server.mjs cliWrite)
 //
 // A review's calls, /reviews/claude-<id>/..., take the token too, for `woodshed review <id>`, through the review proxy's
 // own gate (reviewProxy.mjs forCli): owner only, never a session that has seen production data.
@@ -43,7 +49,11 @@
 // riding the browser's cookie. A token is sent by the command line alone, never by a browser on its own, so neither is
 // asked of it; a call that carries an Origin is a page's, and is refused.
 
+import agents from '../shared/agents.cjs';
 import { CONFIG_ROUTES } from './cliConfig.mjs';
+
+/** The save of an own sign-in (shared/agents.cjs, OWN_SIGN_IN_AGENTS), never its removal. */
+export const CLI_AGENT_AUTH_RE = new RegExp(`^/api/my/agent-auth/(${agents.OWN_SIGN_IN_AGENTS.join('|')})$`);
 
 const ROUTES = [
   ['GET', /^\/api\/sessions$/],
@@ -51,7 +61,7 @@ const ROUTES = [
   ['GET', /^\/api\/my\/pulls$/],
   ['POST', /^\/api\/my\/pulls\/[1-9][0-9]{0,8}\/review$/],
   ['POST', /^\/api\/my\/sessions$/],
-  ['POST', /^\/api\/my\/sessions\/[0-9a-f]{8}\/(resume|remove)$/],
+  ['POST', /^\/api\/my\/sessions\/[0-9a-f]{8}\/(resume|remove|handoff)$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/(stop|extend|limits)$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/app\/(start|stop)$/],
   ['GET', /^\/api\/sessions\/[0-9a-f]{8}\/app-share$/],
@@ -60,6 +70,7 @@ const ROUTES = [
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/agents$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/agents\/agent-[2-9]\/stop$/],
   ['GET', /^\/api\/review-readiness$/],
+  ['POST', CLI_AGENT_AUTH_RE],
   ...CONFIG_ROUTES,
 ];
 

@@ -155,7 +155,8 @@
   // The rail card's line for a stopped private session: since when first, since the card's Resume button leaves
   // little room, then why (`idle 1 h`, `by you`). A failed one's word says enough; its pane says why.
   function privateStopLine(s, me) {
-    const why = s.stoppedBy ? `by ${s.stoppedBy === me ? 'you' : personText(s.stoppedBy)}`
+    // A hand-off says where the work went rather than who stopped it (handoff.mjs).
+    const why = s.handedOffTo && s.stopReason ? s.stopReason : s.stoppedBy ? `by ${s.stoppedBy === me ? 'you' : personText(s.stoppedBy)}`
       : displayStatus(s).key === 'failed' ? null : s.stopReason?.replace(PAUSE_REASON_RE, '$1 ');
     return [ago(s.stoppedAt), why].filter(Boolean).join(' · ');
   }
@@ -327,7 +328,7 @@
       others && h('p', { class: 'sub' }, 'Pick another repo above to start a session now.'));
   }
 
-  /** The setup card: what is left, with Claude or Codex taking you to that sign-in's box on My settings, and Open My settings for databases that did not start. */
+  /** The setup card: what is left, with each agent taking you to its sign-in's box on My settings, and Open My settings for databases that did not start. */
   function setupCard(me, { compact = false, steps = setupSteps(me) } = {}) {
     const after = steps.every((step) => step.optional);
     const rows = steps.map((step) => h('div', { class: `setup-step${step.done ? ' is-done' : ''}` },
@@ -336,10 +337,9 @@
       step.key === 'repo' ? (isAdmin() ? h('a', { class: 'btn btn-primary btn-sm', href: '/console-settings#card-projects' }, 'Add a repo') : null)
         : step.key === 'github' ? h('a', { class: `btn ${step.optional ? 'btn-plain' : 'btn-primary'} btn-sm`, href: '/setup/github' }, 'Set up')
         : step.key === 'reviewer' ? h('a', { class: 'btn btn-plain btn-sm', href: '/setup/github#reviewer' }, 'Set up')
-        // Two equal choices, each to its own box on My settings: neither agent is the default.
+        // Equal choices, each to its own box on My settings: no agent is the default.
         : step.key === 'token' && !step.done ? h('span', { class: 'setup-choices' },
-          h('a', { class: 'btn btn-plain btn-sm', href: '/settings#claude' }, 'Claude'),
-          h('a', { class: 'btn btn-plain btn-sm', href: '/settings#codex' }, 'Codex'))
+          window.WoodshedAgents.AGENT_IDS.map((id) => h('a', { class: 'btn btn-plain btn-sm', href: `/settings#${id}` }, window.WoodshedAgents.agent(id).name)))
         : step.todo ? h('a', { class: 'btn btn-plain btn-sm', href: '/settings' }, 'Open My settings') : null));
     return h('section', { class: `setup-card${compact ? ' is-compact' : ''}` },
       h('h3', null, after ? 'Finish setting up your Woodshed' : 'Set up your Woodshed'),
@@ -613,7 +613,7 @@
     const at = s.startSteps || {};
     const last = START_STEPS.reduce((found, [key], i) => (at[key] ? i : found), -1);
     let from = Date.parse(s.startedAt);
-    // The last step opens the session's own agent: claude, or codex.
+    // The last step opens the session's own agent, as its id names it: claude, codex, grok or opencode.
     const agent = agentOf(s);
     const steps = START_STEPS.map(([key, l, sh], i) => {
       const [label, short] = key === 'claude' ? [`Opening ${agent}`, `opening ${agent}`] : [l, sh];
@@ -660,14 +660,19 @@
     return s.kind === 'pr' ? `PR #${s.number}` : `#${s.number}`;
   }
 
-  /** @returns {'claude'|'codex'}  the agent the session runs, as its command is named: claude unless it was started on Codex */
+  /** @returns {string}  the agent the session runs, its id in shared/agents.cjs: claude unless it was started on another */
   function agentOf(s) {
-    return s?.options?.agent === 'codex' ? 'codex' : 'claude';
+    return window.WoodshedAgents.agentOfSession(s);
   }
 
-  /** @returns {'Claude'|'Codex'}  the agent's name, as a product */
+  /** @returns {string}  the agent's short name: Claude, Codex, Grok or OpenCode */
   function agentTitle(s) {
-    return agentOf(s) === 'codex' ? 'Codex' : 'Claude';
+    return window.WoodshedAgents.agent(agentOf(s)).name;
+  }
+
+  /** @returns {boolean}  whether the person has saved anything an agent runs on: a Claude token, or a sign-in of any agent */
+  function anyAgentSignIn(me) {
+    return Boolean(me?.claudeToken?.set || me?.codexAuth?.set || Object.values(me?.agentAuth ?? {}).some((a) => a?.set));
   }
 
   /** @returns {boolean}  a session started from My Woodshed, which only its owner can see */
@@ -1181,6 +1186,74 @@
     return out;
   }
 
+  /**
+   * Whether a session in a group asks its person for something: a question or an approval on its screen, or paused
+   * waiting for Resume. Narrower than needsYou, which counts a live session that is done (waiting for the next message)
+   * too: a finished piece of a group's work is not a call for the person.
+   * @returns {boolean}
+   */
+  function asksPerson(s) {
+    return isLive(s) ? displayStatus(s).key === 'needs-you' : needsYou(s);
+  }
+
+  /**
+   * The rail's groups (session.js): a session started as a piece of another's work (`startedFrom`, not `startedApart`)
+   * nests under it while that one is live and on the same list, the same person's. Once it stops, they are each on their
+   * own again, so a live session never hides in a folded Stopped zone.
+   * @param {object[]} listed  the sessions the rail shows
+   * @returns {{top: object[], kids: Map<string, object[]>, parentOf: Map<string, object>}}  `top` the sessions in no
+   *   group, `kids` each group's sessions by its session's id (those asking their person first, asksPerson, then the
+   *   live, then the newest), `parentOf` the group each nested one is in
+   */
+  function railGroups(listed) {
+    const byId = new Map(listed.map((s) => [s.id, s]));
+    const parentOf = new Map();
+    for (const s of listed) {
+      const parent = s.startedFrom && !s.startedApart ? byId.get(s.startedFrom) : null;
+      if (parent && parent.id !== s.id && parent.owner && parent.owner === s.owner && isLive(parent)) parentOf.set(s.id, parent);
+    }
+    // A loop (two sessions each started from the other, which the console never makes) nests none of its sessions:
+    // all of them are found before any is taken out, so the last one is not left nested under the first.
+    const inLoop = [];
+    for (const id of parentOf.keys()) {
+      const seen = new Set([id]);
+      for (let p = parentOf.get(id); p; p = parentOf.get(p.id)) {
+        if (p.id === id) {
+          inLoop.push(id);
+          break;
+        }
+        if (seen.has(p.id)) break;
+        seen.add(p.id);
+      }
+    }
+    for (const id of inLoop) parentOf.delete(id);
+    const kids = new Map();
+    for (const s of listed) {
+      const parent = parentOf.get(s.id);
+      if (parent) kids.set(parent.id, [...(kids.get(parent.id) ?? []), s]);
+    }
+    const order = (s) => [asksPerson(s) ? 0 : 1, isLive(s) ? 0 : 1];
+    for (const list of kids.values()) {
+      list.sort((a, b) => {
+        const [x, y] = [order(a), order(b)];
+        return x[0] - y[0] || x[1] - y[1] || String(b.createdAt).localeCompare(String(a.createdAt));
+      });
+    }
+    return { top: listed.filter((s) => !parentOf.has(s.id)), kids, parentOf };
+  }
+
+  /** @returns {{count: number, needs: number}}  how many sessions are in a group, all the way down, and how many need their person */
+  function groupCounts(id, kids) {
+    let count = 0;
+    let needs = 0;
+    for (const s of kids.get(id) ?? []) {
+      const below = groupCounts(s.id, kids);
+      count += 1 + below.count;
+      needs += (asksPerson(s) ? 1 : 0) + below.needs;
+    }
+    return { count, needs };
+  }
+
   function peekView(s, data, { project = null, nowMs = Date.now() } = {}) {
     const st = displayStatus(s);
     const live = isLive(s);
@@ -1358,8 +1431,9 @@
 
   /**
    * @returns {{asOf: string|null, stale: boolean, running: number,
-   *            windows: {key: string, short: string, label: string, usedPercent: number|null, resetsAt: string|null, pace: number|null, level: string}[]}|null}
-   *   `pace` is how much of the window has gone by, from 0 to 1; a window whose reset has passed reads 0% however old the reading
+   *            windows: {key: string, short: string, label: string, usedPercent: number|null, resetsAt: string|null, rolled: boolean, pace: number|null, level: string}[]}|null}
+   *   `pace` is how much of the window has gone by, from 0 to 1; a window whose reset has passed reads 0% however old the reading.
+   *   `rolled` is that case: a reset the reading named is already past. A window that named no end is not rolled.
    */
   function planUsageOf(s, sessions) {
     if (!isPrivate(s)) return null;
@@ -1369,13 +1443,28 @@
       .sort((a, b) => (b.asOf ?? '').localeCompare(a.asOf ?? ''))[0];
     if (!newest) return null;
     const now = Date.now();
-    const windows = PLAN_WINDOWS.map(({ key, short, label, ms }) => {
+    const windows = PLAN_WINDOWS.flatMap(({ key, short, label, ms }) => {
       const w = newest[key];
       const reset = w?.resetsAt ? Date.parse(w.resetsAt) : null;
       const rolled = reset !== null && reset <= now;
       const usedPercent = !w ? null : rolled ? 0 : w.usedPercent;
-      const pace = reset !== null && !rolled ? Math.min(1, Math.max(0, 1 - (reset - now) / ms)) : null;
-      return { key, short, label: agent === 'codex' && key === 'sevenDay' ? 'Week' : label, usedPercent, resetsAt: rolled ? null : w?.resetsAt ?? null, pace, level: planLevel(usedPercent) };
+      // Grok Build reports one allowance. A window it did not report is not a limit it has.
+      if (agent === 'grok' && usedPercent === null) return [];
+      const reportedSpan = typeof w?.spanMs === 'number' && Number.isFinite(w.spanMs) && w.spanMs > 0 ? w.spanMs : null;
+      // Grok's tick is the period it named. A seven-day fallback marks a month with no start as empty, then nearly over in its last week.
+      const span = reportedSpan ?? ms;
+      const pace = reset !== null && !rolled && (agent !== 'grok' || reportedSpan !== null)
+        ? Math.min(1, Math.max(0, 1 - (reset - now) / span)) : null;
+      return [{
+        key,
+        short: w?.short || short,
+        label: w?.label || (agent !== 'claude' && key === 'sevenDay' ? 'Week' : label),
+        usedPercent,
+        resetsAt: rolled ? null : w?.resetsAt ?? null,
+        rolled,
+        pace,
+        level: planLevel(usedPercent),
+      }];
     });
     return {
       agent,
@@ -1395,24 +1484,29 @@
 
   // What the pane bar's meter opens: each window with when it resets, how old the reading is, and that it is shared.
   function planUsageDetails(u) {
-    const meter = (w) => h('div', { class: `plan-meter${w.level ? ` is-${w.level === 'out' ? 'hot' : w.level}` : ''}` },
-      h('div', { class: 'plan-row' }, h('span', null, w.label), h('b', null, w.usedPercent === null ? '—' : `${Math.round(w.usedPercent)}%`)),
-      h('div', { class: 'plan-bar', role: 'img', 'aria-label': w.usedPercent === null ? `${w.label}: not reported` : `${w.label}: ${Math.round(w.usedPercent)}% used` },
-        h('i', { style: `width:${w.usedPercent ?? 0}%` }),
-        w.pace !== null && h('span', { class: 'plan-pace', style: `left:${(w.pace * 100).toFixed(1)}%`, title: 'How much of the window has gone by' })),
-      h('div', { class: 'plan-sub' }, w.usedPercent === null ? `${u.agent === 'codex' ? 'Codex' : 'Claude Code'} has not reported it yet`
-        : w.resetsAt ? `Resets ${resetText(w.resetsAt)} · in ${span(Date.parse(w.resetsAt) - Date.now())}` : 'Reset since the reading'));
+    const meter = (w) => {
+      const caption = w.usedPercent === null ? `${window.WoodshedAgents.agent(u.agent).product} has not reported it yet`
+        : w.resetsAt ? `Resets ${resetText(w.resetsAt)} · in ${span(Date.parse(w.resetsAt) - Date.now())}`
+        : w.rolled ? 'Reset since the reading' : null;
+      return h('div', { class: `plan-meter${w.level ? ` is-${w.level === 'out' ? 'hot' : w.level}` : ''}` },
+        h('div', { class: 'plan-row' }, h('span', null, w.label), h('b', null, w.usedPercent === null ? '—' : `${Math.round(w.usedPercent)}%`)),
+        h('div', { class: 'plan-bar', role: 'img', 'aria-label': w.usedPercent === null ? `${w.label}: not reported` : `${w.label}: ${Math.round(w.usedPercent)}% used` },
+          h('i', { style: `width:${w.usedPercent ?? 0}%` }),
+          w.pace !== null && h('span', { class: 'plan-pace', style: `left:${(w.pace * 100).toFixed(1)}%`, title: 'How much of the window has gone by' })),
+        caption && h('div', { class: 'plan-sub' }, caption));
+    };
     const others = u.running - 1;
-    const codex = u.agent === 'codex';
-    const name = codex ? 'Codex' : 'Claude';
+    const a = window.WoodshedAgents.agent(u.agent);
+    const name = a.name;
+    const tickNote = u.windows.some((w) => w.pace !== null) ? 'The tick marks how much of each window has gone by. ' : '';
     return h('div', { class: 'plan-detail' },
       h('div', { class: 'card-menu-group' }, `Your ${name} plan`),
       ...u.windows.map(meter),
       h('p', { class: 'plan-foot' },
-        `${codex ? 'Last reported by Codex' : 'Read from Claude Code after its last answer'}${u.asOf ? `, ${ago(u.asOf)}` : ''}. `,
+        `${a.id === 'claude' ? 'Read from Claude Code after its last answer' : `Last reported by ${a.product}`}${u.asOf ? `, ${ago(u.asOf)}` : ''}. `,
         others > 0 ? `Shared with your ${others} other running private ${name} session${others === 1 ? '' : 's'}. ` : '',
-        'The tick marks how much of each window has gone by. ',
-        h('a', { href: codex ? 'https://chatgpt.com/codex/settings/usage' : 'https://claude.ai/settings/usage', target: '_blank', rel: 'noopener' }, codex ? 'Codex usage ↗' : 'claude.ai usage ↗')));
+        tickNote,
+        a.usageUrl && h('a', { href: a.usageUrl, target: '_blank', rel: 'noopener' }, a.id === 'claude' ? 'claude.ai usage ↗' : `${name} usage ↗`)));
   }
 
   // Under the avatar, as most apps keep them, and on the settings pages' list: your own settings, and the console's own,
@@ -2050,7 +2144,7 @@
     invite, sessionTab, forgetSignedIn, forgetOtherLogins, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, askChoice, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, hoursText, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, waitProgress, clock, prChip, prChips, hasPrs, shownPrs, prLines, peekView, startedLinks, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
+    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, anyAgentSignIn, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, hoursText, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    startProgress, waitProgress, clock, prChip, prChips, hasPrs, shownPrs, prLines, peekView, startedLinks, railGroups, groupCounts, asksPerson, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();

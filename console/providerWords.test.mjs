@@ -24,7 +24,7 @@ function unescapeAttribute(text) {
 function pageFor(provider) {
   const shell = pageShell({ title: 'Woodshed', script: 'session.js', provider });
   const content = unescapeAttribute(shell.match(/<meta name="woodshed-provider" content="([^"]*)">/)[1]);
-  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
+  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedAgents: require('../shared/agents.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
   const context = vm.createContext({
     window, console,
     document: {
@@ -58,7 +58,7 @@ test('on AWS the start checklist and the wait for room read as they always have'
   assert.deepEqual(plain(W.lastLine(noRoom)), { who: 'console', text: 'Waiting for AWS to have room.' });
   assert.equal(W.providerWords.noRoom.title, 'Waiting for AWS');
   assert.equal(W.providerWords.noRoom.detail, 'AWS has no room for another session right now. The console tries again every minute.');
-  assert.match(W.providerWords.capacityNote, /^AWS has a ceiling of its own: the account's Fargate vCPU quota/);
+  assert.match(W.providerWords.capacityNote, /^AWS also limits sessions by the account's Fargate vCPU quota \(2 vCPU each\)/);
 });
 
 test('on the local provider the checklist names a container, and has no wait for a pull docker never reports', () => {
@@ -74,7 +74,7 @@ test('on the local provider the checklist names a container, and has no wait for
   assert.equal(W.startProgress(starting({ machine: at(8), container: at(9) }), Date.parse(at(10))).current.label, 'Fetching its settings');
   assert.doesNotMatch(W.lastLine(noRoom).text, /AWS/);
   assert.equal(W.providerWords.capacityNote,
-    'Sessions are containers on the console\'s own machine, each held to 6 GB of memory and 2 CPUs. Docker refuses none of them for room, so keep the limits to what the machine can hold.');
+    'Sessions are containers on this machine, each held to 6 GB and 2 CPUs. Docker will not refuse one for lack of room, so keep the limits to what the machine can hold.');
   assert.equal(W.providerWords.homesPlace, 'the homes folder');
 });
 
@@ -111,7 +111,7 @@ test('the meta tag holds the words as an attribute that cannot be closed early',
 });
 
 test('a page whose meta tag is missing still draws, leaving out the steps only a provider names', () => {
-  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
+  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedAgents: require('../shared/agents.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
   const context = vm.createContext({
     window, console, document: { addEventListener() {}, createElement: () => ({}) }, matchMedia: () => ({}), fetch: () => new Promise(() => {}),
   });

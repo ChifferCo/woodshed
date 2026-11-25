@@ -24,7 +24,7 @@ export const AWS_WORDS = {
     line: 'Waiting for AWS to have room.',
     detail: 'AWS has no room for another session right now. The console tries again every minute.',
   },
-  capacityNote: 'AWS has a ceiling of its own: the account\'s Fargate vCPU quota, at 2 vCPU a session. A start AWS has no room for waits in the queue, says why, and is tried again a minute later.',
+  capacityNote: 'AWS also limits sessions by the account\'s Fargate vCPU quota (2 vCPU each). A start with no room waits and retries each minute.',
   homesPlace: 'S3',
   databasesPlace: 'RDS and Mongo',
   webhookReceiver: 'the webhook function',

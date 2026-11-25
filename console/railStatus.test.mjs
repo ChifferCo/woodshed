@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const read = (name) => fs.readFileSync(new URL(`./public/${name}`, import.meta.url), 'utf8');
 
 function loadCommon() {
-  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
+  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedAgents: require('../shared/agents.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
   const context = vm.createContext({
     window, console,
     document: { addEventListener() {}, createElement: () => ({}) },
@@ -85,7 +85,7 @@ function loadCommonWithElements() {
     addEventListener() {}
     append(child) { this.text += child.text ?? ''; }
   }
-  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
+  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedAgents: require('../shared/agents.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
   const context = vm.createContext({
     window, console, Node,
     document: { addEventListener() {}, createElement: (tag) => new El(tag), createTextNode: (text) => ({ text }) },

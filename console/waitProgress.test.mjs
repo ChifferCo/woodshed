@@ -12,7 +12,7 @@ import { waitProgressFrom } from './sessions.mjs';
 const require = createRequire(import.meta.url);
 
 function loadCommon() {
-  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
+  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedAgents: require('../shared/agents.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
   const context = vm.createContext({
     window, console,
     document: { addEventListener() {}, createElement: () => ({}) },

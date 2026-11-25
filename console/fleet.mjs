@@ -20,6 +20,7 @@ import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import { TAINT_MESSAGE } from './taint.mjs';
+import { HANDOFF_FILE, handoffDocument, handoffNote, handoffPrompt } from './handoff.mjs';
 import { mayStartSessions, newStartToken, startTokenHash } from './sessionStarts.mjs';
 import { checkLimits } from './userSettings.mjs';
 import {
@@ -28,9 +29,12 @@ import {
   EXTEND_MS, EXTEND_WINDOW_MS, pauseAt, withSessionLimits,
 } from './sessions.mjs';
 import logins from './public/logins.cjs';
+import agents from '../shared/agents.cjs';
 const { findLogin, sameLogin } = logins;
 
 const CHECKPOINT_TIMEOUT_MS = 90_000;
+// Reading a session's conversation for a hand-off: a long one is megabytes of transcript to read and shape.
+const HANDOFF_READ_TIMEOUT_MS = 20_000;
 // How long the repos a session's owner may start on are kept, for the pull requests it reports (reportableRepos).
 const STARTABLE_KEEP_MS = 60_000;
 const STATUS_TIMEOUT_MS = 5_000;
@@ -90,6 +94,12 @@ export const SETUP_APP_PROMPT = 'Woodshed\'s Start app has nothing to run: .wood
   + 'commit the file on this branch. The console reads the file within seconds and shows Open app once the frontend '
   + 'answers. Then tell me in a few plain words what you set up and that Open app opens it, at the address your rules '
   + 'give, never a localhost one, which I cannot reach.';
+
+// What statusd said went wrong, for a person: its own error when it gave one (git's push refusal), else the call's.
+function statusdError(err) {
+  const said = typeof err?.body?.error === 'string' ? err.body.error : firstLine(err);
+  return said.split('\n')[0].slice(0, 200);
+}
 
 function firstLine(err) {
   return String(err?.message ?? err).split('\n')[0].slice(0, 300);
@@ -309,6 +319,10 @@ export function createFleet({
   const unreachedStarts = new Map();
   // Stops in flight in this process. A session left `stopping` by a restart has none, and tick finishes it.
   const stopsInFlight = new Set();
+  // Private sessions being handed off (handOffPrivate): a second Hand off meanwhile would start a second session.
+  const handoffsInFlight = new Set();
+  // A Stop pressed while a hand-off's stop pushes: carried out if that push fails and the session would run on.
+  const stopsAskedMidHandoff = new Map();
   // Launches in flight in this process. A session left `starting` with no task by a restart has none, and tick
   // looks for the task it began.
   const launchesInFlight = new Set();
@@ -352,7 +366,8 @@ export function createFleet({
     // So does one on a default project an admin added to a console that started with no repo, which no image holds.
     const project = projectFor(config, session);
     if (!project.default || project.clonedAtStart) env.PROJECT_REPO = project.repo;
-    if (session.options?.agent === 'codex') env.AGENT = 'codex';
+    // Claude Code is the image's default; any other agent is named (shared/agents.cjs).
+    if (agents.isAgent(session.options?.agent) && session.options.agent !== 'claude') env.AGENT = session.options.agent;
     if (session.options?.model) env.MODEL = session.options.model;
     if (session.options?.effort) env.EFFORT = session.options.effort;
     if (session.options?.permissionMode) env.PERMISSION_MODE = session.options.permissionMode;
@@ -389,6 +404,9 @@ export function createFleet({
         env.REVIEW_CODEX_AUTH = session.review.codexVia === 'chatgpt' ? 'chatgpt' : 'key';
         if (env.REVIEW_CODEX_AUTH === 'chatgpt' && session.review.codexAccount) env.REVIEW_CODEX_ACCOUNT = session.review.codexAccount;
       }
+      // OpenCode reviews on one provider's API key, which the console adds (reviewAgentProxy.mjs): which provider its
+      // config points at the console. Grok Build needs nothing more: it calls the console's /grok on a key either way.
+      if (session.review.agents?.includes('opencode') && session.review.ownSignIns?.opencode?.provider) env.REVIEW_OPENCODE_PROVIDER = session.review.ownSignIns.opencode.provider;
     } else if (session.kind === 'pr') env.PR = String(session.number);
     else {
       if (session.kind === 'issue') env.ISSUE = String(session.number);
@@ -439,6 +457,8 @@ export function createFleet({
     if (session.taintedAt) return Promise.resolve(session);
     if (locking.has(session.id)) return locking.get(session.id);
     const run = (async () => {
+      // A hand-off reads the conversation into a session that outlives this one (handoff.mjs): never both at once.
+      if (handoffsInFlight.has(session.id)) throw shown('the session is being handed off to another agent: try again once it is done');
       if (session.status !== 'running' || !session.ref || !session.endpoint) throw shown('the session is not running');
       // One started before it could use production holds what an untainted session does (its owner's databases, maybe
       // the machine's Docker): it is never tainted, whatever the servers say now.
@@ -676,9 +696,15 @@ export function createFleet({
   async function createSession({
     kind, number, title, startedBy, trigger, prompt = '', branch = null, owner = null, options = null, resumeClaude = null, attach = null,
     background = false, reviewOnly = false, slack: thread = null, assignTo = null, project = defaultProject(config), qa = null, review = null,
-    herdrParent = false, startedFrom = null,
+    herdrParent = false, startedFrom = null, startedApart = false,
   }) {
     refuseWithoutRepo(project, { kind, trigger });
+    // An agent that runs on its owner's own sign-in alone runs only in that owner's private session: a shared session,
+    // a question, a QA run and a review hold no one's sign-in (shared/agents.cjs).
+    if (!owner && agents.agent(options?.agent).signIn) {
+      console.warn('fleet: session refused, its agent needs an owner\'s own sign-in', { kind, number, trigger, agent: options.agent });
+      throw shown(`${agents.agent(options.agent).product} runs only in a My Woodshed session`);
+    }
     // A question from Slack, and a review that only reads the diff, get no databases, so they need none hosted.
     // A question from Slack, and a review that only reads the diff, get no databases, so they need none hosted; nor
     // anything else of the project's start, so a blocker does not hold them back.
@@ -704,7 +730,9 @@ export function createFleet({
       ...(reviewOnly ? { reviewOnly: true } : {}),
       ...(owner && herdrParent ? { herdrParent: true } : {}),
       // The session of the same person's that started this one (sessionStarts.mjs), for the pages to link both ways.
-      ...(owner && startedFrom ? { startedFrom } : {}),
+      // `startedApart`: started on its own (woodshed-session new --separate), not as a piece of the starting session's
+      // work: the rail shows it at the top level, and the starting session's own list leaves it out.
+      ...(owner && startedFrom ? { startedFrom, ...(startedApart ? { startedApart: true } : {}) } : {}),
       ...(qa ? { qa } : {}),
       ...(review ? { review } : {}),
       ...(assignTo ? { assignee: assignTo.login, assignedBy: assignTo.login, assignedHow: assignTo.how, assignedAt: nowIso() } : {}),
@@ -715,7 +743,7 @@ export function createFleet({
       id, kind, number, trigger, startedBy, private: Boolean(owner), resumed: Boolean(branch), background, assignee: session.assignee ?? null, qa: Boolean(qa),
       ...(project.default ? {} : { project: project.name, repo: project.repo }),
       ...(session.herdrParent ? { herdrParent: true } : {}),
-      ...(session.startedFrom ? { startedFrom: session.startedFrom } : {}),
+      ...(session.startedFrom ? { startedFrom: session.startedFrom, ...(session.startedApart ? { startedApart: true } : {}) } : {}),
     });
     await runStartQueued({ background });
     return session;
@@ -872,7 +900,11 @@ export function createFleet({
     }
   }
 
-  async function stop(session, reason, { by = null } = {}) {
+  /**
+   * @param {{by?: string|null, requireCheckpoint?: boolean}} [opts]  requireCheckpoint: a hand-off's stop, which goes on
+   *   only once the work is pushed; a checkpoint that fails leaves the session running and throws
+   */
+  async function stop(session, reason, { by = null, requireCheckpoint = false } = {}) {
     if (session.status === 'queued' || (session.status === 'starting' && !session.ref)) {
       // A start the console lost track of, e.g. across a restart, may still have made a container.
       if (session.status === 'starting') await launcher.stop(launcher.refFor(session.id));
@@ -888,24 +920,39 @@ export function createFleet({
       console.log('fleet: stopped session moved to Stopped', { id: session.id, by, stopReason: session.stopReason });
       return;
     }
+    if (session.status === 'stopping' && handoffsInFlight.has(session.id)) {
+      stopsAskedMidHandoff.set(session.id, { reason, by });
+      console.log('fleet: stop asked during a hand-off, held until its push is done', { id: session.id, by });
+      return;
+    }
     if (session.status !== 'starting' && session.status !== 'running') return;
     update(session, { status: 'stopping', stoppingAt: nowIso(), stopReason: reason, stoppedBy: by });
     console.log('fleet: stopping session', { id: session.id, reason, by });
     stopsInFlight.add(session.id);
     try {
-      await checkpointAndRemove(session);
+      await checkpointAndRemove(session, { requireCheckpoint });
     } finally {
       stopsInFlight.delete(session.id);
     }
     await startQueued();
   }
 
-  async function checkpointAndRemove(session) {
+  async function checkpointAndRemove(session, { requireCheckpoint = false } = {}) {
+    if (requireCheckpoint && !session.endpoint) {
+      update(session, { status: 'running', stoppingAt: null, stopReason: null, stoppedBy: null });
+      throw shown('the console cannot reach it to push its work: it keeps running');
+    }
     if (session.endpoint) {
       try {
-        const result = await statusd(session, 'POST', '/checkpoint', { timeoutMs: CHECKPOINT_TIMEOUT_MS });
+        const result = await statusd(session, 'POST', '/checkpoint', { timeoutMs: CHECKPOINT_TIMEOUT_MS, ...(requireCheckpoint ? { body: { keepRunningOnFailure: true } } : {}) });
         console.log('fleet: checkpoint pushed', { id: session.id, committed: result?.committed, head: result?.head });
       } catch (err) {
+        if (requireCheckpoint) {
+          // Its container and checkout stay: what it could not push is still there, and it runs on as it did.
+          update(session, { status: 'running', stoppingAt: null, stopReason: null, stoppedBy: null });
+          console.warn('fleet: checkpoint failed, the session keeps running', { id: session.id, message: firstLine(err) });
+          throw shown(`its work could not be pushed (${statusdError(err)}): it keeps running, with its work in its checkout`);
+        }
         console.warn('fleet: checkpoint failed, stopping anyway', { id: session.id, message: firstLine(err) });
       }
     }
@@ -1789,12 +1836,12 @@ export function createFleet({
    * @param {{owner: string, prompt: string, name?: string, workOn?: string, model?: string, effort?: string,
    *          permissionMode?: string, background?: boolean}} args  `workOn` is the form's optional issue, pull request or branch
    */
-  async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], background = false, project = defaultProject(config), herdrParent = false, startedFrom = null, ...picked }) {
+  async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], files = [], background = false, project = defaultProject(config), herdrParent = false, startedFrom = null, startedApart = false, ...picked }) {
     refuseWithoutRepo(project, { kind: 'task', trigger: 'my-woodshed' });
     const on = parseWorkOn(workOn, { defaultBranch: await githubOf(project).defaultBranch?.() ?? null });
     const reviewOnly = !String(prompt ?? '').trim() && on.kind !== 'task';
     const text = String(prompt ?? '').trim();
-    const agentName = picked.agent === 'codex' ? 'Codex' : 'Claude';
+    const agentName = picked.agent === 'claude' || !picked.agent ? 'Claude' : agents.agent(picked.agent).product;
     if (!text && !reviewOnly) throw shown(`say what ${agentName} should do`);
     const options = sessionOptions(picked);
     logIfInLine(owner);
@@ -1805,13 +1852,106 @@ export function createFleet({
     const given = String(name ?? '').trim().slice(0, TITLE_CHARS) || target.title || (reviewOnly ? `Review ${target.branch}` : '');
     // With no namer the first line stays, and the page offers the rename all the same.
     const naming = given ? null : (autoName?.(text) ?? Promise.resolve(null));
-    const attach = attachments && attachmentIds?.length ? (sessionId) => attachments.claim({ login: owner, ids: attachmentIds, sessionId }) : null;
+    // The files the person attached, then any the console made for it (a hand-off's conversation).
+    const attach = attachments && (attachmentIds?.length || files.length) ? async (sessionId) => {
+      const claimed = attachmentIds?.length ? await attachments.claim({ login: owner, ids: attachmentIds, sessionId }) : 0;
+      return claimed + (files.length ? await attachments.put({ sessionId, files, after: claimed }) : 0);
+    } : null;
     const session = await createSession({
       ...target, title: given || titleFrom(text), startedBy: owner, owner, trigger: 'my-woodshed', prompt: text, options, attach, background, reviewOnly, project,
-      herdrParent, startedFrom,
+      herdrParent, startedFrom, startedApart,
     });
     if (naming) renameWhenNamed(session, naming);
     return session;
+  }
+
+  /**
+   * Hand off, on a running private session: its work goes on in a new private session of the same owner, on the same
+   * branch, run by the agent picked (handoff.mjs). Its conversation is read first, while it runs; then it stops, which
+   * commits and pushes its work as any stop does; then the new one starts on the branch with the conversation attached
+   * and a prompt that says where it came from. The old one stays on the list, stopped, and Resume picks it up as ever.
+   * @param {{owner: string, id: string, conversation?: boolean, note?: string, project?: object, agent?: string,
+   *   model?: string, effort?: string, permissionMode?: string}} args  conversation: whether it goes across
+   * @returns {Promise<object>}  the new session
+   */
+  async function handOffPrivate({ owner, id, conversation = true, note = '', project: given = null, ...picked }) {
+    const from = find(id);
+    if (!from || from.owner !== owner) throw shown('no session you can open with that id');
+    // Nothing a tainted session holds is copied anywhere that outlives it (CLAUDE.md, "Production data").
+    // Its lockdown under way counts as seen: the call that started it may be answering with production data now.
+    if (isLocked(from)) throw shown('it has seen production data: nothing it holds goes to another session');
+    if (handoffsInFlight.has(id)) throw shown('it is being handed off already');
+    if (from.status !== 'running' || !from.endpoint) throw shown('only a running session can be handed off: resume it first');
+    if (!from.branch) throw shown('it has no branch to hand off');
+    const text = handoffNote(note);
+    const sourceAgent = agents.agentOfSession(from);
+    // The new agent's loosest mode that lets it do no more unasked than the old one could, as a session started from
+    // another gets (shared/agents.cjs, modeForStartedSession), unless the person picked one.
+    const carried = picked.permissionMode || agents.modeForStartedSession(sourceAgent, from.options?.permissionMode || 'auto', picked.agent || 'claude');
+    const options = sessionOptions({ ...picked, permissionMode: carried });
+    const source = { id, title: from.title, agent: sourceAgent, branch: from.branch };
+    const project = given ?? projectFor(config, from);
+    // The branch the new session starts on is checked as its start would, before anything stops: the agent may have
+    // checked out the default branch, or a pull request's branch may have a name a session cannot take.
+    const workOn = parseWorkOn(from.branch, { defaultBranch: await githubOf(project).defaultBranch?.() ?? null });
+    if (workOn.kind !== 'branch' || workOn.branch !== from.branch) throw shown(`${from.branch} is not a branch name a session can work on`);
+    // Taken before anything is awaited after the checks above, so a lockdown that starts from here on is refused (taint).
+    if (isLocked(from) || handoffsInFlight.has(id)) throw shown('it has seen production data, or is being handed off already');
+    handoffsInFlight.add(id);
+    try {
+      let entries = [];
+      if (conversation) {
+        try {
+          const read = await statusd(from, 'GET', '/transcript', { timeoutMs: HANDOFF_READ_TIMEOUT_MS });
+          entries = Array.isArray(read?.entries) ? read.entries : [];
+        } catch (err) {
+          console.warn('fleet: hand-off refused, the conversation not read', { id, message: firstLine(err) });
+          throw shown('its conversation could not be read: try again, or hand off without it');
+        }
+      }
+      // A lockdown that won the race before the hand-off was taken: nothing read from it goes anywhere.
+      if (isLocked(from)) throw shown('it has seen production data: nothing it holds goes to another session');
+      // A Stop pressed during the read is an ordinary stop, which removes the checkout even when its push is refused.
+      // Stopped or still stopping, the hand-off's own stop would find nothing left to push, and the new session would
+      // start from the branch's old remote commit: the case requireCheckpoint is there to prevent.
+      if (from.status !== 'running') throw shown('it was stopped meanwhile: nothing was handed off');
+      // Stopped only once its work is pushed: a push refused (a branch moved on remotely) leaves it running, its work
+      // in its checkout, and nothing handed off.
+      try {
+        await stop(from, `handed off to ${agents.agent(options.agent).product}`, { by: owner, requireCheckpoint: true });
+      } catch (err) {
+        // Someone pressed Stop meanwhile: it runs on only because the hand-off failed, so their stop goes ahead.
+        const asked = stopsAskedMidHandoff.get(id);
+        if (asked) {
+          stopsAskedMidHandoff.delete(id);
+          handoffsInFlight.delete(id);
+          await stop(from, asked.reason, { by: asked.by });
+          throw shown(`${err.message.replace(/: it keeps running.*$/, '')}: it was stopped, as asked meanwhile`);
+        }
+        throw err;
+      }
+      if (from.status !== 'stopped') throw shown('it did not stop: try again in a moment');
+      const files = conversation ? [{ name: HANDOFF_FILE, text: handoffDocument({ from: source, to: options, entries, at: nowIso() }) }] : [];
+      let next;
+      try {
+        next = await startPrivate({
+          owner, prompt: handoffPrompt({ from: source, to: options, note: text, conversation }), name: from.title, workOn: from.branch,
+          files, background: true, project, ...options,
+        });
+      } catch (err) {
+        console.warn('fleet: hand-off stopped the session, the new one did not start', { id, agent: options.agent, message: firstLine(err) });
+        throw shown(`it stopped with its work pushed, but the new session did not start (${err.message}): Resume picks it up again`);
+      }
+      update(from, { handedOffTo: next.id });
+      update(next, { handedOffFrom: id });
+      console.log('fleet: session handed off', {
+        id, to: next.id, owner, from: source.agent, agent: options.agent, model: options.model || null, conversation, entries: entries.length, note: Boolean(text),
+      });
+      return next;
+    } finally {
+      handoffsInFlight.delete(id);
+      stopsAskedMidHandoff.delete(id);
+    }
   }
 
   // At the limit a private session waits in its owner's own line, and starts when one of their tasks stops.
@@ -1852,7 +1992,8 @@ export function createFleet({
     logIfInLine(owner);
     update(session, {
       status: 'queued', state: null, startedAt: null, stoppedAt: null, stopReason: null, stoppedBy: null, error: null, ref: null,
-      endpoint: null, startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: session.claudeSession ?? null,
+      // Only claude reopens a conversation; every other agent starts its prompt again.
+      endpoint: null, startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: agents.agentOfSession(session) === 'claude' ? session.claudeSession ?? null : null,
       lastActiveAt: null, checkedAt: null, app: null, appServers: null, appName: null, apps: null, resumedAt: nowIso(), resumedBy: owner, queuedAt: nowIso(),
       herdrParent: herdrParent ? true : null,
       // A Resume starts its own agent alone: what the agents of the last run were allowed (a Codex one's sign-in) is
@@ -2476,7 +2617,7 @@ export function createFleet({
     // The author's choice and own sign-ins only for someone who passed the same checks as their Claude plan; never a
     // bot's. Anyone else's review runs the most the team keys can.
     const ownLogin = teamKeyWhy || login.endsWith('[bot]') ? null : login;
-    const { agents, choice = null, codexLogin = null, codexVia = null, codexAccount = null, why: agentsWhy, keysUnread = false } = reviewAgents
+    const { agents, choice = null, codexLogin = null, codexVia = null, codexAccount = null, ownSignIns = null, why: agentsWhy, keysUnread = false, expanded = true } = reviewAgents
       ? await reviewAgents.forReview({ login: ownLogin }) : { agents: ['claude'], why: null };
     if (agentsWhy) console.warn('fleet: review runs other than the author chose', { number, login, choice, agents, why: agentsWhy, ...projectField(project) });
     if (!agents.length && choice !== 'none' && keysUnread) {
@@ -2499,10 +2640,19 @@ export function createFleet({
       review: {
         base: pull.base.ref, sha: pull.head.sha, heading: review.heading, author: review.author ?? null, check: mergeRisk?.check ?? null, commentId,
         agents, ...(codexLogin ? { codexLogin } : {}), ...(codexVia ? { codexVia } : {}), ...(codexAccount ? { codexAccount } : {}),
+        // Whose sign-in a Grok Build or OpenCode reviewer runs on, and how: never the sign-in itself, which the console's
+        // proxy reads at each call (reviewAgentProxy.mjs).
+        ...(ownSignIns ? { ownSignIns } : {}),
         ...(teamKeyWhy ? { teamKey: true } : {}),
       },
     });
-    console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, agents, choice: choice ?? 'the most there is', codex: agents.includes('codex') ? (codexLogin ? `own ${codexVia === 'chatgpt' ? 'ChatGPT login' : 'key'}` : 'team key') : null, ...projectField(project) });
+    console.log('fleet: review session started', {
+      id: session.id, number, login, base: pull.base.ref, agents, choice: choice ?? (expanded ? 'every reviewer that can run' : 'Claude Code and Codex, as before'),
+      codex: agents.includes('codex') ? (codexLogin ? `own ${codexVia === 'chatgpt' ? 'ChatGPT login' : 'key'}` : 'team key') : null,
+      ...(ownSignIns?.grok ? { grok: `own ${ownSignIns.grok.via === 'login' ? 'login' : 'key'}` } : {}),
+      ...(ownSignIns?.opencode ? { opencode: `own ${ownSignIns.opencode.provider} key` } : {}),
+      ...projectField(project),
+    });
     update(session, { review: { ...session.review, runningPosted: true } });
     await postReviewComment(session, gh, reviewRunningComment({ sessionUrl: await qaSessionUrl(session, project), agents }));
     return { outcome: 'started', sessionId: session.id };
@@ -2986,7 +3136,7 @@ export function createFleet({
   }
 
   return {
-    createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { setupCommand } from './setup.mjs';
 import { EXIT } from './woodshed.mjs';
@@ -14,9 +16,13 @@ const help = (commands) => ({ code: 0, stdout: commands.map((command) => `  ${co
 const lastEntry = (events) => events.findLast((event) => event.step !== 'finished');
 const result = (code, ...events) => ({ code, stdout: events.map((event) => JSON.stringify(event)).join('\n') });
 
+// A home with no agent's sign-in file: never this machine's own, whose ~/.grok and OpenCode files no test reads.
+const emptyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-setup-home-'));
+process.once('exit', () => fs.rmSync(emptyHome, { recursive: true, force: true }));
+
 function fake({
   commands = [], answers = {}, here = null, checkouts = {}, browser = false, json = true, tty = false, input = [], platform = 'test',
-  clock = null, env = {},
+  clock = null, env = {}, home = emptyHome,
 } = {}) {
   const events = [];
   const lines = [];
@@ -42,7 +48,7 @@ function fake({
     const code = await setupCommand({ origin, args, rest: null, json, browser }, {
       EXIT, emit: (event) => events.push(event), say: (line) => lines.push(line), fail: (message) => new Error(message),
       stderr: { write: (line) => lines.push(line) },
-      cwd, run, open: (url) => opened.push(url), tty, platform, env,
+      cwd, run, open: (url) => opened.push(url), tty, platform, env, home,
       // After the calls already answered (setImmediate), as a real timer would be, and not at all once aborted.
       ...(clock ? { now: () => clock.t, sleep: (ms, { signal } = {}) => new Promise((resolve, reject) => setImmediate(() => {
         if (signal?.aborted) return reject(new Error('aborted'));
@@ -207,6 +213,72 @@ test('setup skips already enabled reviews, applies a changed personal choice and
   assert.equal(lastEntry(after.events).url, url);
 });
 
+test('setup writes an explicit --reviews default even when the choice already reads as default', async () => {
+  const { invoke } = fake({ commands: ['config'], answers: {
+    'config list': result(0, { config: { reviews: 'default' } }),
+    'config set': result(0, { event: 'set', key: 'reviews', value: 'default' }),
+  } });
+  const after = await invoke('--yes', '--reviews', 'default', '--no-session');
+  assert.equal(after.code, 0);
+  assert.deepEqual(after.calls.filter((call) => call[0] === 'config' && call[1] !== 'get'), [['config', 'list'], ['config', 'set', 'reviews', 'default']]);
+
+  // Enter keeps a choice that already reads as default, and does not accept a wider one by writing it again.
+  const kept = await fake({ commands: ['config'], tty: true, input: [''], answers: { 'config list': result(0, { config: { reviews: 'default' } }) } })
+    .invoke('--no-session');
+  assert.equal(kept.code, 0);
+  assert.ok(!kept.calls.some((call) => call[1] === 'set'), 'Enter does not write a default it was not asked to set');
+  assert.equal(kept.events.find((event) => event.step === 'review-choice').choice, 'default');
+
+  // Typing default is an explicit accept, unlike Enter, even while the choice already reads as default.
+  const typed = await fake({ commands: ['config'], tty: true, input: ['default'], answers: {
+    'config list': result(0, { config: { reviews: 'default' } }),
+    'config set': result(0, { event: 'set', key: 'reviews', value: 'default' }),
+  } }).invoke('--no-session');
+  assert.equal(typed.code, 0);
+  assert.deepEqual(typed.calls.filter((call) => call[0] === 'config' && call[1] !== 'get'), [['config', 'list'], ['config', 'set', 'reviews', 'default']]);
+});
+
+test('setup takes a combined reviewer choice from --reviews, and reads a saved one back without refusing it', async () => {
+  // A saved grok+opencode, changed to claude+grok from the flag: sent on as given.
+  const { invoke } = fake({ commands: ['config'], answers: {
+    'config list': result(0, { config: { reviews: 'grok+opencode' } }),
+    'config set': result(0, { event: 'set', key: 'reviews', value: 'claude+grok' }),
+  } });
+  const changed = await invoke('--yes', '--reviews', 'claude+grok', '--no-session');
+  assert.equal(changed.code, 0);
+  assert.deepEqual(changed.calls.filter((call) => call[0] === 'config' && call[1] !== 'get'), [['config', 'list'], ['config', 'set', 'reviews', 'claude+grok']]);
+  const saved = changed.events.find((event) => event.step === 'review-choice');
+  assert.deepEqual([saved.status, saved.choice], ['done', 'claude+grok']);
+
+  // The same saved choice, kept: nothing is set, and it is not taken for an unreadable one.
+  const kept = await fake({ commands: ['config'], answers: { 'config list': result(0, { config: { reviews: 'grok+opencode' } }) } })
+    .invoke('--yes', '--reviews', 'grok+opencode', '--no-session');
+  assert.equal(kept.code, 0);
+  assert.ok(!kept.calls.some((call) => call[1] === 'set'), 'an unchanged choice is not saved again');
+  const step = kept.events.find((event) => event.step === 'review-choice');
+  assert.equal(step.status, 'done');
+  assert.equal(step.choice, 'grok+opencode');
+
+  // On a terminal, Enter keeps the saved combination, and the question names + choices.
+  const asked = await fake({ commands: ['config'], tty: true, input: [''], answers: { 'config list': result(0, { config: { reviews: 'claude+opencode' } }) } })
+    .invoke('--no-session');
+  const question = asked.questions.find((q) => /Who should review/.test(q));
+  assert.match(question, /joined with \+ \(claude\+grok\)\)\? Enter keeps claude\+opencode\./);
+  assert.equal(asked.events.find((event) => event.step === 'review-choice').choice, 'claude+opencode');
+});
+
+test('setup refuses a combined reviewer choice that names a reviewer twice or one that does not review', async () => {
+  for (const bad of ['claude+claude', 'grok+nope', 'claude+', '+grok', 'both+grok']) {
+    await assert.rejects(fake().invoke('--yes', '--reviews', bad), /--reviews must be one of none, claude, codex, both, default, or reviewers joined with \+ \(claude\+grok\)\./, bad);
+  }
+  // A saved choice it cannot read is setup's own failure, never taken as the new one.
+  const { invoke } = fake({ commands: ['config'], answers: { 'config list': result(0, { config: { reviews: 'grok+grok' } }) } });
+  const after = await invoke('--yes', '--reviews', 'claude+grok', '--no-session');
+  assert.notEqual(after.code, 0);
+  assert.ok(!after.calls.some((call) => call[1] === 'set'));
+  assert.match(after.events.find((event) => event.step === 'review-choice').message, /Could not read your reviewer choice/);
+});
+
 test('setup skips subcommands absent from this build and launches normally without hc using the saved agent', async () => {
   const { invoke } = fake({ answers: {
     status: result(0, { ...ready, hc: { ok: false }, sessionSignIns: { codex: true, claude: false } }),
@@ -215,7 +287,7 @@ test('setup skips subcommands absent from this build and launches normally witho
   } });
   const after = await invoke('--yes', '--repo', repo, '--agent', 'codex', '--prompt', 'Fix it.');
   assert.equal(after.code, 2);
-  assert.deepEqual(after.events.filter((event) => event.status === 'skipped').map((event) => event.step), ['repos', 'repo-review', 'review-choice', 'pr-reviews', 'terminal']);
+  assert.deepEqual(after.events.filter((event) => event.status === 'skipped').map((event) => event.step), ['repos', 'own-agents', 'repo-review', 'review-choice', 'pr-reviews', 'terminal']);
   assert.deepEqual(after.calls.at(-1), ['session', 'new', '--repo', repo, '--agent', 'codex', '--', 'Fix it.']);
   assert.equal(lastEntry(after.events).url, `${origin}/s/12345678`);
 });
@@ -778,9 +850,9 @@ test('on a terminal, setup waits for the browser approval of its sign-in and goe
   assert.deepEqual(after.calls.slice(0, 4), [['status'], ['login', '--no-wait'], ['login', '--no-wait'], ['login', '--no-wait']]);
   assert.ok(clock.slept.every((ms) => ms === 5000), 'asks every 5 seconds');
   const text = after.lines.join('\n');
-  assert.match(text, /^Setup has 7 steps: 1\. Sign in, 2\. Repos, 3\. Claude Code and Codex, 4\. Review on your repos, 5\. Reviews of your open pull requests, 6\. Agent terminal \(optional\), 7\. A first coding session \(optional\)\./);
-  assert.match(text, /Step 1 of 7: Sign in\n\[waiting\] Your code is BCDF-GHJK\. On the sign-in page, check it shows the same code, then press Sign in the CLI\. Setup waits here and goes on once you have \(Ctrl-C stops it\)\. https:\/\/console\.example\/cli\?code=BCDF-GHJK\n\[done\] Signed in as @mia-dev/);
-  assert.match(text, /Step 2 of 7: Repos[^]*Step 3 of 7: Claude Code and Codex[^]*Step 4 of 7[^]*Step 5 of 7[^]*Step 6 of 7[^]*Step 7 of 7[^]*\[done\] Setup is finished\./);
+  assert.match(text, /^Setup has 8 steps: 1\. Sign in, 2\. Repos, 3\. Claude Code and Codex, 4\. Grok Build and OpenCode \(optional\), 5\. Review on your repos, 6\. Reviews of your open pull requests, 7\. Agent terminal \(optional\), 8\. A first coding session \(optional\)\./);
+  assert.match(text, /Step 1 of 8: Sign in\n\[waiting\] Your code is BCDF-GHJK\. On the sign-in page, check it shows the same code, then press Sign in the CLI\. Setup waits here and goes on once you have \(Ctrl-C stops it\)\. https:\/\/console\.example\/cli\?code=BCDF-GHJK\n\[done\] Signed in as @mia-dev/);
+  assert.match(text, /Step 2 of 8: Repos[^]*Step 3 of 8: Claude Code and Codex[^]*Step 4 of 8: Grok Build and OpenCode \(optional\)[^]*Step 5 of 8[^]*Step 6 of 8[^]*Step 7 of 8[^]*Step 8 of 8[^]*\[done\] Setup is finished\./);
   assert.doesNotMatch(text, /not finished/);
 });
 
@@ -803,7 +875,7 @@ test('a sign-in not approved before its code expires stops setup, saying it is n
   assert.ok(clock.t - 1_000_000 <= 600_000, 'never polls past the code\'s expiry, which would start a new code');
   const text = after.lines.join('\n');
   assert.match(text, /\[needs you\] The code BCDF-GHJK was not approved in time\. Run setup again for a new one\./);
-  assert.match(text, /Setup is not finished: it stopped at step 1 of 7, Sign in\. Still to do after it: 2\. Repos, 3\. Claude Code and Codex, 4\. Review on your repos, 5\. Reviews of your open pull requests, 6\. Agent terminal \(optional\), 7\. A first coding session \(optional\)\. Run woodshed setup again/);
+  assert.match(text, /Setup is not finished: it stopped at step 1 of 8, Sign in\. Still to do after it: 2\. Repos, 3\. Claude Code and Codex, 4\. Grok Build and OpenCode \(optional\), 5\. Review on your repos, 6\. Reviews of your open pull requests, 7\. Agent terminal \(optional\), 8\. A first coding session \(optional\)\. Run woodshed setup again/);
 });
 
 test('a sign-in denied in the browser while setup waits stops it as refused', async () => {
@@ -814,7 +886,7 @@ test('a sign-in denied in the browser while setup waits stops it as refused', as
   assert.equal(after.code, EXIT.refused);
   const last = after.events.at(-1);
   assert.equal(last.message, 'The sign-in was denied in the browser.');
-  assert.deepEqual([last.finished, last.stepNumber, last.stepTotal, last.left], [false, 1, 7, ['repos', 'agent', 'repo-review', 'pr-reviews', 'terminal', 'session']]);
+  assert.deepEqual([last.finished, last.stepNumber, last.stepTotal, last.left], [false, 1, 8, ['repos', 'agent', 'own-agents', 'repo-review', 'pr-reviews', 'terminal', 'session']]);
 });
 
 test('a sign-in poll that fails is said once, and the wait goes on', async () => {
@@ -852,7 +924,7 @@ test('at the repo question with none added, Enter stops setup and says which can
   assert.equal(after.questions[0], 'Which repos should Woodshed use? Enter owner/name, separated by commas. ');
   const text = after.lines.join('\n');
   assert.match(text, /\[needs you\] Choose the repos setup uses with --repo owner\/name, once for each\. None added yet\. Not added yet, and added when you choose it: acme\/erp\./);
-  assert.match(text, /Setup is not finished: it stopped at step 2 of 7, Repos\./);
+  assert.match(text, /Setup is not finished: it stopped at step 2 of 8, Repos\./);
 });
 
 test('a repo typed in at the question is added, and the step says so', async () => {
@@ -864,4 +936,161 @@ test('a repo typed in at the question is added, and the step says so', async () 
   assert.equal(after.code, EXIT.done);
   assert.ok(after.calls.some((words) => words.join(' ') === 'repo add acme/erp'));
   assert.ok(after.lines.includes('[done] Woodshed uses acme/erp. Added just now: acme/erp.'));
+});
+
+// Grok Build and OpenCode: made-up sign-in files in a home of the test's own, each holding a marker no output may show.
+const GROK_MARKER = 'GROKSECRETMARKER0123456789';
+const OPENCODE_MARKER = 'OPENCODESECRETMARKER0123456789';
+function ownSignInHome(t, { grok = 'good', opencode = 'good', xdg = false } = {}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-setup-own-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const files = {
+    grok: { good: JSON.stringify({ default: { key: GROK_MARKER, refresh: `${GROK_MARKER}-refresh` } }), bad: `{"default": "${GROK_MARKER}"}` },
+    opencode: { good: JSON.stringify({ anthropic: { type: 'api', key: OPENCODE_MARKER } }), bad: `not json ${OPENCODE_MARKER}` },
+  };
+  const env = xdg ? { XDG_DATA_HOME: path.join(home, 'xdg'), GROK_HOME: path.join(home, 'grokhome') } : {};
+  const grokFile = path.join(env.GROK_HOME ?? path.join(home, '.grok'), 'auth.json');
+  const opencodeFile = path.join(env.XDG_DATA_HOME ?? path.join(home, '.local', 'share'), 'opencode', 'auth.json');
+  for (const [file, kind, id] of [[grokFile, grok, 'grok'], [opencodeFile, opencode, 'opencode']]) {
+    if (!kind) continue;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, files[id][kind], { mode: 0o600 });
+  }
+  return { home, env, grokFile, opencodeFile };
+}
+const own = (saved = {}) => ({ status: result(0, { ...ready, sessionSignIns: { claude: true, codex: true, grok: false, opencode: false, ...saved } }) });
+const pushed = (id) => result(0, { event: 'sign-in', agent: id, saved: true });
+const ownEntries = (events) => events.filter((event) => event.step === 'own-agents');
+const pushes = (calls) => calls.filter(([a, b]) => a === 'sign-in' && b === 'push');
+// As setup shows them: with path.join, so backslashes on Windows. `G` and `O` are the same, escaped for a RegExp.
+const grokShown = path.join('~', '.grok', 'auth.json');
+const opencodeShown = path.join('~', '.local', 'share', 'opencode', 'auth.json');
+const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const G = escaped(grokShown);
+const O = escaped(opencodeShown);
+function assertNoContent(after) {
+  const all = JSON.stringify([after.events, after.lines, after.questions, after.calls]);
+  assert.doesNotMatch(all, new RegExp(`${GROK_MARKER}|${OPENCODE_MARKER}`), 'never prints a sign-in file\'s content');
+}
+
+test('on a terminal, setup offers each sign-in file it finds, naming the file and the console, and sends it after a yes', async (t) => {
+  const { home } = ownSignInHome(t);
+  const { invoke } = fake({ home, tty: true, json: false, input: ['y', 'yes'], answers: { ...own(), 'sign-in push': () => pushed('x') } });
+  const after = await invoke('--repo', repo, '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  assert.deepEqual(after.questions.slice(0, 2), [
+    `Send ${grokShown} to ${origin} as your Grok Build sign-in? It is sent over this command line's sign-in and never printed. [y/N] `,
+    `Send ${opencodeShown} to ${origin} as your OpenCode sign-in? It is sent over this command line's sign-in and never printed. [y/N] `,
+  ]);
+  assert.deepEqual(pushes(after.calls), [['sign-in', 'push', 'grok'], ['sign-in', 'push', 'opencode']]);
+  assert.match(after.lines.join('\n'), new RegExp(`Step 4 of 8: Grok Build and OpenCode \\(optional\\)\\n\\[done\\] Saved your Grok Build sign-in on https://console\\.example, from ${G}\\.`));
+  assertNoContent(after);
+});
+
+test('a no sends nothing, and keeps a sign-in saved already', async (t) => {
+  const { home } = ownSignInHome(t);
+  const { invoke } = fake({ home, tty: true, input: ['n', ''], answers: own({ opencode: true }) });
+  const after = await invoke('--repo', repo, '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  assert.deepEqual(pushes(after.calls), []);
+  assert.match(after.questions[1], new RegExp(`has an OpenCode sign-in of yours saved already\\. Replace it with ${O} from this computer\\?`));
+  assert.deepEqual(ownEntries(after.events).map(({ status, message }) => [status, message]), [
+    ['skipped', `Grok Build: ${grokShown} was not sent.`],
+    ['skipped', `OpenCode: ${opencodeShown} was not sent, and the saved sign-in is kept.`],
+  ]);
+  assertNoContent(after);
+});
+
+test('a yes to replacing a saved sign-in sends it with --replace', async (t) => {
+  const { home } = ownSignInHome(t, { opencode: null });
+  const { invoke } = fake({ home, tty: true, input: ['y'], answers: { ...own({ grok: true }), 'sign-in push': pushed('grok') } });
+  const after = await invoke('--repo', repo, '--skip-reviews', '--no-session');
+  assert.match(after.questions[0], new RegExp(`^https://console\\.example has a Grok Build sign-in of yours saved already\\. Replace it with ${G}`));
+  assert.deepEqual(pushes(after.calls), [['sign-in', 'push', 'grok', '--replace']]);
+  assert.match(ownEntries(after.events)[0].message, /^Replaced your Grok Build sign-in/);
+  // No OpenCode file: optional, said with the registry's step, and never asked.
+  assert.equal(after.questions.filter((q) => /OpenCode/.test(q)).length, 0);
+  assert.match(ownEntries(after.events)[1].message, new RegExp(`^Optional, for OpenCode: this computer has no ${O}\\. To use it, run opencode auth login, then setup again\\.$`));
+});
+
+test('with no Grok Build file, setup says to run grok login or paste an xAI key on My settings', async () => {
+  const after = await fake({ answers: own() }).invoke('--yes', '--repo', repo, '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  assert.match(ownEntries(after.events)[0].message, new RegExp(`^Optional, for Grok Build: this computer has no ${G}\\. To use it, run grok login, then setup again\\. Or paste an xAI API key \\(xai-…\\) from console\\.x\\.ai on My settings\\.$`));
+  assert.equal(ownEntries(after.events)[0].url, `${origin}/settings#grok`);
+});
+
+test('a malformed sign-in file is refused here: nothing asked, nothing sent, its content never shown', async (t) => {
+  const { home } = ownSignInHome(t, { grok: 'bad', opencode: 'bad' });
+  const { invoke } = fake({ home, tty: true, answers: own() });
+  const after = await invoke('--repo', repo, '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done, 'optional: setup goes on');
+  assert.deepEqual(pushes(after.calls), []);
+  assert.equal(after.questions.filter((q) => /sign-in/.test(q)).length, 0);
+  const [grok, opencode] = ownEntries(after.events);
+  assert.match(grok.message, new RegExp(`^${G} is not a Grok Build sign-in \\(that is not a Grok Build auth\\.json: .*\\), so it was not sent\\.`));
+  assert.match(opencode.message, /is not an OpenCode sign-in \(paste the contents of .*\), so it was not sent\./);
+  assertNoContent(after);
+
+  // Named with its flag, a broken file stops setup as refused.
+  const flagged = await fake({ home, answers: own() }).invoke('--yes', '--repo', repo, '--skip-reviews', '--no-session', '--grok-sign-in');
+  assert.equal(flagged.code, EXIT.refused);
+  assert.deepEqual(pushes(flagged.calls), []);
+  assertNoContent(flagged);
+});
+
+test('without a terminal setup sends a sign-in only with its flag, and replaces one only with =replace', async (t) => {
+  const { home } = ownSignInHome(t);
+  const run = (saved, ...flags) => fake({ home, answers: { ...own(saved), 'sign-in push': pushed('x') } }).invoke('--yes', '--repo', repo, '--skip-reviews', '--no-session', ...flags);
+
+  const none = await run({});
+  assert.equal(none.code, EXIT.done);
+  assert.deepEqual(pushes(none.calls), []);
+  assert.match(ownEntries(none.events)[0].message, new RegExp(`^Optional, for Grok Build: this computer has ${G}\\. To save it as your Grok Build sign-in on https://console\\.example, rerun setup with --grok-sign-in, or run woodshed sign-in push grok --console`));
+  assertNoContent(none);
+
+  const flagged = await run({}, '--grok-sign-in');
+  assert.deepEqual(pushes(flagged.calls), [['sign-in', 'push', 'grok']]);
+
+  const savedAlready = await run({ grok: true, opencode: true }, '--grok-sign-in', '--opencode-sign-in');
+  assert.deepEqual(pushes(savedAlready.calls), [], 'a flag alone never replaces a saved one');
+  assert.match(ownEntries(savedAlready.events)[0].message, new RegExp(`To replace it with ${G} from this computer, rerun setup with --grok-sign-in=replace\\.`));
+
+  const replaced = await run({ grok: true }, '--grok-sign-in=replace');
+  assert.deepEqual(pushes(replaced.calls), [['sign-in', 'push', 'grok', '--replace']]);
+  // =replace reaches the push even when none was saved at the status read: one saved since is replaced as asked.
+  const replacedUnsaved = await run({}, '--grok-sign-in=replace');
+  assert.deepEqual(pushes(replacedUnsaved.calls), [['sign-in', 'push', 'grok', '--replace']]);
+  await assert.rejects(run({}, '--grok-sign-in=yes'), /--grok-sign-in takes no value, or =replace/);
+});
+
+test('setup finds the files where the agents do: GROK_HOME and XDG_DATA_HOME', async (t) => {
+  const { home, env, grokFile, opencodeFile } = ownSignInHome(t, { xdg: true });
+  const after = await fake({ home, env, answers: own() }).invoke('--yes', '--repo', repo, '--skip-reviews', '--no-session');
+  assert.deepEqual(ownEntries(after.events).map((event) => event.file), [grokFile, opencodeFile]);
+  assert.ok(ownEntries(after.events).every((event) => /this computer has ~/.test(event.message)));
+});
+
+test('a failed push after a yes on the terminal says why and goes on to the next step', async (t) => {
+  const { home } = ownSignInHome(t, { opencode: null });
+  const refused = result(3, { event: 'error', status: 'refused', error: 'https://console.example refused it (409): this console has no secret store, so My settings cannot be saved.' });
+  const after = await fake({ home, tty: true, input: ['y'], answers: { ...own(), 'sign-in push': refused } }).invoke('--repo', repo, '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done, 'optional, asked with no flag: setup goes on');
+  const [grok] = ownEntries(after.events);
+  assert.equal(grok.status, 'skipped');
+  assert.equal(grok.saveFailed, true);
+  assert.match(grok.message, /^Could not save your Grok Build sign-in: https:\/\/console\.example refused it \(409\): this console has no secret store, so My settings cannot be saved\. Setup goes on: save it later with woodshed sign-in push grok --console "https:\/\/console\.example", or on My settings\.$/);
+  assert.ok(after.events.some((event) => event.step === 'pr-reviews'), 'the steps after it ran');
+  assert.ok(after.events.some((event) => event.step === 'finished' && event.finished === true), 'setup finished');
+  assertNoContent(after);
+});
+
+test('a failed push stops setup with the console\'s reason, never the file', async (t) => {
+  const { home } = ownSignInHome(t, { opencode: null });
+  const refused = result(3, { event: 'error', status: 'refused', error: 'https://console.example refused it: that is not a Grok Build auth.json.' });
+  const after = await fake({ home, answers: { ...own(), 'sign-in push': refused } }).invoke('--yes', '--repo', repo, '--skip-reviews', '--no-session', '--grok-sign-in');
+  assert.equal(after.code, EXIT.refused);
+  assert.equal(lastEntry(after.events).step, 'own-agents');
+  assert.match(lastEntry(after.events).message, /refused it/);
+  assertNoContent(after);
 });

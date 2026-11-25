@@ -172,6 +172,7 @@
       // A private window keeps the pick for this page only.
     }
   }
+  // The session reports an agents array when its image supports starting extra agents.
   const canRunAgents = (s) => s?.status === 'running' && Array.isArray(s.agents) && Boolean(s.owner) && s.owner === data?.login;
   // This run's: a Resume starts the session's own agent alone, and the console's last read may still be the run before.
   // One started from this page, until the console's read of the session has it (a read asked for before the start
@@ -189,10 +190,10 @@
     const picked = agentPicks[s?.id];
     return picked ? agentsOf(s).find((a) => a.id === picked) ?? null : null;
   }
-  const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
-  // `Claude`, `Codex · gpt-5.5`: the agent, and its model when one was picked.
+  // `Claude`, `Codex · gpt-5.5`: the agent (shared/agents.cjs), and its model when one was picked.
   function agentLabel(agent, model) {
-    return `${AGENT_NAMES[agent] ?? agent}${model ? ` · ${model}` : ''}`;
+    const name = window.WoodshedAgents.isAgent(agent) ? window.WoodshedAgents.agent(agent).name : agent;
+    return `${name}${model ? ` · ${model}` : ''}`;
   }
   const AGENT_STATE_WORDS = { starting: 'Starting', working: 'Working', 'needs-you': 'Needs you', done: 'Done', 'not-running': 'Exited' };
   // What Chat shows for the agent picked: the session as Chat reads it, with the agent's id, state and message ids, and
@@ -210,6 +211,13 @@
   function pickAgent(s, agentId) {
     keepAgentPick(s.id, agentId);
     render();
+  }
+
+  const canStartAgent = (s, list = agentsOf(s)) => !s.taintedAt && canRunAgents(s) && list.length < 3;
+
+  function startAgentItem(s, list) {
+    if (!canStartAgent(s, list)) return null;
+    return { group: 'Start', label: '+ Another agent', note: 'Claude or Codex, with the model you pick, in this checkout', run: () => newAgentDialog(s) };
   }
 
   // The switch on the pane bar, while Chat or TUI shows: the agent shown, a menu of every agent in the session with its
@@ -239,7 +247,7 @@
       open: () => ({
         items: [
           ...[own, ...list].map(row),
-          list.length < 3 && { group: 'Start', label: '+ Another agent', note: 'Claude or Codex, with the model you pick, in this checkout', run: () => newAgentDialog(s) },
+          startAgentItem(s, list),
           shown && { group: 'Start', end: true, danger: true, label: `Stop ${agentLabel(shown.agent, shown.model)}`, note: 'Ends this agent: its conversation stays in the session\'s home', run: () => stopAgent(s, shown) },
         ].filter(Boolean),
       }),
@@ -262,7 +270,9 @@
     const C = W.agentChoices;
     const select = (options) => h('select', { class: 'field' }, options.map(([value, label, title]) => h('option', { value, title }, label)));
     const fill = (el, options) => el.replaceChildren(...options.map(([value, label, title]) => h('option', { value, title }, label)));
-    const agent = select(C.AGENTS);
+    // Claude Code or Codex alone beside a session's own (session/agents.mjs): Grok Build and OpenCode run only as a
+    // session's own agent, on their owner's own sign-in.
+    const agent = select(C.AGENTS.filter(([value]) => window.WoodshedAgents.isAgent(value) && window.WoodshedAgents.agent(value).teamCredential));
     const model = select(C.MODELS);
     const effort = select(C.EFFORTS);
     const mode = select(C.MODES);
@@ -301,7 +311,7 @@
     showAgent();
     const field = (label, control) => h('label', { class: 'field-label' }, h('span', null, label), control);
     const form = h('form', { method: 'dialog', class: 'agent-form' },
-      h('p', { class: 'sub' }, 'It works in this session\'s checkout, beside the agents already in it. Pick it above the tabs to chat with it or see its terminal.'),
+      h('p', { class: 'sub' }, 'It works in this session\'s checkout, beside the agents already in it. Use the agent switch in Chat or TUI to choose which agent you see.'),
       h('div', { class: 'agent-grid' }, field('Agent', agent), field('Model', model), field('Effort', effort), field('Permissions', mode)),
       field('First message', prompt),
       error,
@@ -329,7 +339,8 @@
           keepAgentPick(s.id, started.id);
         }
         W.shell.toast(`${agentLabel(agent.value, model.value)} is starting: it shows on ${tab === 'tui' ? 'TUI' : 'Chat'} as it opens`);
-        render();
+        if (tab === 'chat' || tab === 'tui') render();
+        else setTab('chat');
         refresh();
       } catch (err) {
         busy = false;
@@ -517,14 +528,101 @@
     }
   }
 
+  // Hand off (console/handoff.mjs): this running session's work to a new session of yours, on its branch, run by the
+  // agent picked here. The console reads its conversation, stops it (its work pushed), and starts the new one with the
+  // conversation attached as a file, unless the switch leaves it behind. The page then opens the new session.
+  function handOff(s) {
+    const { AGENTS, MODELS } = W.agentChoices;
+    const from = W.agentOf(s);
+    const options = (list) => list.map(([value, label, title]) => h('option', { value, title }, label));
+    const agent = h('select', { id: 'handoff-agent', class: 'field' }, options(AGENTS));
+    // Another agent is what a hand-off is mostly for; the same one is a fresh start for it.
+    agent.value = AGENTS.find(([v]) => v !== from)?.[0] ?? from;
+    const model = h('select', { id: 'handoff-model', class: 'field' });
+    let codexModels = null;
+    // Claude's own list and Codex's catalog; Grok Build and OpenCode start on their own default model, which a session's
+    // agent can change itself.
+    const fillModels = () => {
+      const list = agent.value === 'codex'
+        ? [['', 'default', 'Codex\u2019s own default'], ...(codexModels ?? []).map((m) => [m.slug, m.slug, m.description || m.name])]
+        : agent.value === 'claude' ? MODELS : [['', 'default', `${window.WoodshedAgents.agent(agent.value).product}\u2019s own default`]];
+      const was = model.value;
+      model.replaceChildren(...options(list));
+      if (list.some(([v]) => v === was)) model.value = was;
+    };
+    const pickAgent = () => {
+      fillModels();
+      if (agent.value !== 'codex' || codexModels) return;
+      W.getJson('/api/my/codex-models').then((answer) => { codexModels = answer?.models ?? []; fillModels(); }).catch(() => { codexModels = []; });
+    };
+    agent.addEventListener('change', pickAgent);
+    pickAgent();
+    let carry = true;
+    const carrySub = h('p', { class: 'sub' });
+    const carrySwitch = h('button', { type: 'button', class: 'switch-ui', role: 'switch', 'aria-labelledby': 'handoff-carry-label' });
+    const carryRow = h('div', { class: 'toggle-row' }, carrySwitch, h('span', { class: 'toggle-label', id: 'handoff-carry-label' }, 'Hand over the conversation'), carrySub);
+    const showCarry = () => {
+      carrySwitch.setAttribute('aria-checked', String(carry));
+      carryRow.classList.toggle('is-off', !carry);
+      carrySub.textContent = carry
+        ? `On: what was asked, said and run goes as a file the new agent reads first. Tool output stays behind.`
+        : 'Off: the new agent starts from the branch and your note alone, a clean start.';
+    };
+    carrySwitch.addEventListener('click', () => { carry = !carry; showCarry(); });
+    showCarry();
+    const note = h('textarea', { id: 'handoff-note', class: 'field', rows: '4', maxlength: '4000', placeholder: 'What is left to do, or what to try differently. Optional.' });
+    const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    const cancel = h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel');
+    const go = h('button', { type: 'submit', class: 'btn btn-primary' }, 'Hand off');
+    const form = h('form', { method: 'dialog' },
+      h('p', null, `${W.agentTitle(s)} stops here, its work committed and pushed to `, h('code', null, s.branch), '. A new session of yours carries on from that branch with the agent you pick. Resume still reopens this one.'),
+      h('label', { class: 'field-label' }, h('span', null, 'Hand off to'), agent),
+      h('label', { class: 'field-label' }, h('span', null, 'Model'), model),
+      carryRow,
+      h('label', { class: 'field-label' }, h('span', null, 'Note to the new agent'), note),
+      error,
+      h('div', { class: 'dialog-actions' }, cancel, go));
+    const dialog = h('dialog', { class: 'confirm', 'aria-labelledby': 'handoff-title' }, h('h2', { id: 'handoff-title' }, 'Hand off to another agent'), form);
+    // While the console stops this one and starts the next the dialog stays: closing it would hide where the work went.
+    let pending = false;
+    dialog.addEventListener('cancel', (e) => { if (pending) e.preventDefault(); });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (pending) return;
+      pending = true;
+      go.disabled = true;
+      cancel.disabled = true;
+      go.textContent = 'Handing off\u2026';
+      error.hidden = true;
+      try {
+        const next = await W.postJson(`/api/my/sessions/${s.id}/handoff`, { agent: agent.value, model: model.value, note: note.value, conversation: carry });
+        pending = false;
+        dialog.close();
+        navigate(`/s/${next.id}?tab=chat`);
+      } catch (err) {
+        pending = false;
+        go.disabled = false;
+        cancel.disabled = false;
+        go.textContent = 'Hand off';
+        error.replaceChildren(...W.errorParts(err));
+        error.hidden = false;
+        refresh();
+      }
+    });
+    dialog.addEventListener('close', () => dialog.remove());
+    document.body.append(dialog);
+    dialog.showModal();
+    agent.focus();
+  }
+
   async function resumeFromRow(s, row) {
     row.classList.add('is-busy');
     if (!(await resumePrivate(s))) row.classList.remove('is-busy');
   }
 
-  // What Resume does for a private session: claude picks its conversation up again; codex keeps none between runs.
+  // What Resume does for a private session: claude picks its conversation up again; the other agents keep none between runs.
   function resumeNote(s) {
-    return W.agentOf(s) === 'codex' ? 'Start it again on its branch, in a new Codex conversation' : 'Start it again on its branch, with claude\'s conversation';
+    return W.agentOf(s) !== 'claude' ? `Start it again on its branch, in a new ${W.agentTitle(s)} conversation` : 'Start it again on its branch, with claude\'s conversation';
   }
 
   // Resume, as the shed has it: a stopped private session again, on its branch, with claude's conversation.
@@ -849,6 +947,9 @@
       s.branch && { label: 'Review work', note: 'Read what this session did as a review, against the default branch', run: open('review') },
       s.prUrl && { label: `Open PR ${W.prNumber(s.prUrl)} ↗`, note: 'Its pull request on GitHub, in a new tab', href: s.prUrl },
       ...assignActions(s),
+      W.isPrivate(s) && W.sameLogin(s.owner, data.login) && s.status === 'running' && !s.taintedAt && s.branch && {
+        label: 'Hand off…', note: 'Carry its work on in a new session with another agent, such as Codex or Claude Code', run: () => handOff(s),
+      },
       { label: 'Rename…', note: 'Give it a new name, the one the rail and its page show', run: () => rename(s) },
       live && s.kind !== 'ask' && W.canExtend(s, data) && { label: 'Extend 1 hour', note: `${W.pausesIn(s, data)}: put it off by an hour`, run: async () => { await W.extendSession(s); refresh(); } },
       W.ownsLimits(s, data) && { label: 'Pause and stop…', note: 'How long this session alone waits for input before it pauses, and runs before it stops', run: () => editLimits(s) },
@@ -903,7 +1004,10 @@
   // `opened` counts each opening, so a row that ends after its menu was closed and opened again leaves the new one be.
   const cardMenu = { el: h('div', { class: 'card-menu', role: 'menu', tabindex: '-1', hidden: true }), id: null, key: null, state: null, busy: false, opened: 0 };
   document.body.append(cardMenu.el);
-  const menuState = (s) => `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.appName ?? ''}:${s.branch}:${s.assignee ?? ''}`;
+  function menuState(s, key) {
+    const canStart = key === `${s.id}:phone` && narrow.matches && canStartAgent(s);
+    return `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.appName ?? ''}:${s.branch}:${s.assignee ?? ''}:${canStart}`;
+  }
   // The card's ⋯, or on a phone's session page the top bar's: whichever of the two shows.
   const menuAnchor = () => (cardMenu.key
     ? [...document.querySelectorAll(`[data-menu-for="${cardMenu.key}"]`)].find((b) => b.offsetParent) ?? null : null);
@@ -949,7 +1053,7 @@
     placeCardMenu(button);
     cardMenu.id = s.id;
     cardMenu.key = key;
-    cardMenu.state = menuState(s);
+    cardMenu.state = menuState(s, key);
     button.setAttribute('aria-expanded', 'true');
     // Details with no branch has no item, so the menu itself takes the focus. The menu is one element, so a sheet
     // scrolled the last time it was open opens at its top again, and the focus does not scroll it.
@@ -962,7 +1066,7 @@
     if (!cardMenu.id || cardMenu.busy) return;
     const s = data.sessions.find((x) => x.id === cardMenu.id);
     const button = menuAnchor();
-    if (!s || !button || menuState(s) !== cardMenu.state) return closeCardMenu();
+    if (!s || !button || menuState(s, cardMenu.key) !== cardMenu.state) return closeCardMenu();
     button.setAttribute('aria-expanded', 'true');
     placeCardMenu(button);
   }
@@ -991,9 +1095,11 @@
     if (!cardMenu.el.hidden && (e.target === document || slots.rail?.contains(e.target))) closeCardMenu();
   }, true);
 
-  function menuButton(s) {
+  // `key`: the menu's own, the session's id, or another for a second card of it (the Needs you copy), so each menu stays
+  // on the card it opened from.
+  function menuButton(s, key = s.id) {
     return h('button', {
-      type: 'button', class: 'rmenu', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === s.id), 'data-session': s.id, 'data-menu-for': s.id,
+      type: 'button', class: 'rmenu', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === key), 'data-session': s.id, 'data-menu-for': key,
       'aria-label': `Actions for ${s.title}`, title: 'Actions',
       onclick: (e) => { e.preventDefault(); e.stopPropagation(); openCardMenu(e.currentTarget, s); },
     }, '⋯');
@@ -1070,7 +1176,9 @@
   // After the shed's rail: a card per session, its issue or PR on the right, a status line, and the app's button.
   // The card is not one link, since it holds a button: the title is the link, and a click anywhere else on the card
   // follows it too.
-  function railCard(s) {
+  // `group`: the sessions started as pieces of this one's work, counted on its card with the toggle that folds them
+  // (railGroup). `inGroup`: the session whose group this card also sits in, said on the copy Needs you shows.
+  function railCard(s, { group = null, inGroup = null } = {}) {
     const st = W.displayStatus(s);
     const live = W.isLive(s);
     const word = h('b', null, st.word.charAt(0).toUpperCase() + st.word.slice(1));
@@ -1090,7 +1198,7 @@
           : [word, who && [' · ', who]];
     const href = sessionHref(s);
     return h('div', {
-      class: `rcard is-${st.key}${live ? '' : ' is-stopped'}${project ? ` has-project${project.color ? ` proj-${project.color}` : ''}` : ''}`,
+      class: `rcard is-${st.key}${live ? '' : ' is-stopped'}${project ? ` has-project${project.color ? ` proj-${project.color}` : ''}` : ''}${inGroup ? ' is-copy' : ''}`,
       'aria-current': s.id === id ? 'true' : null,
       'data-session': s.id,
       // Where the pointer can rest, the hover card says the project and the whole title (railPeek); a tooltip too would
@@ -1103,14 +1211,61 @@
         h('a', { class: 'rname', href, title: peekable() ? null : project ? `${s.title} · project ${project.name}` : s.title, 'aria-label': project ? `${s.title}, project ${project.name}` : null }, s.title),
         // The word Assigned on Mine means yours; a session you started that someone else has names them, as on Everyone.
         showOwnerTag(s) && W.ownerTag(s, { named: !railMine() || !W.sameLogin(s.assignee, data.login) }),
-        h('span', { class: 'rmarks' }, starButton(s), menuButton(s))),
+        h('span', { class: 'rmarks' }, starButton(s), menuButton(s, inGroup ? `${s.id}:copy` : s.id))),
       h('div', { class: 'rsub' },
         h('span', { class: 'rsub-text' }, sub),
         W.hasPrs(s) ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
         W.isUnassigned(s) && data.assignable && takeButton(s),
         live && W.canExtend(s, data) && extendButton(s),
         !live && W.canResumePrivate(s) && resumeButton(s, true),
-        W.isResumable(s) && W.group(s) !== 'merged' && W.resumeSharedButton(s, { small: true, onDone: refresh })));
+        W.isResumable(s) && W.group(s) !== 'merged' && W.resumeSharedButton(s, { small: true, onDone: refresh })),
+      inGroup && h('div', { class: 'rin' }, 'In ', h('a', { href: sessionHref(inGroup) }, inGroup.title)),
+      group && group.count > 0 && groupToggle(s, group));
+  }
+
+  // ---- groups: the sessions a session started as pieces of its work (W.railGroups) ----
+  // Each viewer folds a group in their own browser; a group is open until folded.
+  const GROUPS_KEY = 'woodshed-rail-groups';
+  const foldedGroups = (() => {
+    try {
+      return new Set(JSON.parse(window.localStorage.getItem(GROUPS_KEY) || '[]'));
+    } catch {
+      return new Set();
+    }
+  })();
+  function toggleGroup(sessionId) {
+    if (foldedGroups.has(sessionId)) foldedGroups.delete(sessionId);
+    else foldedGroups.add(sessionId);
+    try {
+      window.localStorage.setItem(GROUPS_KEY, JSON.stringify([...foldedGroups]));
+    } catch {
+      // A private window keeps the choice for this page only.
+    }
+    render();
+  }
+
+  // On the card: how many it started and how many of those need the person, which is also what a folded group shows.
+  function groupToggle(s, { count, needs }) {
+    const open = !foldedGroups.has(s.id);
+    return h('button', {
+      type: 'button', class: 'rkids', 'aria-expanded': String(open), 'aria-controls': open ? `group-${s.id}` : null,
+      title: open ? 'Fold the sessions it started' : 'Show the sessions it started',
+      onclick: () => toggleGroup(s.id),
+    },
+      h('span', { class: 'caret', 'aria-hidden': 'true' }, open ? '▾' : '▸'),
+      `${count} ${count === 1 ? 'session' : 'sessions'}`,
+      needs > 0 && h('span', { class: 'rkids-needs' }, ` · ${needs} ${needs === 1 ? 'needs' : 'need'} you`));
+  }
+
+  // A card, and under it the sessions of its group, each with its own group, while the group is open.
+  function railCardAndGroup(s, groups) {
+    if (!groups) return railCard(s);
+    const counts = W.groupCounts(s.id, groups.kids);
+    const card = railCard(s, { group: counts });
+    const kids = groups.kids.get(s.id);
+    if (!kids?.length || foldedGroups.has(s.id)) return card;
+    return [card, h('div', { class: 'rgroup', id: `group-${s.id}`, role: 'group', 'aria-label': `Started from ${s.title}` },
+      kids.map((k) => railCardAndGroup(k, groups)))];
   }
 
   // ---- the rail's hover card ----
@@ -1125,7 +1280,8 @@
     return hoverable.matches && !narrow.matches;
   }
   // `by` is what opened it, the pointer or the keyboard's focus: focus moving elsewhere hides only a card focus opened.
-  const peek = { el: h('div', { class: 'rail-peek', id: 'rail-peek', role: 'tooltip', hidden: true }), id: null, timer: null, shown: false, by: null };
+  // `copy`: the card it is beside is the copy Needs you shows of a session in a group, which has the same id.
+  const peek = { el: h('div', { class: 'rail-peek', id: 'rail-peek', role: 'tooltip', hidden: true }), id: null, copy: false, timer: null, shown: false, by: null };
   document.body.append(peek.el);
 
   function peekBody(s) {
@@ -1159,13 +1315,13 @@
     peek.el.style.top = `${top}px`;
   }
 
-  function cardOf(sessionId) {
-    return slots.railBody?.querySelector(`.rcard[data-session="${CSS.escape(sessionId)}"]`) ?? null;
+  function cardOf(sessionId, copy = false) {
+    return slots.railBody?.querySelector(`.rcard[data-session="${CSS.escape(sessionId)}"]${copy ? '.is-copy' : ':not(.is-copy)'}`) ?? null;
   }
 
   function showPeek() {
     const s = data?.sessions.find((x) => x.id === peek.id);
-    const card = peek.id && cardOf(peek.id);
+    const card = peek.id && cardOf(peek.id, peek.copy);
     if (!peekable() || !s || !card || !card.getClientRects().length) return hidePeek();
     peek.el.replaceChildren(...peekBody(s));
     peek.el.hidden = false;
@@ -1176,17 +1332,19 @@
 
   function hidePeek() {
     clearTimeout(peek.timer);
-    if (peek.id) cardOf(peek.id)?.querySelector('.rname')?.removeAttribute('aria-describedby');
+    if (peek.id) cardOf(peek.id, peek.copy)?.querySelector('.rname')?.removeAttribute('aria-describedby');
     peek.id = null;
+    peek.copy = false;
     peek.by = null;
     peek.shown = false;
     peek.el.hidden = true;
   }
 
-  function peekSoon(sessionId, by) {
-    if (sessionId === peek.id) return;
+  function peekSoon(sessionId, by, copy = false) {
+    if (sessionId === peek.id && copy === peek.copy) return;
     hidePeek();
     peek.id = sessionId;
+    peek.copy = copy;
     peek.by = by;
     peek.timer = setTimeout(showPeek, PEEK_DELAY_MS);
   }
@@ -1204,7 +1362,7 @@
     const card = e.target.closest?.('.rail .rcard');
     // A chip, the star, ⋯ or a button on the card has its own tooltip.
     const control = card && e.target.closest('a:not(.rname), button, .prchip');
-    if (card && !control) peekSoon(card.dataset.session, 'pointer');
+    if (card && !control) peekSoon(card.dataset.session, 'pointer', card.classList.contains('is-copy'));
     else if (peek.id) hidePeek();
   });
   // A pointer that leaves a card straight into the terminal, the review or another iframe sends this page no further
@@ -1215,7 +1373,7 @@
   });
   document.addEventListener('focusin', (e) => {
     const name = peekable() && e.target.closest?.('.rail .rcard .rname');
-    if (name && name.matches(':focus-visible')) peekSoon(name.closest('.rcard').dataset.session, 'focus');
+    if (name && name.matches(':focus-visible')) peekSoon(name.closest('.rcard').dataset.session, 'focus', name.closest('.rcard').classList.contains('is-copy'));
     // The redraw giving a project chip its focus back is not the person moving on from the card the pointer rests on.
     else if (peek.by === 'focus') hidePeek();
   });
@@ -1310,7 +1468,8 @@
     paused: 'dot ring is-paused', needs: 'dot zone-dot is-waiting', unassigned: 'dot zone-dot is-waiting',
   };
 
-  function zone(key, title, sessions) {
+  // `card` draws each session: with its group under it on Mine, and as the copy of a nested one on Needs you.
+  function zone(key, title, sessions, card = (s) => railCard(s)) {
     if (!sessions.length) return null;
     const open = !folded[key];
     return h('section', { class: `zone is-${key}-zone${open ? '' : ' is-folded'}` },
@@ -1319,7 +1478,7 @@
         h('span', null, title),
         h('span', { class: 'caret', 'aria-hidden': 'true' }, open ? '▾' : '▸'),
         h('span', { class: 'count' }, sessions.length)),
-      open && h('div', { class: 'zone-cards' }, pinnedFirst(sessions).map((s) => railCard(s))));
+      open && h('div', { class: 'zone-cards' }, pinnedFirst(sessions).map(card)));
   }
 
   // One head for both views of the rail: Mine | Everyone, the people filter while Everyone shows, and New session, all
@@ -1525,12 +1684,18 @@
     const checks = listed.filter(W.isPullCheck);
     const work = listed.filter((s) => !W.isPullCheck(s));
     const unassigned = railMine() ? [] : work.filter(W.isUnassigned);
-    const rest = railMine() ? work : work.filter((s) => !W.isUnassigned(s));
+    // On Mine, a session started as a piece of another's work sits under it while that one is live (W.railGroups); one
+    // that asks the person something (W.asksPerson) shows on Needs you too, so a folded group never hides it.
+    const groups = railMine() ? W.railGroups(work) : null;
+    const rest = railMine() ? groups.top : work.filter((s) => !W.isUnassigned(s));
+    const inGroups = groups ? [...groups.parentOf.keys()].map((sid) => work.find((s) => s.id === sid)).filter(W.asksPerson) : [];
+    const grouped = (s) => railCardAndGroup(s, groups);
+    const needsCard = (s) => (groups?.parentOf.has(s.id) ? railCard(s, { inGroup: groups.parentOf.get(s.id) }) : grouped(s));
     const zones = railMine()
-      ? [zone('needs', 'Needs you', rest.filter((s) => !W.isLive(s) && W.needsYou(s)).sort((a, b) => Date.parse(b.stoppedAt ?? b.createdAt) - Date.parse(a.stoppedAt ?? a.createdAt))),
-        zone('active', 'Active', rest.filter(W.isLive).sort((a, b) => Number(W.needsYou(b)) - Number(W.needsYou(a)))),
-        zone('finished', 'Finished', rest.filter((s) => W.group(s) === 'finished')),
-        zone('stopped', 'Stopped', rest.filter((s) => !W.isLive(s) && !W.needsYou(s) && W.group(s) !== 'finished'))]
+      ? [zone('needs', 'Needs you', [...inGroups, ...rest.filter((s) => !W.isLive(s) && W.needsYou(s)).sort((a, b) => Date.parse(b.stoppedAt ?? b.createdAt) - Date.parse(a.stoppedAt ?? a.createdAt))], needsCard),
+        zone('active', 'Active', rest.filter(W.isLive).sort((a, b) => Number(W.needsYou(b)) - Number(W.needsYou(a))), grouped),
+        zone('finished', 'Finished', rest.filter((s) => W.group(s) === 'finished'), grouped),
+        zone('stopped', 'Stopped', rest.filter((s) => !W.isLive(s) && !W.needsYou(s) && W.group(s) !== 'finished'), grouped)]
       : [zone('unassigned', 'Unassigned', unassigned),
         ...W.GROUPS.filter((g) => status === 'all' || g.key === status).map((g) => zone(g.key, g.title, rest.filter((s) => W.group(s) === g.key)))];
     return [
@@ -1631,6 +1796,7 @@
     const choices = data.appDomain && !busy && !none && W.appChoices(s) ? W.appChoiceItems(s, refresh, render).map((a) => ({ ...a, group: 'App', label: `Start ${a.label}` })) : [];
     const running = W.runningAppLabel(s);
     return [
+      narrow.matches && startAgentItem(s),
       s.hasShell && W.isPrivate(s) && !s.taintedAt && W.agentOf(s) === 'claude' && {
         group: 'Claude', label: 'Sign in for Remote Control', note: 'Asks claude for /woodshed:remote-control: open the link it shows and paste the code in the chat', run: () => claudeLogin(s),
       },
@@ -1720,7 +1886,8 @@
     const trigger = s.trigger === 'label' ? `with the ${label} label` : s.trigger === 'comment' ? 'with a /woodshed comment'
       : s.trigger === 'my-woodshed' ? 'from My Woodshed' : s.trigger === 'slack' ? 'with a question in Slack'
         : s.trigger === 'qa' ? 'with the QA label, to test the pull request' : 'from the console';
-    const claude = W.agentOf(s) === 'codex' ? 'Your Codex sign-in, or the team\'s OpenAI key without one' : W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
+    const own = window.WoodshedAgents.agent(W.agentOf(s));
+    const claude = own.signIn ? `Your own ${own.product} sign-in` : W.agentOf(s) === 'codex' ? 'Your Codex sign-in, or the team\'s OpenAI key without one' : W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
     const row = (term, value) => value && [h('dt', null, term), h('dd', null, value)];
     return h('dl', { class: 'card-menu-dl' },
       row('Branch', s.branch),
@@ -1863,7 +2030,7 @@
     const planText = !plan ? null : out ? 'Plan out' : fullest ? `Plan ${Math.round(fullest.usedPercent)}%` : 'Plan —';
     const level = planLevel === 'out' || planLevel === 'hot' || usage?.level === 'hot' ? 'hot' : planLevel || usage?.level || '';
     const tip = [
-      plan && `Your ${plan.agent === 'codex' ? 'Codex' : 'Claude'} plan: ${used.map((w) => `${w.short} ${Math.round(w.usedPercent)}%`).join(', ') || 'not reported yet'}${out?.resetsAt ? ', out until its reset' : ''}${plan.stale && plan.asOf ? `, read ${W.ago(plan.asOf)}` : ''}`,
+      plan && `Your ${window.WoodshedAgents.agent(plan.agent).name} plan: ${used.map((w) => `${w.short} ${Math.round(w.usedPercent)}%`).join(', ') || 'not reported yet'}${out?.resetsAt ? ', out until its reset' : ''}${plan.stale && plan.asOf ? `, read ${W.ago(plan.asOf)}` : ''}`,
       usage?.tip,
       'Click for each window, the machine\'s limits and when they reset',
     ].filter(Boolean).join('\n');
@@ -2252,8 +2419,8 @@
     return h('div', { class: 'ended' },
       h('h2', null, stoppedHeading(s, paused)),
       W.isPrivate(s)
-        ? [h('p', null, W.agentOf(s) === 'codex'
-          ? 'Work in progress is committed and pushed to the branch before a stop. Resume starts codex again on the same branch, in a new conversation: Codex keeps none between runs.'
+        ? [h('p', null, W.agentOf(s) !== 'claude'
+          ? `Work in progress is committed and pushed to the branch before a stop. Resume starts ${W.agentOf(s)} again on the same branch, in a new conversation: ${W.agentTitle(s)} keeps none between runs.`
           : 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
           h('div', { class: 'row' }, W.canResumePrivate(s) && resumeButton(s, false), removeButton(s))]
         : s.kind === 'ask' ? h('p', null, 'Its conversation is deleted. Mention the bot in a Slack thread to ask again.')

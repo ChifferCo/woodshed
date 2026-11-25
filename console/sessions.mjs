@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 
 import { ASK_DEFAULTS, spanText } from './consoleSettings.mjs';
 import { ENGINE_NAMES } from '../shared/databases/index.mjs';
+import agents from '../shared/agents.cjs';
 
 /** Sessions that still hold, or are waiting for, one of the slots. */
 export const ACTIVE_STATUSES = new Set(['queued', 'starting', 'running', 'stopping']);
@@ -198,11 +199,13 @@ export const MODELS = ['', 'opus', 'sonnet', 'haiku', 'fable'];
 export const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 export const PERMISSION_MODES = ['auto', 'acceptEdits', 'plan', 'default'];
 
-// The agent a private session runs. Codex takes its model and reasoning effort as `codex --model` and
+// The agent a private session runs (shared/agents.cjs). Codex takes its model and reasoning effort as `codex --model` and
 // `-c model_reasoning_effort=`; its permission modes are the entrypoint's mapping onto codex's sandbox and approval flags.
 // Codex's models and efforts are OpenAI's catalog's (codexModels.mjs), which the console checks a start against: here
-// only their shape, since both end up on codex's command line.
-export const AGENTS = ['claude', 'codex'];
+// only their shape, since both end up on codex's command line. Grok Build and OpenCode take a model name of the
+// registry's shape (OpenCode's is `provider/model`), an effort from the registry's list, and the permission modes the
+// entrypoint maps onto each one's own flags.
+export const AGENTS = agents.AGENT_IDS;
 export const CODEX_MODEL_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 export const CODEX_EFFORT_RE = /^[a-z]{1,16}$/;
 export const CODEX_PERMISSION_MODES = ['auto', 'plan', 'default'];
@@ -225,6 +228,17 @@ export function sessionOptions({ agent = 'claude', model = '', effort = '', perm
     if (v && !re.test(v)) throw Object.assign(new Error(`${what} is not a Codex ${what.replace('the ', '')} name`), { shown: true });
     return v;
   };
+  if (chosen !== 'claude' && !codex) {
+    const a = agents.agent(chosen);
+    const m = String(model ?? '');
+    if (!agents.modelShapeOk(chosen, m)) throw Object.assign(new Error(`the model is not a name ${a.product} takes`), { shown: true });
+    return {
+      agent: chosen,
+      model: m,
+      effort: pick(effort, a.efforts ?? [''], 'the effort'),
+      permissionMode: pick(permissionMode || 'auto', a.permissionModes, 'the permission mode'),
+    };
+  }
   return {
     agent: chosen,
     model: codex ? shaped(model, CODEX_MODEL_RE, 'the model') : pick(model, MODELS, 'the model'),
@@ -464,19 +478,29 @@ function isoOrNull(v) {
   return typeof v === 'string' && v.length <= 40 && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : null;
 }
 
+// Grok Build names its one allowance a week or a month and how long that period is (session/grokPlanUsage.mjs).
+const PLAN_WINDOW_LABELS = new Set(['Week', 'Month']);
+const PLAN_WINDOW_SHORTS = new Set(['wk', 'mo']);
+const PLAN_SPAN_MAX_MS = 400 * 86400_000;
+
 function planWindowFrom(w) {
   if (typeof w?.usedPercent !== 'number' || !Number.isFinite(w.usedPercent)) return null;
-  return { usedPercent: Math.min(100, Math.max(0, w.usedPercent)), resetsAt: isoOrNull(w.resetsAt) };
+  const out = { usedPercent: Math.min(100, Math.max(0, w.usedPercent)), resetsAt: isoOrNull(w.resetsAt) };
+  if (PLAN_WINDOW_LABELS.has(w.label)) out.label = w.label;
+  if (PLAN_WINDOW_SHORTS.has(w.short)) out.short = w.short;
+  if (typeof w.spanMs === 'number' && Number.isFinite(w.spanMs) && w.spanMs > 0 && w.spanMs <= PLAN_SPAN_MAX_MS) out.spanMs = w.spanMs;
+  return out;
 }
 
 /**
- * @param {object} usage  statusd's `planUsage` (session/planUsage.mjs)
+ * @param {object} usage  statusd's `planUsage` (session/planUsage.mjs, codexPlanUsage.mjs, grokPlanUsage.mjs)
  * @returns {{asOf: string|null, fiveHour: object|null, sevenDay: object|null}|null}  in range, or null
  */
 export function planUsageFrom(usage) {
   if (!usage || typeof usage !== 'object') return null;
   const out = { asOf: isoOrNull(usage.asOf), fiveHour: planWindowFrom(usage.fiveHour), sevenDay: planWindowFrom(usage.sevenDay) };
-  if (usage.agent === 'codex') out.agent = 'codex';
+  // Claude's reading carries no agent; any other agent's says whose it is (the meter names it).
+  if (usage.agent !== 'claude' && agents.isAgent(usage.agent)) out.agent = usage.agent;
   return out.fiveHour || out.sevenDay ? out : null;
 }
 

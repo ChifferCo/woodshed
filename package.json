@@ -12,7 +12,10 @@
     "node": ">=22"
   },
   "files": [
+    "cli/agentSignIns.mjs",
+    "cli/api.mjs",
     "cli/browser.mjs",
+    "cli/commands.mjs",
     "cli/config.mjs",
     "cli/credentials.mjs",
     "cli/hc.mjs",
@@ -42,6 +45,7 @@
     "session/missingPlugins.mjs",
     "session/ownFiles.mjs",
     "session/settingsSync.mjs",
+    "shared/agents.cjs",
     "shared/codexConfig.mjs",
     "shared/databases/engines.mjs",
     "shared/databases/index.mjs",

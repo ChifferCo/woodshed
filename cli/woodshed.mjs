@@ -20,6 +20,8 @@
 //   woodshed config list|get|set                       your choices on My settings, never a secret (config.mjs)
 //   woodshed settings plan|push|pull [...]             Claude and Codex settings, plugins, dotfiles and ignored files
 //                                                     (settings.mjs)
+//   woodshed sign-in push <grok|opencode> [--replace]  this computer's own Grok Build or OpenCode sign-in, saved on
+//                                                     My settings, never printed (agentSignIns.mjs)
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
 // other failure.
@@ -41,8 +43,28 @@ import { moveCommand } from './move.mjs';
 import { programRunner } from './moveLayout.mjs';
 import { gitRunner } from './moveCode.mjs';
 import { settingsCommand } from './settings.mjs';
+import { signInCommand, SIGN_IN_USAGE } from './agentSignIns.mjs';
 import { setupCommand, SETUP_USAGE } from './setup.mjs';
 import { attach, openTerminal } from './terminal.mjs';
+import agents from '../shared/agents.cjs';
+
+/**
+ * Which agents a session of the signed-in person can run, as the console said: Claude Code and Codex always, as the
+ * console from before the other agents said only those, and each other agent the console reports.
+ * @returns {Record<string, boolean>}
+ */
+export function signInsOf(said) {
+  said = said && typeof said === 'object' ? said : {};
+  return Object.fromEntries(agents.AGENT_IDS.filter((id) => id === 'claude' || id === 'codex' || Object.hasOwn(said, id)).map((id) => [id, said[id] === true]));
+}
+
+/** @returns {string}  the agents a session can run for you, and those that wait on a sign-in on My settings */
+export function agentsText(signIns) {
+  const name = (id) => agents.agent(id).product;
+  const ready = Object.keys(signIns).filter((id) => signIns[id]).map(name);
+  const not = Object.keys(signIns).filter((id) => !signIns[id]).map(name);
+  return `${ready.length ? ready.join(', ') : 'none yet'}${not.length ? ` (not yet: ${not.join(', ')}; sign in on My settings)` : ''}`;
+}
 
 export const { version: VERSION } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
@@ -51,7 +73,7 @@ const REQUEST_MS = 20_000;
 export const EXIT = Object.freeze({ done: 0, failed: 1, waiting: 2, refused: 3 });
 
 // Commands that read their own options: what follows them, but --console, --json and --help, is theirs (in `args`).
-const OWN_ARGS = new Set(['session', 'move', 'config', 'repo', 'settings', 'setup']);
+const OWN_ARGS = new Set(['session', 'move', 'config', 'repo', 'settings', 'setup', 'sign-in']);
 
 const USAGE = `Usage: woodshed <command> [--console <url>] [--json]
 
@@ -77,7 +99,10 @@ Commands:
             sync your Claude and Codex settings, plugins, dotfiles and ignored checkout files with private
             sessions. Claude MCP definitions pushed from a computer stay between computers.
             Codex MCP definitions from a computer stay on that computer.
-            plan lists each item and sends nothing (cli/README.md, "Settings")
+            plan lists each item and sends nothing, and with --pull what pull would write (cli/README.md, "Settings")
+  sign-in   push grok|opencode [--replace]
+            save the Grok Build or OpenCode sign-in this computer's grok login or opencode auth login made as
+            yours on My settings: checked here, never printed, and replacing a saved one only with --replace
 
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
@@ -240,7 +265,8 @@ export function approvalUrl(origin, userCode) {
  * @param {string[]} argv
  * @param {{env?: object, stdout?: {write: Function}, stderr?: {write: Function}, fetch?: typeof fetch,
  *          sleep?: (ms: number) => Promise<void>, credentials?: ReturnType<typeof createCredentials>,
- *          openBrowser?: (url: string) => void, hostname?: string, platform?: string, now?: () => number}} [deps]
+ *          openBrowser?: (url: string) => void, hostname?: string, platform?: string, now?: () => number,
+ *          token?: string}} [deps]  `token`: a sign-in the caller holds, used in place of this computer's (api.mjs)
  * @returns {Promise<number>}  the exit code
  */
 export async function main(argv, deps = {}) {
@@ -315,6 +341,12 @@ export async function main(argv, deps = {}) {
   const plain = (text) => (text === null || text === undefined ? null : String(text).replace(/[^\x20-\x7e]/g, '').slice(0, 100));
 
   function signedIn(origin) {
+    // A sign-in its caller holds (api.mjs): the token for this one run, never read from or kept on this computer.
+    // Given by its caller, even as none: then nobody is signed in, and this computer's own sign-in is never read.
+    if (Object.hasOwn(deps, 'token')) {
+      if (!deps.token) return { config: { current: null, consoles: {} }, entry: null, store: null, token: null };
+      return { config: { current: null, consoles: {} }, entry: { store: 'given' }, store: { label: 'the caller', read: () => deps.token, remove: () => {} }, token: deps.token };
+    }
     const config = readConfig(dir);
     const entry = config.consoles[origin];
     const store = entry && credentials.storeFor(entry.store);
@@ -491,7 +523,7 @@ export async function main(argv, deps = {}) {
       emit({
         console: origin, name: name ?? null, org: org ?? null, signedIn: true, login: who ?? null, store: entry.store,
         ...(store.file ? { credentialsFile: store.file } : {}), expiresAt: about?.expiresAt ?? null, device: about?.name ?? null, hc: herdr,
-        ...(me.body.sessionSignIns ? { sessionSignIns: { claude: me.body.sessionSignIns.claude === true, codex: me.body.sessionSignIns.codex === true } } : {}),
+        ...(me.body.sessionSignIns ? { sessionSignIns: signInsOf(me.body.sessionSignIns) } : {}),
       });
       return EXIT.done;
     }
@@ -500,6 +532,7 @@ export async function main(argv, deps = {}) {
       ['Org', org ?? 'none yet: the console has no repo'],
       ['Signed in', who ? `@${who}` : 'yes (this console has no GitHub sign-in)'],
       ['Token', `in ${store.label}, until ${about?.expiresAt ? about.expiresAt.slice(0, 10) : 'unknown'}`],
+      ...(me.body.sessionSignIns ? [['Agents', agentsText(signInsOf(me.body.sessionSignIns))]] : []),
       ['Herdr', herdrText],
     ];
     for (const [label, value] of rows) say(`${`${label}:`.padEnd(11)}${value}`);
@@ -519,7 +552,7 @@ export async function main(argv, deps = {}) {
       return TUNNEL_FAILED;
     }
     // As ssh does: the words after -- are one line, joined by spaces, for the session's sh -c.
-    return runTunnel({ origin, token, session, line: args.rest.join(' '), stdin, stdout, stderr, userAgent: `woodshed-cli/${VERSION}` });
+    return runTunnel({ origin, token, session, line: args.rest.join(' '), stdin, stdout, stderr, userAgent: `woodshed-cli/${VERSION}`, signal: deps.signal ?? null });
   }
 
   // The command as typed, for the catch below: only the tunnel's failures exit 255, whatever the other commands' words.
@@ -530,6 +563,7 @@ export async function main(argv, deps = {}) {
     json = args.json;
     if (args.command === 'repo' && args.help) return repoCommand(args, { stdout, EXIT });
     if (args.command === 'setup' && args.help) { stdout.write(`${SETUP_USAGE}\n`); return EXIT.done; }
+    if (args.command === 'sign-in' && args.help) { stdout.write(`${SIGN_IN_USAGE}\n`); return EXIT.done; }
     if (args.command === 'session' && args.help) return await sessionCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.command === 'move' && args.help) return await moveCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.command === 'review' && args.help) return await reviewCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
@@ -541,7 +575,13 @@ export async function main(argv, deps = {}) {
     const chosen = args.console ?? env.WOODSHED_CONSOLE ?? readConfig(dir).current ?? DEFAULT_CONSOLE;
     const origin = consoleOrigin(chosen);
     if (args.command === 'login') return await login(origin, { browser: args.browser, noWait: args.args.includes('--no-wait') });
-    if (args.command === 'setup') return await setupCommand({ ...args, origin }, { env, stdout, stderr, open, EXIT, emit, say, fail: (message) => new CliError(message), self: deps.self ?? selfCommand({ env }), platform });
+    if (args.command === 'setup') return await setupCommand({ ...args, origin }, { env, stdout, stderr, open, EXIT, emit, say, fail: (message) => new CliError(message), self: deps.self ?? selfCommand({ env }), platform, home: deps.home ?? os.homedir() });
+    if (args.command === 'sign-in') {
+      return await signInCommand({
+        rest: args.args, origin, token: signedIn(origin).token, env, home: deps.home ?? os.homedir(), json, call, say, emit, EXIT,
+        fail: (message, opts) => new CliError(message, opts),
+      });
+    }
     if (args.command === 'logout') return await logout(origin);
     if (args.command === 'status') return await status(origin);
     if (args.command === 'tunnel') return await tunnel(origin, args);

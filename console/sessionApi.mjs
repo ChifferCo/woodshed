@@ -14,10 +14,16 @@
 //                        terminal: what the owner picked on My settings for their agent; database null only where the
 //                        console makes no databases; claudeToken is the owner's own, for claude in their session;
 //                        a shared session gets {"database"}, its own, and 503 while they are still being copied, with
-//                        {"plan"} too when it runs on the Claude plan of whoever started it
+//                        {"plan"} too when it runs on the Claude plan of whoever started it. A private session of
+//                        Grok Build or OpenCode gets no claudeToken but "agentAuth", its owner's own sign-in
+//                        for that agent, and 409 with none saved
 //   *    /anthropic/...  claude's calls to Anthropic, the real credential added here (anthropicProxy.mjs)
 //   *    /openai/...     a Codex session's calls to OpenAI on the team key, added here (openaiProxy.mjs)
+//   *    /grok/..., /opencode/...   a review's Grok Build and OpenCode calls, on its author's own sign-in, added here
+//                         (reviewAgentProxy.mjs)
 //   POST /codex-auth     a Codex session's refreshed ~/.codex/auth.json, kept for its owner's next session
+//   POST /agent-auth     a private Grok Build or OpenCode session's refreshed login (shared/agents.cjs, `rotates`), kept
+//                        as its owner's own sign-in for their next session
 //   POST /home           a session's Claude home, a gzipped tar, saved on stop: a private one's for its owner, a
 //                        shared one's for its own next run
 //   POST /home/restore   that tar back, for the owner's next private session or the shared session's next run;
@@ -77,6 +83,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { isAnthropicPath, proxyCredential } from './anthropicProxy.mjs';
 import { isMcpPath } from './mcpRelay.mjs';
 import { bearerOf, isOpenAiPath } from './openaiProxy.mjs';
+import { isReviewAgentPath, reviewAgentTokenOf } from './reviewAgentProxy.mjs';
 import { MAX_ANSWER_CHARS, MAX_ISSUE_BODY_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
@@ -84,6 +91,7 @@ import { MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES, MAX_REPORT_CHARS, isWebm, parseQaRep
 import { MAX_QA_POSTER_BYTES, isPng } from './qaRecordings.mjs';
 import { ACTIVE_STATUSES, START_STEPS, isAsk, isQa, isReview, runsCodex } from './sessions.mjs';
 import { parseReviewReport } from './reviewSessions.mjs';
+import agents from '../shared/agents.cjs';
 
 // A step name is a word; the body is never more than a few of them.
 const MAX_PROGRESS_BYTES = 256;
@@ -123,6 +131,7 @@ export function sessionTokenOf(req) {
   // The MCP relay takes the session token as a bearer, as every other route does.
   if (isMcpPath(pathname)) return /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? null;
   if (isOpenAiPath(pathname)) return bearerOf(req.headers);
+  if (isReviewAgentPath(pathname)) return reviewAgentTokenOf(req.headers);
   return /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? null;
 }
 
@@ -167,7 +176,7 @@ export function sessionForToken(given, sessions) {
  */
 export function createSessionApi({
   fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null,
-  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null, sessionStarts = null,
+  reviewAgentProxy = null, attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null, sessionStarts = null,
   ownerTokenRepos = null, mcpRelay = null, egress = null,
 }) {
   // The access last logged for each session: a session asks for a token on every git and gh call, so the decision is
@@ -206,6 +215,7 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
+    if (reviewAgentProxy?.isProxyPath(pathname)) return reviewAgentProxy.handle(req, res, sessionForToken(reviewAgentTokenOf(req.headers), fleet.sessions()));
     if (isMcpPath(pathname)) {
       if (!mcpRelay) {
         req.resume();
@@ -215,7 +225,7 @@ export function createSessionApi({
     }
     // Its own token, not the session token (sessionStarts.mjs).
     if (sessionStarts?.isPath(pathname)) return sessionStarts.handle(req, res);
-    const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/issues', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress'];
+    const routes = ['/codex-auth', '/agent-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/issues', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -225,6 +235,7 @@ export function createSessionApi({
     if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, repoSettings, { planOnly: req.headers[PLAN_ONLY_HEADER] === '1' });
     if (pathname === '/repo-settings') return repoSettingsReply(req, res, session, repoSettings);
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings, fleet);
+    if (pathname === '/agent-auth') return agentAuthReply(req, res, session, userSettings);
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
     if (pathname === '/answer') return answerReply(req, res, session, asks);
     if (pathname === '/issues') return issueReply(req, res, session, asks);
@@ -362,8 +373,15 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
   }
   if (!session.owner) return sharedSettingsReply(res, session, databases, userSettings, { planOnly });
   const codex = session.options?.agent === 'codex';
-  const claudeToken = userSettings ? await userSettings.claudeToken(session.owner) : null;
-  if (!claudeToken && !codex) {
+  // Grok Build and OpenCode run on their owner's own sign-in, and on nothing else (shared/agents.cjs).
+  const own = agents.OWN_SIGN_IN_AGENTS.includes(session.options?.agent) ? agents.agent(session.options.agent) : null;
+  const agentAuth = own && userSettings ? await userSettings.agentAuth(session.owner, own.id) : null;
+  if (own && !agentAuth) {
+    console.warn(`sessionApi: no ${own.product} sign-in for the owner`, { sessionId: session.id, owner: session.owner, agent: own.id });
+    return reply(res, 409, { error: `@${session.owner} has no ${own.product} sign-in saved on My settings` });
+  }
+  const claudeToken = userSettings && !own ? await userSettings.claudeToken(session.owner) : null;
+  if (!claudeToken && !codex && !own) {
     console.warn('sessionApi: no Claude token for the owner', { sessionId: session.id, owner: session.owner });
     return reply(res, 409, { error: `@${session.owner} has no Claude token saved on My settings` });
   }
@@ -396,7 +414,8 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
   if (codex) console.log('sessionApi: Codex sign-in decided', { sessionId: session.id, owner: session.owner, own: Boolean(codexAuth) });
   // What the owner picked on My settings for their agent's terminal (session/agentPane.mjs): a private session's alone.
   const terminal = userSettings.terminal?.(session.owner) ?? 'tmux';
-  return reply(res, 200, { files, ownFiles, git: userSettings.gitIdentity(session.owner), database, claudeToken, terminal, ...(codex ? { codexAuth } : {}) });
+  if (own) console.log(`sessionApi: ${own.product} sign-in handed out`, { sessionId: session.id, owner: session.owner, agent: own.id, apiKey: !agentAuth.startsWith('{') });
+  return reply(res, 200, { files, ownFiles, git: userSettings.gitIdentity(session.owner), database, claudeToken, terminal, ...(codex ? { codexAuth } : {}), ...(own ? { agentAuth } : {}) });
 }
 
 // Whether the login a session sends back was refreshed before the saved one: a refresh token rotates, so the older is dead.
@@ -446,6 +465,76 @@ async function codexAuthReply(req, res, session, userSettings, fleet) {
     return reply(res, 400, { error: err.message });
   }
   console.log('sessionApi: Codex sign-in kept', { sessionId: session.id, owner: session.owner });
+  return reply(res, 200, { ok: true });
+}
+
+// When a login file's tokens run out: the latest expiry among its entries, Grok's `expires_at` or OpenCode's `expires`,
+// or null when it gives none to compare.
+function loginExpiry(text) {
+  try {
+    const times = Object.values(JSON.parse(text) ?? {}).map((e) => {
+      const at = e?.expires ?? e?.expires_at;
+      return typeof at === 'number' ? at : typeof at === 'string' ? Date.parse(at) : NaN;
+    }).filter((t) => Number.isFinite(t) && t > 0);
+    return times.length ? Math.max(...times) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A private Grok Build or OpenCode session's refreshed login (shared/agents.cjs, `rotates`): their refresh token works
+ * once, so the copy saved on My settings stops working once a session used it. Only the owner's own sign-in is replaced,
+ * only by their own session of that agent, and never by a login that runs out before the saved one.
+ */
+// The sign-in a session says it was given (session/statusd.mjs, keepAgentAuth).
+const GIVEN_SIGN_IN_HEADER = 'x-woodshed-given-sign-in';
+
+async function agentAuthReply(req, res, session, userSettings) {
+  const agent = agents.isAgent(session.options?.agent) ? agents.agent(session.options.agent) : null;
+  if (!userSettings || !session.owner || !agent?.signIn?.rotates) {
+    req.resume();
+    return reply(res, 404, { error: 'only a private Grok Build or OpenCode session keeps a sign-in' });
+  }
+  let text = '';
+  for await (const chunk of req) {
+    text += chunk;
+    if (text.length > agent.signIn.maxChars) return reply(res, 413, { error: 'too large' });
+  }
+  // Read, compared and written in one turn of this sign-in's (userSettings.agentAuthTurn): a save on My settings waits
+  // for it, or it for the save, so neither lands between the other's read and write.
+  const turn = userSettings.agentAuthTurn ?? ((login, id, fn) => fn({ read: () => userSettings.agentAuth(login, id), save: (value) => userSettings.setAgentAuth(login, id, value) }));
+  // A refusal answers at once, and says so.
+  const refuse = (code, body) => { reply(res, code, body); return true; };
+  const answered = await turn(session.owner, agent.id, async ({ read, save }) => {
+    const current = await read();
+    if (!current) {
+      console.log(`sessionApi: ${agent.product} sign-in not kept, the owner has none saved`, { sessionId: session.id, owner: session.owner });
+      return refuse(409, { error: `the owner saved no ${agent.product} sign-in` });
+    }
+    // Only over the sign-in this session was given: one saved on My settings since (a key has no expiry to compare), or
+    // another session's refresh, stays. A session that does not say which it was given keeps nothing.
+    const given = String(req.headers[GIVEN_SIGN_IN_HEADER] ?? '');
+    if (given !== agents.signInDigest(current)) {
+      console.log(`sessionApi: ${agent.product} sign-in not kept, the saved one is not the one the session was given`, { sessionId: session.id, owner: session.owner, said: Boolean(given) });
+      return refuse(409, { error: `the saved ${agent.product} sign-in changed since this session started` });
+    }
+    const [incoming, saved] = [loginExpiry(text), loginExpiry(current)];
+    if (incoming !== null && saved !== null && incoming < saved) {
+      console.log(`sessionApi: ${agent.product} sign-in not kept, the saved one is newer`, { sessionId: session.id, owner: session.owner });
+      return refuse(409, { error: `the saved ${agent.product} sign-in is newer` });
+    }
+    try {
+      await save(text);
+    } catch (err) {
+      if (!err.shown) throw err;
+      console.warn(`sessionApi: ${agent.product} sign-in refused`, { sessionId: session.id, owner: session.owner, message: err.message });
+      return refuse(400, { error: err.message });
+    }
+    return null;
+  });
+  if (answered) return;
+  console.log(`sessionApi: ${agent.product} sign-in kept`, { sessionId: session.id, owner: session.owner });
   return reply(res, 200, { ok: true });
 }
 

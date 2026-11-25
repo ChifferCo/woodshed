@@ -63,7 +63,7 @@ export function createAssigneePings({ slack, slackPeople, publicUrl, linkQuery =
   }
 
   /**
-   * The session asked for a person in a `Needs a human:` comment, such as when its change could not be proven here.
+   * The session asked for a person in a `Needs a human:` comment, such as when it cannot go on.
    * @param {object} session
    * @param {{number: number, url: string|null}} comment
    */

@@ -3,7 +3,7 @@
 // (console/sessionStarts.mjs). It reads the session's start token from the file the entrypoint wrote (keepStartToken),
 // which nothing's environment holds.
 //
-//   woodshed-session new [--branch B] [--repo R] [--name N] [--agent claude|codex] [--model M] [--effort E]
+//   woodshed-session new [--separate] [--branch B] [--repo R] [--name N] [--agent claude|codex|grok|opencode] [--model M] [--effort E]
 //                        (--prompt-file F | "prompt" | - for stdin)
 //   woodshed-session list [--all] [--json]
 //   woodshed-session get <id> [--json]
@@ -13,15 +13,22 @@
 //   woodshed-session read <id> [--last N] [--since <time>]
 //   woodshed-session stop <id> | resume <id>
 //   woodshed-session rename [<id>] "<name>"
+//   woodshed-session agent new [--agent claude|codex] [--model M] [--effort E] ("prompt" | --prompt-file F | -) [--wait]
+//   woodshed-session agent list | send <agent-N> "<message>" [--wait] | read <agent-N> [--last N] | stop <agent-N>
 
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 
 import { isMain } from '../shared/isMain.mjs';
+
+const { AGENT_IDS } = createRequire(import.meta.url)('../shared/agents.cjs');
 
 export const START_TOKEN_FILE = '/tmp/woodshed-start-token';
 const REQUEST_MS = 30_000;
 // The console answers a wait within 4 minutes (sessionStarts.mjs, WAIT_MS): a little past that.
 const WAIT_REQUEST_MS = 5 * 60_000;
+const AGENT_POLL_MS = 3000;
+const AGENT_NO_REPLY_MS = 90_000;
 const ID_RE = /^[0-9a-f]{8}$/;
 
 export const USAGE = `Usage: woodshed-session <command>
@@ -35,7 +42,9 @@ Commands:
       --branch <branch>  work on this branch, or a pull request or issue: 123, pr 123 (default: a new branch)
       --repo <project>   another of the console's repos, by its project name (default: this session's)
       --name <name>      its name on the console (default: named from the prompt)
-      --agent claude|codex, --model <model>, --effort <effort>
+      --separate         work of its own, not a piece of this session's: at the top of the rail, and not in list
+      --agent claude|codex|grok|opencode, --model <model>, --effort <effort>
+                         (Grok Build and OpenCode only once your person saved their sign-in for it on My settings)
   list                   the sessions this session started, with their state, branch, pull request and link
       --all              every private session of your person's, whoever started it
   get <id>               one of them
@@ -50,6 +59,11 @@ Commands:
                          what it was asked and said, newest last (default the last 10)
   stop <id>, resume <id> as Stop and Resume on the console
   rename [<id>] "<name>" rename this session on the console, or another of your person's
+  agent new ("<prompt>" | --prompt-file <file> | -) [--agent claude|codex] [--model <model>] [--effort <effort>] [--wait]
+                         a helper beside this session's own agent, in this session and checkout: for a side task of
+                         this same work (look into something, review, write the tests). --wait prints what it said
+  agent list             the agents beside this one, with their state
+  agent send <agent-N> "<message>" [--wait], agent read <agent-N> [--last <n>], agent stop <agent-N>
   --json                 print the console's answer as JSON`;
 
 class Refused extends Error {}
@@ -67,9 +81,11 @@ export function parseArgs(argv) {
       break;
     }
     if (word === '--json') flags.json = true;
+    else if (word === '--help' || word === '-h') flags.help = true;
     else if (word === '--wait') flags.wait = true;
     else if (word === '--reply') flags.reply = true;
     else if (word === '--all') flags.all = true;
+    else if (word === '--separate') flags.separate = true;
     else if (takes.has(word)) {
       if (i + 1 >= words.length) throw new Refused(`${word} needs a value`);
       flags[word.slice(2).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = words[++i];
@@ -83,7 +99,7 @@ export function parseArgs(argv) {
 export function describe(s) {
   const state = s.status === 'running' && s.state ? `${s.status}, ${s.state}` : s.status;
   const lines = [`${s.id}  ${state}  ${s.title ?? ''}`.trimEnd(), `  ${s.url}`];
-  const facts = [s.branch ? `branch ${s.branch}` : null, s.prUrl ? `PR ${s.prUrl}` : null, s.agent === 'codex' ? 'codex' : null].filter(Boolean);
+  const facts = [s.branch ? `branch ${s.branch}` : null, s.prUrl ? `PR ${s.prUrl}` : null, s.agent && s.agent !== 'claude' ? s.agent : null].filter(Boolean);
   if (facts.length) lines.push(`  ${facts.join(', ')}`);
   if (s.error || s.stopReason) lines.push(`  ${s.error ? 'failed' : 'stopped'}: ${s.error ?? s.stopReason}`);
   if (s.lastMessage) lines.push(`  last: ${s.lastMessage.split('\n')[0].slice(0, 200)}`);
@@ -96,7 +112,7 @@ export function describe(s) {
  *          stdout: {write: (t: string) => void}, stderr: {write: (t: string) => void}, tokenFile?: string}} io
  * @returns {Promise<number>}  the exit code: 0 done, 1 failed or refused, 2 usage
  */
-export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) => fs.readFileSync(p, 'utf8'), stdin = readStdin, stdout, stderr, tokenFile = env.WOODSHED_START_TOKEN_FILE || START_TOKEN_FILE }) {
+export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) => fs.readFileSync(p, 'utf8'), stdin = readStdin, stdout, stderr, tokenFile = env.WOODSHED_START_TOKEN_FILE || START_TOKEN_FILE, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   const say = (text) => stdout.write(`${text}\n`);
   let parsed;
   try {
@@ -106,11 +122,11 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
     return 2;
   }
   const { command, args, flags } = parsed;
-  if (!command || command === 'help' || command === '--help' || command === '-h') {
+  if (!command || command === 'help' || command === '--help' || command === '-h' || flags.help) {
     say(USAGE);
-    return command ? 0 : 2;
+    return command || flags.help ? 0 : 2;
   }
-  if (!['new', 'list', 'get', 'send', 'reply', 'wait', 'read', 'stop', 'resume', 'rename'].includes(command)) {
+  if (!['new', 'list', 'get', 'send', 'reply', 'wait', 'read', 'stop', 'resume', 'rename', 'agent'].includes(command)) {
     stderr.write(`woodshed-session: unknown command ${command}\n\n${USAGE}\n`);
     return 2;
   }
@@ -168,6 +184,87 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
     return said;
   }
 
+  // ---- agents beside this session's own (console/sessionStarts.mjs /agents, statusd's agents.mjs) ----
+  async function agentCommand([sub, ...rest]) {
+    const AGENT_RE = /^agent-[2-9]$/;
+    if (sub === 'list') {
+      const { agents = [] } = await call('GET', '/agents');
+      if (flags.json) return say(JSON.stringify({ agents })), 0;
+      say(agents.length ? agents.map((a) => `${a.id}  ${a.state ?? 'unknown'}  ${a.agent}${a.model ? ` ${a.model}` : ''}`).join('\n') : 'No agents beside this session\'s own.');
+      return 0;
+    }
+    if (sub === 'new') {
+      const prompt = await words2text(rest, 'give the agent its first prompt: in quotes, --prompt-file <file>, or - to read it from stdin');
+      if (flags.agent && !['claude', 'codex'].includes(flags.agent)) throw new Refused('--agent is claude or codex');
+      const sentAt = new Date().toISOString();
+      const { agent } = await call('POST', '/agents', {
+        prompt, ...(flags.agent ? { agent: flags.agent } : {}), ...(flags.model ? { model: flags.model } : {}), ...(flags.effort ? { effort: flags.effort } : {}),
+      });
+      if (flags.json && !flags.wait) return say(JSON.stringify({ agent })), 0;
+      say(`Started ${agent.id}: ${agent.agent}${agent.model ? ` ${agent.model}` : ''}, beside this session's own agent, in this checkout`);
+      if (!flags.wait) return say(`Follow it with: woodshed-session agent read ${agent.id}`), 0;
+      return await agentWaitAndRead(agent.id, sentAt);
+    }
+    const [id, ...words] = rest;
+    if (!AGENT_RE.test(id ?? '')) throw new Refused(`give the agent's id: woodshed-session agent ${sub ?? '<new|list|send|read|stop>'} agent-2 (agent list shows them)`);
+    if (sub === 'send') {
+      const said = await words2text(words, 'give the message: in quotes, --prompt-file <file>, or - to read it from stdin');
+      const sentAt = new Date().toISOString();
+      const sent = await call('POST', `/agents/${id}/send`, { text: said });
+      say(sent.held ? `Held for ${id}: it gets it once its turn ends` : `Sent to ${id}`);
+      return flags.wait ? await agentWaitAndRead(id, sentAt) : 0;
+    }
+    if (sub === 'read') {
+      const last = flags.last === undefined ? 10 : Number.parseInt(flags.last, 10);
+      if (!(last > 0)) throw new Refused('--last is a number of entries');
+      const { entries = [] } = await call('GET', `/agents/${id}/transcript?limit=${Math.max(last * 3, 50)}`);
+      const shown = entries.filter((e) => (e.role === 'user' || e.role === 'assistant') && e.text?.trim()).slice(-last);
+      if (flags.json) return say(JSON.stringify({ entries: shown })), 0;
+      say(shown.length ? shown.map(entryLines).join('\n') : 'Nothing said yet.');
+      return 0;
+    }
+    if (sub === 'stop') {
+      await call('POST', `/agents/${id}/stop`, {});
+      say(`Stopped ${id}`);
+      return 0;
+    }
+    throw new Refused('woodshed-session agent new | list | send | read | stop');
+  }
+
+  // An agent beside this one is in the same container: its state is read every few seconds until it worked on what was
+  // sent and is back at its prompt, or never took it up.
+  async function agentWaitAndRead(id, sentAt) {
+    const started = Date.now();
+    let worked = false;
+    let agent;
+    for (;;) {
+      const { agents = [] } = await call('GET', '/agents');
+      agent = agents.find((a) => a.id === id);
+      if (!agent) throw new Refused(`${id} is no longer running`);
+      if (agent.state === 'working') worked = true;
+      const held = (agent.heldIds ?? []).length > 0;
+      const settled = ['done', 'needs-you', 'idle'].includes(agent.state);
+      if (!held && worked && settled) break;
+      // A turn shorter than the gap between two reads is never seen working: what it wrote since says it worked.
+      if (!held && !worked && settled) {
+        const { entries = [] } = await call('GET', `/agents/${id}/transcript?limit=20`);
+        if (entries.some((e) => e.role === 'assistant' && e.text?.trim() && e.at && e.at > sentAt)) break;
+      }
+      if (!held && !worked && Date.now() - started > AGENT_NO_REPLY_MS) {
+        say(`${id} did not take it up: nothing held for it, and it did not start working`);
+        return 0;
+      }
+      await sleep(AGENT_POLL_MS);
+    }
+    const { entries = [] } = await call('GET', `/agents/${id}/transcript?limit=50`);
+    const said = entries.filter((e) => e.role === 'assistant' && e.text?.trim() && (!e.at || e.at > sentAt));
+    if (flags.json) return say(JSON.stringify({ agent, said })), 0;
+    say(`${id}  ${agent.state}`);
+    if (agent.state === 'needs-you') say('  it needs its person: a question or an approval on its screen');
+    if (said.length) say(said.map(entryLines).join('\n'));
+    return 0;
+  }
+
   // The console answers a wait at least every few minutes: ask again until it is over.
   async function waitFor(id, mode) {
     for (;;) {
@@ -176,8 +273,18 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
     }
   }
 
+  function printWaited(session, { answer, waitingOnYou }) {
+    if (flags.json) return say(JSON.stringify({ session, ...(answer ? { reply: answer } : {}), ...(waitingOnYou ? { waitingOnYou: true } : {}) })), 0;
+    say(describe(session).join('\n'));
+    if (answer) say(`[replied ${String(answer.at ?? '').slice(11, 16)}] ${answer.text.trim()}`);
+    else say(`  it is waiting on this session: answer it with woodshed-session send ${session.id} "<answer>" (or reply, to the session that started this one), and end your turn`);
+    return 0;
+  }
+
   async function waitAndRead(id, sentAt) {
-    const { session, noReply, deliveredAt } = await waitFor(id, 'reply');
+    const { session, noReply, deliveredAt, reply: answer, waitingOnYou } = await waitFor(id, 'reply');
+    // It answered with a message of its own (woodshed-session reply or send) while this waited: that is the answer.
+    if (answer || waitingOnYou) return printWaited(session, { answer, waitingOnYou });
     // From when it went in: a message held behind a turn is answered after that turn, which is not its answer.
     const from = deliveredAt && deliveredAt > sentAt ? deliveredAt : sentAt;
     let entries = [];
@@ -227,13 +334,16 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
       if (flags.json && !flags.wait) return say(JSON.stringify(sent)), 0;
       say(sent.held ? `Held for session ${to}: it gets it once it is at its prompt (${sent.session?.status}${sent.session?.state ? `, ${sent.session.state}` : ''})`
         : `Sent to session ${to}${sent.unknown ? ' (the console did not hear back in time: it may have gone in)' : ''}`);
+      // A reply answers what the other session asked: it may be waiting for this very answer, so it is not waited on.
+      if (command === 'reply') return 0;
       if (!flags.wait) return say(`Wait for it with: woodshed-session wait ${to} --reply`), 0;
       return await waitAndRead(to, sent.sentAt);
     }
     if (command === 'wait') {
       const [id] = args;
       if (!ID_RE.test(id ?? '') || args.length > 1) throw new Refused('give the id of one session: woodshed-session wait <id>');
-      const { session, noReply } = await waitFor(id, flags.reply ? 'reply' : 'settled');
+      const { session, noReply, reply: answer, waitingOnYou } = await waitFor(id, flags.reply ? 'reply' : 'settled');
+      if (answer || waitingOnYou) return printWaited(session, { answer, waitingOnYou });
       say(flags.json ? JSON.stringify({ session, noReply: Boolean(noReply) }) : [...describe(session), ...waited(session, noReply)].join('\n'));
       return 0;
     }
@@ -250,6 +360,7 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
       say(shown.length ? shown.map(entryLines).join('\n') : 'Nothing said yet.');
       return 0;
     }
+    if (command === 'agent') return await agentCommand(args);
     if (command === 'rename') {
       const [first, ...rest] = args;
       const other = ID_RE.test(first ?? '') && rest.length ? first : null;
@@ -267,13 +378,14 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
       return 0;
     }
     const prompt = await words2text(args, 'give the new session its first prompt: --prompt-file <file>, the prompt in quotes, or - to read it from stdin');
-    if (flags.agent && !['claude', 'codex'].includes(flags.agent)) throw new Refused('--agent is claude or codex');
+    if (flags.agent && !AGENT_IDS.includes(flags.agent)) throw new Refused(`--agent is ${AGENT_IDS.join(', ')}`);
     const { session } = await call('POST', '/sessions', {
       prompt, ...(flags.branch ? { branch: flags.branch } : {}), ...(flags.repo ? { project: flags.repo } : {}), ...(flags.name ? { name: flags.name } : {}),
       ...(flags.agent ? { agent: flags.agent } : {}), ...(flags.model ? { model: flags.model } : {}), ...(flags.effort ? { effort: flags.effort } : {}),
+      ...(flags.separate ? { separate: true } : {}),
     });
     if (flags.json) return say(JSON.stringify({ session })), 0;
-    say(`Started session ${session.id}${session.title ? `: ${session.title}` : ''}`);
+    say(`Started session ${session.id}${session.title ? `: ${session.title}` : ''}, ${session.separate ? 'on its own' : 'as part of this session\'s work'}`);
     say(`  ${session.url}`);
     say(`  branch ${session.branch ?? 'not named yet'}, ${session.status === 'queued' ? 'waiting in line (the person has as many running as the console allows)' : session.status}`);
     say(`Follow it with: woodshed-session get ${session.id}`);

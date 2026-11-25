@@ -37,7 +37,9 @@ import { createOidcIssuer } from './oidcIssuer.mjs';
 import { createMcpRelay } from './mcpRelay.mjs';
 import { createMcpServers, mcpSettings } from './mcpServers.mjs';
 import { createOpenAiProxy } from './openaiProxy.mjs';
+import { createReviewAgentProxy } from './reviewAgentProxy.mjs';
 import { createCodexModels } from './codexModels.mjs';
+import { createGrokModels } from './grokModels.mjs';
 import { createSessionApi, sessionForToken } from './sessionApi.mjs';
 import { createSessionStarts, sessionForStartToken } from './sessionStarts.mjs';
 import { createReviewSource } from './review.mjs';
@@ -400,6 +402,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // In AWS the team key is the console's alone; the docker launcher's sessions keep the one in its env file.
   const openai = createOpenAiProxy({ secrets, teamKey: config.sessionEnv.OPENAI_API_KEY ?? null, userSettings });
   const codexModels = createCodexModels({ userSettings, teamCredential: openai.teamCredential });
+  // A review's Grok Build and OpenCode, on its author's own sign-in alone: there is no team key for them.
+  const reviewAgentProxy = createReviewAgentProxy({ userSettings });
+  const grokModels = createGrokModels({ userSettings });
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
   const access = mcpAccess({ loaded, secrets, launcher: provider.launcher });
@@ -557,7 +562,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const handle = createHandler({
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
-    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
+    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, grokModels, openaiTeamKey: openai.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
     workflowLinks: () => projectReader.workflowLinks(),
     projectAccess,
@@ -595,13 +600,14 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // hour per person (createWriteAccess). It ends no sign-in of theirs: the command line's own check does that.
   const startsWriteAccess = createWriteAccess({ canWrite: auth?.canWrite ? (login) => (auth.enabled() ? auth.canWrite(login) : true) : null, revokeAll: () => {}, logAs: 'sessionStarts' });
   const sessionStarts = createSessionStarts({
-    fleet, config, startMine: (login, body) => handle.startMine(login, body, { startedFrom: body.startedFrom }),
+    fleet, config, startMine: (login, body) => handle.startMine(login, body, { startedFrom: body.startedFrom, startedApart: body.startedApart === true }),
     resumeMine: (login, id) => handle.resumeMine(login, id), statusd: callStatusd,
+    agentAction: (req, res, route, login, opts) => handle.agentAction(req, res, route, login, opts),
     allowed: (login) => (members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login)),
     canWrite: (login) => startsWriteAccess.allowed(login),
   });
   const sessionApi = config.sessionApi.host ? createSessionApi({
-    fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
+    fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, reviewAgentProxy, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
     mcpRelay, egress: access.egress, sessionStarts,
     ownerTokenRepos: hostConnect ? () => allProjects(config).map((p) => p.repo).filter(Boolean) : null,

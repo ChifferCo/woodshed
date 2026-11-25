@@ -512,10 +512,10 @@ test('the Slack row says what the channel is for and where posts go now, and lis
   const { app } = await loadPage({ slack: { consoleChannel: 'C0CONSOLE01', channels: {} } });
   const card = cardOf(app, 'slack');
   const text = textOf(card);
-  assert.match(text, /When a shared session on this repo opens a pull request, the console posts it to this channel once its review and checks pass, with its decision brief and a mention of whoever has the session in the post's thread\./);
+  assert.match(text, /A shared session's pull request is posted here once review and checks pass\./);
   assert.match(text, /With no channel here, it goes to the channel on Settings' Slack card\./);
   assert.match(text, /invite the bot first/, 'each channel says whether the bot is in it');
-  assert.match(text, /a question asked in Slack is answered in its own thread/);
+  assert.match(text, /A question asked in Slack is answered in its own thread/);
   assert.match(text, /Posting to the console's channel, C0CONSOLE01\./);
   assert.equal(walk(card).find((e) => e.tag === 'a' && /Slack card/.test(textOf(e))).attrs.href, '/console-settings#card-slack');
   assert.ok(pickerSearch(app), 'a search over the channels, not an ID field');
@@ -605,7 +605,7 @@ const switchOf = (app, id) => walk(rowOf(app, id)).find((e) => e.attrs.role === 
 test('Sessions from GitHub: each switch is on its row and applies as it is turned, and a refusal shows with every row closed', async () => {
   const { app, calls } = await loadPage({ triggers: TRIGGERS, opened: [] });
   const group = () => groupOf(app, 'github');
-  assert.match(textOf(group()), /How a shared session on acme\/app starts from GitHub\./);
+  assert.match(textOf(group()), /How a shared session on acme\/app starts from GitHub, for someone with write access and Sessions from GitHub on People\./);
   assert.deepEqual([switchOf(app, 'switch-labels').attrs['aria-checked'], switchOf(app, 'switch-comments').attrs['aria-checked']], ['true', 'false']);
   assert.equal(switchOf(app, 'switch-labels').attrs['aria-label'], 'Start sessions from the label');
   assert.match(textOf(rowOf(app, 'switch-labels')), /On: the woodshed label on an issue starts a session, or resumes the one it had\./);
@@ -631,6 +631,7 @@ test('the label\'s name is a row that opens: a label of the repo\'s own is saved
   const row = () => rowOf(app, 'session-label-row');
   const input = () => walk(row()).find((e) => e.tag === 'input' && e.attrs.id === 'session-label');
   assert.equal(input().value, 'woodshed');
+  assert.match(textOf(row()), /GitHub matches any case\. It must not be this repo's QA label \(its project file's pullRequests\.qa\.label\)\. Make it on the repo's Labels page so people can pick it\./);
   assert.equal(button(row(), 'Save').attrs.disabled, '', 'nothing typed yet');
   assert.equal(button(row(), 'Use the console\'s').attrs.disabled, '');
   input().value = 'a,b';

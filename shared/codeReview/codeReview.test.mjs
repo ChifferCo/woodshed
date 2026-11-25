@@ -262,6 +262,21 @@ test('a reviewer that wrote no verdict is left out and named; with neither there
   assert.equal(mergeVerdicts([{ name: 'Claude Code', verdict: verdictOf(null) }, { name: 'Codex', verdict: verdictOf(null) }]).conclusion, null);
 });
 
+test('a panel of three or more that lost a reviewer says so after the sections of those that finished', () => {
+  const merged = mergeVerdicts([
+    { name: 'Claude Code', verdict: verdictOf('APPROVE') },
+    { name: 'Grok Build', verdict: verdictOf('COMMENT') },
+    { name: 'OpenCode', verdict: verdictOf(null, { tier: null }) },
+  ]);
+  assert.equal(merged.conclusion, 'COMMENT');
+  assert.ok(merged.comment.startsWith('### Claude Code: APPROVE\n\nAPPROVE comment\n\n### Grok Build: COMMENT\n\nCOMMENT comment'));
+  for (const field of ['comment', 'summary']) {
+    assert.ok(merged[field].endsWith('\n\nOpenCode wrote no verdict, so this is Claude Code and Grok Build\'s alone.'), field);
+  }
+  const whole = mergeVerdicts([{ name: 'Claude Code', verdict: verdictOf('APPROVE') }, { name: 'Grok Build', verdict: verdictOf('APPROVE') }]);
+  assert.doesNotMatch(whole.comment, /wrote no verdict/, 'a whole panel has no note');
+});
+
 test('the inline comments stay within what the console posts, half each when both wrote many', () => {
   const many = (n) => Array.from({ length: n }, (_, i) => ({ path: 'a.js', line: i + 1, body: `c${i}` }));
   const merged = mergeVerdicts([
@@ -269,4 +284,22 @@ test('the inline comments stay within what the console posts, half each when bot
     { name: 'Codex', verdict: verdictOf('COMMENT', { comments: many(3) }) },
   ]);
   assert.equal(merged.inlineComments.length, 18);
+});
+
+test('merge takes each reviewer named with its folder, and the verdict names them', (t) => {
+  const dirs = { claude: dir(t), grok: dir(t), opencode: dir(t) };
+  for (const [agent, d] of Object.entries(dirs)) {
+    fs.writeFileSync(path.join(d, 'verdict.txt'), agent === 'grok' ? 'COMMENT\n' : 'APPROVE\n');
+    fs.writeFileSync(path.join(d, 'summary.md'), `${agent} says fine.`);
+    fs.writeFileSync(path.join(d, 'merge-risk.md'), 'LOW\nSmall.\n');
+  }
+  const script = fileURLToPath(new URL('./codeReview.mjs', import.meta.url));
+  const verdict = JSON.parse(execFileSync(process.execPath, [script, 'merge', ...Object.entries(dirs).map(([a, d]) => `${a}=${d}`)], { encoding: 'utf8' }));
+  assert.equal(verdict.conclusion, 'COMMENT');
+  assert.deepEqual(verdict.agents, ['claude', 'grok', 'opencode']);
+  assert.match(verdict.summary, /### Grok Build: COMMENT/);
+  assert.match(verdict.summary, /### OpenCode: APPROVE/);
+  const alone = JSON.parse(execFileSync(process.execPath, [script, 'verdict', dirs.grok, 'grok'], { encoding: 'utf8' }));
+  assert.deepEqual(alone.agents, ['grok']);
+  assert.throws(() => execFileSync(process.execPath, [script, 'merge', `grok=${dirs.grok}`, `grok=${dirs.claude}`], { stdio: 'pipe' }), /names each reviewer once/);
 });

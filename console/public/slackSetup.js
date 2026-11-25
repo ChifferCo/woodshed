@@ -239,7 +239,7 @@
             h('label', { class: 'sr-only', for: 'slack-signing-secret' }, 'Signing Secret'), secret,
             h('p', { class: 'sub' }, view.signingSecret ? 'One is saved.' : 'Needed for questions only. Without it, pull requests are still posted.')),
           step(++n, 'Choose a channel for pull requests',
-            h('p', { class: 'sub' }, 'Each pull request a shared session opens is posted there, unless its repo has a channel of its own (Repo settings). Invite the bot to it.'),
+            h('p', { class: 'sub' }, 'Shared sessions post pull requests here, unless the repo has its own channel. Invite the bot.'),
             picker.el)),
         h('p', { class: 'form-error', role: 'alert', hidden: !state.error }, state.error ?? ''));
       foot.replaceChildren(

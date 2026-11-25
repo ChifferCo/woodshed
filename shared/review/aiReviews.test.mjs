@@ -103,6 +103,14 @@ test('a project\'s own heading still reads, and its sections name the reviewers'
   assert.equal(read.parts.length, 2);
 });
 
+test('a review by Grok Build and OpenCode reads as theirs, each part and finding marked with whose it is', () => {
+  const read = parseAiReviewBody('## Claude Code, Grok Build and OpenCode review — COMMENT\n\n### Claude Code: APPROVE\n\nA.\n\n### Grok Build: COMMENT\n\nB.\n\n### OpenCode: APPROVE\n\nC.');
+  assert.deepEqual(read.agents, ['Claude Code', 'Grok Build', 'OpenCode']);
+  assert.deepEqual(read.parts.map((p) => [p.agent, p.conclusion]), [['Claude Code', 'APPROVE'], ['Grok Build', 'COMMENT'], ['OpenCode', 'APPROVE']]);
+  const [review] = aiReviewsOf({ verdicts: [{ id: 'R1', author: BOT, body: '## Grok Build review — COMMENT\n\nB.' }], threads: [thread({ review: 'R1', body: '**Grok Build:** A name.', line: 3 })], headSha: null });
+  assert.deepEqual(review.findings.map((f) => [f.agent, f.body]), [['Grok Build', 'A name.']]);
+});
+
 test('what a follow-up tells the agent: the finding and where it is, or the review\'s parts', () => {
   const [review] = aiReviewsOf({ verdicts: [{ id: 'R1', author: BOT, body: BOTH }], threads: [thread({ review: 'R1', body: '**Codex:** Loops.', line: 30 })], headSha: null });
   assert.deepEqual(aboutFinding(review, review.findings[0]), { id: 'c-src/a.mjs-30', label: 'Codex on src/a.mjs:30', text: 'Loops.' });

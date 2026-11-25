@@ -1,7 +1,9 @@
 // A made-up running session for the dev console's Chat tab, served by the real statusd (session/statusd.mjs) over a
 // tmux server of its own, whose `claude` pane runs a stand-in agent (devChatAgent.mjs) that writes the agent's real
-// record of the conversation: codex's rollout, or claude's transcript. So the Chat tab's whole path is the session's own:
-// the thread from GET /transcript, Send typed into the pane by POST /send, Stop's Esc by POST /interrupt.
+// record of the conversation: codex's rollout, claude's transcript, Grok Build's updates.jsonl or OpenCode's database.
+// So the Chat tab's whole path is the session's own: the thread from GET /transcript, Send typed into the pane by POST /send, Stop's Esc by POST /interrupt.
+// A Grok Build or OpenCode one runs as the session's own does (AGENT=grok, AGENT=opencode), in a home of its own that
+// holds what the stand-in writes, so statusd reads its records where it reads the real agent's.
 // A codex session's state is read from its pane, as statusd reads codex's (Working, Needs you, Done), so `docker`
 // says its container runs and the console reads its status. A claude session gets no `docker` and keeps the state the
 // dev console gives it; its statusd has a hook state file of its own (WOODSHED_CLAUDE_STATE_FILE), never the machine's,
@@ -25,9 +27,12 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 import { statusdReady } from './devStatusd.mjs';
+
+const agents = createRequire(import.meta.url)('../../shared/agents.cjs');
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const STATUSD = path.join(HERE, '..', '..', 'session', 'statusd.mjs');
@@ -95,7 +100,7 @@ async function trustOnce(tmux) {
 }
 
 /**
- * @param {{id: string, token: string, agent: 'codex'|'claude', nextPath: string, real?: boolean, terminalToken?: string}} opts
+ * @param {{id: string, token: string, agent: 'codex'|'claude'|'grok'|'opencode', nextPath: string, real?: boolean, terminalToken?: string}} opts
  *   nextPath: the PATH a `docker` call for any other container goes on with. real: the real agent. Each gets ttyd on
  *   terminalToken
  * @returns {Promise<{port: number, termPort: number|null, ref: string|null, binDir: string|null, close: () => void}|null>}
@@ -165,7 +170,21 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
     git('commit', '-q', '-m', 'chat');
   }
   const codexHome = path.join(home, '.codex');
-  const recordDir = agent === 'codex' ? codexHome : path.join(home, '.claude', 'projects', repo.replace(/[/.]/g, '-'));
+  // Grok Build and OpenCode keep their records under the home: the stand-in is given the home itself.
+  const recordDir = agent === 'codex' ? codexHome : agent === 'grok' || agent === 'opencode' ? home
+    : path.join(home, '.claude', 'projects', repo.replace(/[/.]/g, '-'));
+  // A made-up weekly allowance, the line a Grok Build session's Plan chip reads (session/grokPlanUsage.mjs). The
+  // stand-in's home, never this machine's, so the meter shows this number and nothing of a real account.
+  const grokHome = !real && agent === 'grok' ? path.join(home, '.grok') : null;
+  if (grokHome) {
+    const start = new Date(Date.now() - 2 * 86400_000);
+    const end = new Date(start.getTime() + 7 * 86400_000);
+    fs.mkdirSync(path.join(grokHome, 'logs'), { recursive: true });
+    fs.writeFileSync(path.join(grokHome, 'logs', 'unified.jsonl'), `${JSON.stringify({
+      ts: new Date().toISOString(), msg: 'billing: fetched credits config',
+      ctx: { config: { creditUsagePercent: 62, currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY', start: start.toISOString(), end: end.toISOString() } } },
+    })}\n`);
+  }
   if (realCodex) {
     fs.mkdirSync(codexHome, { recursive: true, mode: 0o700 });
     // The bytes lent, read once: hashed as they were copied, so a refresh of the machine's login meanwhile is not taken
@@ -184,9 +203,14 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   // agent runs in Herdr would otherwise read, and its agents type into, that session's own terminals.
   const ownEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !HERDR_VARIABLES.includes(name)));
   const tmuxEnv = { ...ownEnv, TMUX: '', TMUX_TMPDIR: root, HOME: home, WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_HOME_RESTORED_FILE: restoredFile,
+    // OpenCode's database is under XDG_DATA_HOME: this machine's own must not be where statusd looks.
+    ...(!real && { XDG_DATA_HOME: path.join(home, '.local', 'share') }),
     ...(restoredHome && { DEV_CHAT_AGENT_FRESH: '1' }),
     ...(realCodex && { CODEX_HOME: codexHome }) };
-  let paneCommand = `${process.execPath} ${AGENT} ${agent} ${recordDir} ${repo}`;
+  // Under the agent's own command name (argv[0]), which tmux reports as the pane's command: statusd tells the agent from
+  // the shell it leaves behind by that name (session/agentPane.mjs), as it does a real one.
+  const standIn = `exec -a ${agents.agent(agent).command} ${process.execPath} ${AGENT} ${agent} ${recordDir} ${repo}`;
+  let paneCommand = `bash -c '${standIn}'`;
   if (realCodex) {
     // A session's flags for its permission mode (codexFlags in session/entrypoint.sh): auto, or, with
     // DEV_CONSOLE_REAL_CODEX_MODE=plan, a read-only sandbox, where codex asks before it writes: the Chat tab's approvals.
@@ -239,7 +263,8 @@ exec '${process.execPath}' '${AGENT}' codex "\${CODEX_HOME:-$HOME/.codex}" "$PWD
   const child = spawn(process.execPath, [STATUSD], {
     env: {
       ...tmuxEnv, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, CODEX_HOME: codexHome,
-      AGENT: agent === 'codex' ? 'codex' : '', APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
+      AGENT: agent === 'claude' ? '' : agent, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
+      ...(grokHome ? { GROK_HOME: grokHome } : {}),
       // An ordinary session's, whatever kind of session the dev console itself runs in (a QA one's would never say done).
       SESSION_MODE: '',
       ...agentsEnv,

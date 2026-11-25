@@ -1,4 +1,4 @@
-<!-- @dsCard group="Dialogs" height=560 subtitle="One line of text: Rename this session, and an address in mono; two numbers: Pause and stop, with its refusal" -->
+<!-- @dsCard group="Dialogs" height=560 subtitle="One line of text: Rename this session, and an address in mono; two numbers: Pause and stop, with its refusal; Hand off, with its picks, switch and note" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600;700&family=JetBrains+Mono&display=swap">
 <style>
  body{margin:0;padding:20px;background:rgba(20,23,31,.5);font-family:"Red Hat Display",system-ui,sans-serif;display:grid;gap:16px;justify-items:start}
@@ -15,7 +15,13 @@
  label+label{margin-top:12px}
  input::placeholder{color:var(--meta)}
  .error{margin:10px 0 0;font-size:13px;color:var(--bad)}
+ select,textarea{box-sizing:border-box;width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--ground);color:var(--ink);font:14px "Red Hat Display",system-ui,sans-serif}
+ code{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px}
+ .toggle{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:8px;font-size:14px;font-weight:600;color:var(--ink)}
+ .switch{width:38px;height:22px;border-radius:999px;background:var(--slate)}
+ .toggle .sub{grid-column:2;margin:0;font-size:12.5px;font-weight:400;color:var(--meta)}
 </style>
 <div class="confirm"><h2>Rename this session</h2><label>Name<input value="Speed up Claude sessions"></label><div class="actions"><button class="btn quiet" type="button">Cancel</button><button class="btn open" type="button">Rename</button></div></div>
 <div class="confirm"><h2>Set the GitHub App’s payload URL</h2><label>Payload URL<input class="mono" value="https://woodshed.example.com/webhooks/github"></label><div class="actions"><button class="btn quiet" type="button">Cancel</button><button class="btn open" type="button">Next</button></div></div>
 <div class="confirm"><h2>Pause and stop</h2><p>For this session alone. Empty is what it runs on otherwise: 1 hour waiting, 8 hours in all. It tries to push its work first, and Resume picks it up.</p><label>Pause it after waiting for input for (hours)<input class="mono" type="number" min="0.25" max="24" step="0.25" value="3" placeholder="1"></label><label>Stop it after it has run for (hours)<input class="mono" type="number" min="1" max="24" step="1" placeholder="8"></label><p class="error" role="alert">Pause a session waiting for input after must be from 0.25 to 24 hours.</p><div class="actions"><button class="btn quiet" type="button">Cancel</button><button class="btn open" type="button">Save</button></div></div>
+<div class="confirm"><h2>Hand off to another agent</h2><p>Claude stops here, its work committed and pushed to <code>woodshed/joel-c1a0de02</code>. A new session of yours carries on from that branch with the agent you pick. Resume still reopens this one.</p><label>Hand off to<select><option>Codex</option></select></label><label>Model<select><option>default</option></select></label><div class="toggle"><span class="switch"></span>Hand over the conversation<p class="sub">On: what was asked, said and run goes as a file the new agent reads first. Tool output stays behind.</p></div><label>Note to the new agent<textarea rows="3">Only the tests are left.</textarea></label><div class="actions"><button class="btn quiet" type="button">Cancel</button><button class="btn open" type="button">Hand off</button></div></div>

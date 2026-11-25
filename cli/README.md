@@ -56,9 +56,9 @@ woodshed setup --yes --repo acme/app --reviews default
 Use `--console <url>` for your own console and `--no-browser` to print links without opening them. When setup exits 2,
 follow the link or supply the choice it asks for, then run it again with the same options.
 
-It has seven steps and says which one it is on: `Setup has 7 steps: …` first, then `Step 2 of 7: Repos` as it comes to
+It has eight steps and says which one it is on: `Setup has 8 steps: …` first, then `Step 2 of 8: Repos` as it comes to
 each, and `[done] Setup is finished.` at the end. A run that stops (exit 2, 3 or 1) ends with `Setup is not finished: it
-stopped at step N of 7, <step>. Still to do after it: …`; running it again checks the steps done already and goes on.
+stopped at step N of 8, <step>. Still to do after it: …`; running it again checks the steps done already and goes on.
 On a terminal each question says what Enter takes.
 
 1. **Sign in.** A new CLI sign-in opens the console's page in your browser. On a terminal, or with `--wait`, setup
@@ -84,12 +84,32 @@ On a terminal each question says what Enter takes.
    never runs those commands or handles a token itself, so none passes through it or a coding agent running it. Use
    only one? Pass `--agent claude` or `--agent codex`, or answer so on a terminal, and setup does not ask for the
    other.
-4. **Review on your repos.** Every repo is reviewed by default, on a commit whose message has `[woodshed-review]`
+4. **Optional: Grok Build and OpenCode** (step `own-agents`), which run on your own sign-in alone, never a team's
+   (`shared/agents.cjs`). For each the console runs, setup looks for the file the agent's own login saved on this
+   computer, where the agent itself keeps it: Grok Build's `~/.grok/auth.json` from `grok login` (`$GROK_HOME/auth.json`
+   when `GROK_HOME` is set, `$GROK_AUTH_PATH` when that is; `%USERPROFILE%\.grok\auth.json` on Windows), and OpenCode's
+   `~/.local/share/opencode/auth.json` from `opencode auth login` (`$XDG_DATA_HOME/opencode/auth.json` when it is set; the
+   same path on macOS and Windows). With none there it says to run that login and setup again, or for Grok Build to
+   paste an xAI key (`xai-…`) on My settings, and goes on. A file it finds is checked here first, with the same check as
+   My settings' Save: one that is not a sign-in is said (`is not a Grok Build sign-in (…), so it was not sent`) and
+   nothing is sent. On a terminal setup names the file and the console and asks `[y/N]` before it sends it, and asks
+   again, saying so, before it replaces a sign-in the console has saved already: a no sends nothing and keeps the saved
+   one. Without a terminal, or with `--yes`, it sends nothing unless `--grok-sign-in` or `--opencode-sign-in` says to,
+   and replaces a saved one only with `--grok-sign-in=replace` (`--opencode-sign-in=replace`). The file goes to the
+   console through `woodshed sign-in push <grok|opencode>` (below), over the command line's sign-in, and is never
+   printed, by setup, the command or `--json`. A first save leaves that agent's reviews switch off until `woodshed
+   config set grok-reviews on` (or `opencode-reviews`); replacing a sign-in already saved leaves the switch as it is.
+   `=replace` is passed on as `--replace` even when the console had none
+   saved when setup asked, so one saved since is replaced as the flag said. A save that fails after a yes on the
+   terminal is said, with why, as `skipped` with `saveFailed: true`, and setup goes on to the next step; with a flag it
+   stops setup, as any step the person asked for by name.
+5. **Review on your repos.** Every repo is reviewed by default, on a commit whose message has `[woodshed-review]`
    (sessions add it for you), with no checkout, project file or pull request: for each repo setup runs `woodshed review
    status --repo <repo>`, stops with the link when the console's reviewer App still has to be made or installed, and
-   otherwise tells you the tag. `--reviews` sets your own reviewer choice (`default` is the most the console can run:
-   both, once both are connected).
-5. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
+   otherwise tells you the tag. `--reviews` sets your own reviewer choice (`default` is every reviewer the console can
+   run: Claude Code, Codex, and Grok Build and OpenCode once their sign-ins are on for reviews). A sign-in saved before
+   that default, or found in the secret store without a save on My settings since, stays out of it until `reviews` is set to `default`. An explicit `--reviews default`, or typing `default` at the question, is saved even when the choice already reads as default, which accepts the wider one. Enter at the question keeps the current choice and does not.
+6. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
    (`woodshed review pulls`) and starts the console's review on them now (`woodshed review start`), then gives each
    review's link. On a terminal it asks which, Enter for all (closing the input, Ctrl-D, starts none). `--review-prs
    all`, `none` or numbers (`12,15`) say which: with several repos, each names its repo, as `owner/name#12` (a bare number
@@ -100,26 +120,27 @@ On a terminal each question says what Enter takes.
    ends with the review's tag (`[woodshed-review]` by default; a session adds it, on your own computer you add it).
    Every repo is reviewed by default; only one whose project file runs its review elsewhere (GitHub Actions, or
    another console by `runsOn`) gets none, and setup says why. With `--reviews none` it starts none.
-6. **Optional: the agent terminal**, Herdr or tmux, for new private sessions. On a terminal Enter keeps the saved
+7. **Optional: the agent terminal**, Herdr or tmux, for new private sessions. On a terminal Enter keeps the saved
    choice; `--terminal herdr` or `--terminal tmux` sets it. With Herdr and a compatible `hc` here, setup then starts
    `session watch --herdr --add` in Herdr (step `herdr-watch`), so each of your private sessions shows in Herdr's
    sidebar as it starts or resumes, wherever it was started: the console's page, Slack, or an agent in another session.
    It says so, and how to stop it (`hc kill woodshed-watch`); `--no-herdr-add` starts the watch without `--add`. One
    already running is kept as it was started. Inside a Woodshed session setup starts no watch and adds nothing to
    Herdr, and says to run the watch on your computer.
-7. **Optional: a first coding session**, only with `--prompt`, or a prompt typed in when asked. Without one, setup
+8. **Optional: a first coding session**, only with `--prompt`, or a prompt typed in when asked. Without one, setup
    finishes and says how to start one. When the terminal choice is Herdr and setup finds a compatible `hc` on macOS or
    Linux, it uses `session new --herdr` to show the agent in a space on the session's machine. On Windows it starts a
    regular session and prints the link. If a private session already exists for the first repo, setup gives you its
    link. Setup then ends with the reviews' links again.
 
-Use `--prompt=--help` for a prompt that looks like an option. `--skip-reviews` skips steps 4 and 5, and `--no-session`
-step 7.
+Use `--prompt=--help` for a prompt that looks like an option. `--skip-reviews` skips steps 5 and 6, and `--no-session`
+step 8.
 
 `--yes`, `--wait` at its step, and runs without a terminal never prompt. `--json` prints one checklist entry per line with
-`event: "setup"`, `step` (`login`, `repos`, `agent`, `repo-review`, `review-choice`, `pr-reviews`, `terminal`,
+`event: "setup"`, `step` (`login`, `repos`, `agent`, `own-agents`, `repo-review`, `review-choice`, `pr-reviews`, `terminal`,
 `herdr-watch`, `session`, `reviews`, `finished`), `status`, `message`, and a `url` when relevant; `pr-reviews` and `reviews` carry `reviews`, each
-with its `number`, `url` and `pullUrl`. `login` is `waiting` with `userCode` and `url` while setup waits for the
+with its `number`, `url` and `pullUrl`; `own-agents` carries `agent`, `file` (the path, never what is in it) and
+`saved` (whether the console has one). `login` is `waiting` with `userCode` and `url` while setup waits for the
 approval. The entry that stops setup carries `finished: false`, `stepNumber`, `stepTotal` and `left` (the keys of the
 steps after it); a run that ends with 0 ends with `step: "finished"` and `finished: true`. When this CLI lacks a repo, review, or config command, setup skips that step and
 says where to do it.
@@ -149,6 +170,7 @@ Keep a source explicit even when only one is supported. Keep session management 
 | `woodshed review pulls\|start` | Lists your open pull requests on a repo, and has the console review them now: [below](#reviewing-your-open-pull-requests-now). | 0 done, 2 a sign-in, 3 a pull request or repo not yours, or a repo whose project file runs its review elsewhere, 1 anything else |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 | `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
+| `woodshed sign-in push grok\|opencode [--replace]` | Saves the Grok Build or OpenCode sign-in this computer's `grok login` or `opencode auth login` made as yours on My settings, from the file setup's step 4 names: checked here first, then sent over the command line's sign-in to the console's own save (`POST /api/my/agent-auth/<agent>`, as My settings' Save), and never printed. One saved already is replaced only with `--replace`. A first save leaves that agent's reviews switch off until `config set grok-reviews on` (or `opencode-reviews`); replacing one already saved leaves the switch as it is. `--json` gives `{"event":"sign-in","agent","file","console","saved","replaced","savedAt"}` (`savedAt` a timestamp, or null). A refusal is said in the command's own words for its status; the console's reason follows only when it holds no part of what was sent (the whole value, any field of it, or 12 characters in a row of one), and otherwise `its answer repeated part of the sign-in, so it is not shown`. | 0 saved, 2 no file or not signed in, 3 not a sign-in, one saved already, or refused by the console, 1 failed |
 | `woodshed settings plan\|push\|pull` | Sync [Claude and Codex settings, plugins, dotfiles and ignored checkout files](#settings) with private sessions. Claude MCP definitions pushed from computers stay between computers. | as below |
 
 Every command takes:
@@ -355,7 +377,7 @@ before the line ends (Ctrl-C, a cut network) hangs up everything the line starte
 
 | Command | What it does | Exits |
 | --- | --- | --- |
-| `session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--connect\|--herdr [--parent[=T]]] ["prompt"]` | Starts a private session, as My Woodshed's New session does: on `R` (`owner/name`, default the repo New session opens on for you), working on branch `B` or a pull request or issue (`123`, `pr 123`, its URL), with that agent and model. Then it waits, printing each start step as it is done, until the session runs. `--no-wait` returns once the console has it. Ctrl-C stops the wait, not the session. `--connect` then puts this terminal on its agent's, as `connect` does; `--herdr` adds it to Herdr, as `herdr` does (below), and checks for `hc` before starting anything; `--parent` with it makes the agent's terminal a child of a terminal here (below). Inside a Woodshed session `--herdr` adds nothing: [below](#inside-a-woodshed-session). | 0 running (with `--connect`, until you disconnect; with `--herdr`, added, or skipped inside a session), 2 running and needs you, 1 failed or stopped (or `hc` could not add it), 3 a repo you cannot start on, no `hc`, or `--parent` inside a Woodshed session |
+| `session new [--repo R] [--branch B] [--agent A] [--model M] [--connect\|--herdr [--parent[=T]]] ["prompt"]` | Starts a private session, as My Woodshed's New session does: on `R` (`owner/name`, default the repo New session opens on for you), working on branch `B` or a pull request or issue (`123`, `pr 123`, its URL), with that agent (`claude`, `codex`, `grok` for Grok Build, or `opencode`; the last two run on your own sign-in from My settings, and only in your private sessions) and model. Then it waits, printing each start step as it is done, until the session runs. `--no-wait` returns once the console has it. Ctrl-C stops the wait, not the session. `--connect` then puts this terminal on its agent's, as `connect` does; `--herdr` adds it to Herdr, as `herdr` does (below), and checks for `hc` before starting anything; `--parent` with it makes the agent's terminal a child of a terminal here (below). Inside a Woodshed session `--herdr` adds nothing: [below](#inside-a-woodshed-session). | 0 running (with `--connect`, until you disconnect; with `--herdr`, added, or skipped inside a session), 2 running and needs you, 1 failed or stopped (or `hc` could not add it), 3 a repo you cannot start on, no `hc`, or `--parent` inside a Woodshed session |
 | `session connect <id> [--shell]` | Puts this terminal on one of your sessions' agent, as its TUI tab shows it (claude or codex, in tmux or Herdr), or with `--shell` on its shell, the Terminal tab's. A paused or stopped one is resumed first. Below. | 0 disconnected (Ctrl-\\) or the session's terminal closed normally, 2 the sign-in ended, 1 could not open or reconnect, or the session's terminal closed it on an error, 3 a shared session, or one that has seen production data |
 | `session connect <id> --agent agent-N` | The terminal of an agent started beside the session's own, as its TUI tab shows it once that agent is picked: a tmux session, or in Herdr a Herdr terminal of that name. Only while the session runs. | as `connect`, and 3 when the session has no such agent |
 | `session agents <id>` | The agents started beside one of your running private sessions' own (the page's agent switch, beside the tabs): each one's id (`agent-2` …), agent, model, state and permission mode, after the session's own. `--json`: `{"event":"agents","session","own","agents":[{id, agent, model, effort, permissionMode, state, startedAt}]}`. | 0, 3 a shared or paused session, or one whose image starts none |
@@ -369,6 +391,7 @@ before the line ends (Ctrl-C, a cut network) hangs up everything the line starte
 | `session watch [--kind K,…] [--everyone] [--every S] [--herdr] [--add]` | Follows the console and prints one line per session that starts, runs, is done with its turn, needs you, pauses, stops, finishes or fails, until stopped; `--herdr` runs it in a Herdr terminal of its own instead, and returns; `--add` also adds each of your private sessions to Herdr as it starts or resumes: [below](#watching-sessions). | runs until Ctrl-C (`--herdr`: 0 started or already running); 2 the sign-in ended, 3 refused, `--herdr` or `--add` with no `hc` 0.1.21 or newer, or `--add` inside a Woodshed session |
 | `session stop <id>` | Stops it, and waits until the console has stopped it, a running one's work checkpointed on the way (up to 3 minutes: past that it says to check with `get`). One that paused or failed by itself is marked stopped by you, as the page's Stop does, so it no longer waits on you. | 0, 1 not answered in time |
 | `session resume <id> [--no-wait\|--herdr]` | Starts one of your stopped sessions again, its conversation and all, and waits as `new` does. `--herdr` then adds it to Herdr again, as `herdr` does (a resumed session's old machine is unreachable); inside a Woodshed session it adds nothing and says so. | as `new`; 3 a shared session (resume it on the console), or `--herdr` with no `hc` |
+| `session handoff <id> --agent claude\|codex\|grok\|opencode [--model M] [--note "..."] [--no-conversation] [--no-wait]` | Hands one of your running sessions' work to another agent, as its ⋯ menu's Hand off does (console/README.md, "My Woodshed"): it stops, pushing its work, and a new session of yours starts on its branch with that agent, its conversation attached as `handoff.md` (unless `--no-conversation`) and `--note` first in its prompt. Then it waits for the new one as `new` does. With `--json`, a `{"event":"handed-off","from":"<id>","session":{…}}` first. | as `new`; 3 a shared session, or one not running (resume it first) |
 | `session remove <id> [--yes]` | Takes one of your sessions off the list with its saved conversation, stopping it first, and forgets its `woodshed-<id>` machine in Herdr when there is one. It asks first on a terminal; with no terminal it needs `--yes`. | 0, 2 not confirmed, 3 a shared session |
 | `session prune` | Forgets the `woodshed-<id>` machines in Herdr whose session is no longer on the console's list: removed on the page, or cleaned up by the console, which only `session remove` would have forgotten. Below. | 0, 1 `hc` could not list or forget one |
 | `session extend <id>` | Puts its pause or stop off by an hour. The console allows it in the session's last 15 minutes, to its owner, or a shared session's assignee. | 0, 3 refused |
@@ -727,8 +750,9 @@ or value `config` refused, so a token pasted in the wrong place stays out of cap
 | Key | Values | Route |
 | --- | --- | --- |
 | `terminal` | `tmux`, `herdr`: what your private sessions run their agent in. Your next private session starts in it; running ones keep theirs. | `POST /api/my/terminal` |
-| `reviews` | `none`, `claude`, `codex`, `both`, `default` (the most this console can run): who reviews your pull requests. | `POST /api/my/reviews` |
+| `reviews` | `none`, `claude`, `codex`, `both`, `default` (every reviewer this console can run, Grok Build and OpenCode included when their sign-in is on for reviews), or reviewers joined with `+` (`claude+grok`, `codex+opencode`): who reviews your pull requests. A Grok Build or OpenCode sign-in saved before that default, or found in the secret store without a save on My settings since, stays out of it until `reviews` is set to `default`. | `POST /api/my/reviews` |
 | `codex-reviews` | `on`, `off`: reviews of your pull requests run Codex on your own sign-in. Needs a Codex sign-in saved on My settings. | `POST /api/my/codex-auth/reviews` |
+| `grok-reviews`, `opencode-reviews` | `on`, `off`: reviews of your pull requests may run Grok Build or OpenCode on your own sign-in; the default includes it while this is on. A sign-in saved before that default, or found in the secret store without a save on My settings since, stays out of it until `reviews` is set to `default`. A sign-in first saved with `sign-in push` starts this off until you set it on. A saved `reviews` choice that leaves it out does not, unless none of that choice can run, in which case the same default runs. There is no team key for them. Needs that sign-in saved on My settings (for OpenCode, an Anthropic or OpenAI API key). | `POST /api/my/agent-auth/<agent>/reviews` |
 | `claude-token-shared` | `on`, `off`: shared sessions you start from GitHub run on your own Claude token. Needs a token saved on My settings. | `POST /api/my/claude-token/shared` |
 | `default-repo` | A repo you can start sessions on, as `owner/name` or its name on the console: where New session and `session new` open. | `POST /api/my/projects/default` |
 | `github-name`, `github-email` | What your sessions' commits say. Needs GitHub connected on My settings; setting one keeps the other. | `POST /api/my/github/identity` |
@@ -758,7 +782,9 @@ woodshed move --from herdr --tab main --to new --dry-run --json    # the move bu
 `--terminal` (repeatable; an `hc ls` address or a name), `--tab` or `--space` (an id or a name, as `herdr-app ls`
 shows them) choose what moves. Each terminal is read from `hc` and is one of:
 
-- **an agent,** Claude Code or Codex, by its program or its status record. Its conversation is its `claude.session`
+- **an agent,** Claude Code or Codex, by its program or its status record. Grok Build and OpenCode are known
+  by their programs too, and refuse the move: `woodshed move moves Claude Code and Codex conversations; … are not
+  moved yet`, as does a target session that runs one of them. Its conversation is its `claude.session`
   (or `codex.session`) label, else the id on its command line (`--resume`, `--session-id`), else the conversation of its
   folder last written when it last changed state, else, alone in its folder, the folder's newest
   (`~/.claude/projects/<folder>/<id>.jsonl`, or Codex's rollout file). One mid-turn refuses the move: a conversation
@@ -961,6 +987,29 @@ A console keeps at most 5 sign-ins waiting from one address, and 200 in all. A c
 collected, denied, or 10 minutes pass, so a `login` stopped part way holds its place until then. Past either limit,
 `login` says `Too many sign-ins from this address are waiting` (or that the console has too many) with the minutes to
 wait, and exits 1.
+
+## Running the commands from a program
+
+Every command is written once, in `cli/commands.mjs`: its words, its arguments and options with the checks a value
+passes and their help lines, where it can run (`needs`: anywhere the sign-in is, the person's own computer, or a
+terminal, with `why`), what it changes (`effect`: `read`, `change`, or `destructive` for one that ends, removes or
+hands out something of the person's) and how it may last (`waits`). `session`'s parser takes its options from it, and
+`cli/commands.test.mjs` holds every other parser and each command's `--help` to it: a command or option in the help
+that the catalogue lacks, or one in the catalogue a parser does not take, fails the test.
+
+A program that runs commands for a person, such as an MCP server, builds on it rather than copying the command line:
+
+- `argvOf(entry, args)` writes a command's words from its arguments by name, after checking each value: a value is
+  never read as an option, and free text (a prompt, a message, a config value, a tunnel's line) goes after `--`.
+- `runCommand(entry, args, {origin, token, signal, stdin, onEvent})` in `cli/api.mjs` runs it with the command line's
+  own code, as the person whose token it is, and gives back its `--json` events and exit code (`EXIT`). The token is
+  the caller's for that run alone, never read from or kept on a computer: one that is not a command line token (none,
+  empty) is refused, and `main` given `token` never reads the computer's own sign-in, even when it is empty. It runs
+  in an empty folder that is no checkout, so a command that reads the checkout it runs in (`review status`, `pulls`
+  and `start` with no `--repo`) is refused unless its repo is named. Nothing asks a question (what needs the
+  person exits 2), opens a browser or reaches Herdr, and a command or option whose `needs` is set is refused before
+  anything runs. `signal` stops a wait, a watch or a tunnel's line: the run then says `stopped`, and a session being
+  waited on goes on.
 
 ## Checking a change
 

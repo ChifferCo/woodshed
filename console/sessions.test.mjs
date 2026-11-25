@@ -372,6 +372,14 @@ test('the New session form\'s Work on names an issue or PR by number, or a branc
   assert.throws(() => sessionOptions({ agent: 'gemini' }), /the agent must be one of/);
   assert.throws(() => sessionOptions({ model: 'gpt' }), /the model must be one of/);
   assert.throws(() => sessionOptions({ permissionMode: 'bypassPermissions' }), /permission mode/);
+  // Grok Build and OpenCode: a model of the registry's shape, its efforts and its permission modes.
+  assert.deepEqual(sessionOptions({ agent: 'grok', model: 'grok-build', effort: 'high', permissionMode: 'acceptEdits' }), { agent: 'grok', model: 'grok-build', effort: 'high', permissionMode: 'acceptEdits' });
+  assert.deepEqual(sessionOptions({ agent: 'opencode' }), { agent: 'opencode', model: '', effort: '', permissionMode: 'auto' });
+  assert.deepEqual(sessionOptions({ agent: 'opencode', model: 'anthropic/claude-sonnet-4-5', permissionMode: 'plan' }).model, 'anthropic/claude-sonnet-4-5');
+  assert.throws(() => sessionOptions({ agent: 'opencode', model: 'claude-sonnet' }), /not a name OpenCode takes/, 'OpenCode names its provider');
+  for (const bad of ['grok build', 'x"y', '-x', 'a;rm']) assert.throws(() => sessionOptions({ agent: 'grok', model: bad }), /not a name Grok Build takes/, bad);
+  assert.equal(sessionOptions({ agent: 'opencode', permissionMode: 'acceptEdits' }).permissionMode, 'acceptEdits', 'held by configureOpencode\'s rules');
+  assert.throws(() => sessionOptions({ agent: 'grok', effort: 'minimal' }), /the effort must be one of/, 'Grok Build takes low to max');
 });
 
 test('statusd\'s claude session id is kept only when it looks like one', () => {
@@ -458,6 +466,20 @@ test('planUsageFrom preserves Codex attribution through status updates', () => {
   const usage = { agent: 'codex', asOf: '2026-11-12T12:00:00.000Z', fiveHour: { usedPercent: 12, resetsAt: null }, sevenDay: { usedPercent: 28, resetsAt: null } };
   assert.deepEqual(planUsageFrom(usage), usage);
   assert.deepEqual(statusUpdate({ ...session({}), owner: 'octocat', options: { agent: 'codex' } }, { state: 'done', planUsage: usage }, 'now').planUsage, usage);
+});
+
+test('planUsageFrom keeps a Grok Build window\'s week or month, and drops anything else on it', () => {
+  const usage = {
+    agent: 'grok', asOf: '2026-11-12T12:00:00.000Z', fiveHour: null,
+    sevenDay: { usedPercent: 140, resetsAt: '2026-11-19T00:00:00Z', label: 'Month', short: 'mo', spanMs: 30 * 86400_000, subscriptionTier: 'nope' },
+  };
+  assert.deepEqual(planUsageFrom(usage), {
+    agent: 'grok', asOf: '2026-11-12T12:00:00.000Z', fiveHour: null,
+    sevenDay: { usedPercent: 100, resetsAt: '2026-11-19T00:00:00.000Z', label: 'Month', short: 'mo', spanMs: 30 * 86400_000 },
+  });
+  const stripped = planUsageFrom({ ...usage, sevenDay: { usedPercent: 40, resetsAt: null, label: 'Lifetime', short: 'yr', spanMs: -5 } });
+  assert.deepEqual(stripped.sevenDay, { usedPercent: 40, resetsAt: null });
+  assert.equal(planUsageFrom({ agent: 'grok', fiveHour: null, sevenDay: { usedPercent: 1, resetsAt: null, spanMs: 401 * 86400_000 } }).sevenDay.spanMs, undefined);
 });
 
 test('statusUpdate keeps whether text waits in the agent\'s box, for Chat to say so, and nothing else as true', () => {

@@ -11,6 +11,7 @@ import { createProjectColors } from './projectColors.mjs';
 import { createTunnel } from './dbTunnel.mjs';
 import { createCliSignIn } from './cliSignIn.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
+import agentsRegistry from '../shared/agents.cjs';
 import { createSlack } from './slack.mjs';
 import { createUserSettings } from './userSettings.mjs';
 
@@ -1040,17 +1041,123 @@ test('New session offers only the agents set up to run, and a Codex start needs 
   const as = { cookie: 'woodshed_session=mia-dev' };
   const agents = async () => JSON.parse(await getBody(port, '/api/my', as)).agents;
 
-  assert.deepEqual(await agents(), { claude: true, codex: false }, 'no Codex sign-in and no team key');
+  const none = Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, false]));
+  assert.deepEqual(await agents(), { claude: true, codex: false, ...none }, 'no Codex sign-in and no team key');
   assert.deepEqual(await post(port, '/api/my/sessions', { prompt: 'go', agent: 'codex' }, as),
     { status: 409, body: { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' } });
   teamKey = 'sk-team';
-  assert.deepEqual(await agents(), { claude: true, codex: true }, 'the team key runs Codex');
+  assert.deepEqual(await agents(), { claude: true, codex: true, ...none }, 'the team key runs Codex');
   assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'codex' }, as)).status, 201);
   teamKey = null;
   await post(port, '/api/my/codex-auth', { value: 'sk-own' }, as);
-  assert.deepEqual(await agents(), { claude: true, codex: true }, 'their own sign-in runs Codex');
+  assert.deepEqual(await agents(), { claude: true, codex: true, ...none }, 'their own sign-in runs Codex');
   claude.delete('mia-dev');
-  assert.deepEqual(await agents(), { claude: false, codex: true }, 'no Claude token, no Claude');
+  assert.deepEqual(await agents(), { claude: false, codex: true, ...none }, 'no Claude token, no Claude');
+});
+
+test('Grok Build and OpenCode are offered and start only on their owner\'s own sign-in', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const started = [];
+  const stopped = { id: '0a1b2c3d', owner: 'mia-dev', status: 'stopped', options: { agent: 'grok' } };
+  const fleet = {
+    sessions: () => [], find: (id) => (id === stopped.id ? stopped : null),
+    startPrivate: async (args) => { started.push(args); return { id: '0a1b2c3e', owner: args.owner, token: 'secret', status: 'queued' }; },
+    resumePrivate: async () => stopped,
+  };
+  const own = new Map();
+  const userSettings = {
+    refresh: async () => {},
+    view: () => ({
+      claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: true, available: true,
+      agentAuth: Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, { set: own.has(id), savedAt: null }])),
+    }),
+    setAgentAuth: async (login, id, value) => { own.set(id, value); },
+    removeAgentAuth: async (login, id) => { own.delete(id); },
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet, auth, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+  const me = async () => JSON.parse(await getBody(port, '/api/my', as));
+
+  assert.deepEqual((await me()).agents, { claude: false, codex: false, ...Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, false])) });
+  assert.deepEqual(await post(port, '/api/my/sessions', { prompt: 'go', agent: 'grok' }, as),
+    { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } });
+  assert.deepEqual(await post(port, `/api/my/sessions/${stopped.id}/resume`, {}, as),
+    { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } }, 'a resume needs it too');
+  // A session starting or resuming one of its person's goes through the same checks (sessionStarts.mjs).
+  assert.deepEqual(await handle.startMine('mia-dev', { prompt: 'go', agent: 'grok' }, { startedFrom: 'aaaa0001' }),
+    { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } });
+  assert.deepEqual(await handle.resumeMine('mia-dev', stopped.id), { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } });
+  assert.equal(started.length, 0);
+  const saved = await post(port, '/api/my/agent-auth/grok', { value: 'xai-own-key-0123456789' }, as);
+  assert.equal(saved.status, 200);
+  assert.deepEqual([saved.body.agents.grok, saved.body.agentAuth.grok.set], [true, true]);
+  assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'grok', model: 'grok-build' }, as)).status, 201, 'no Claude token needed');
+  assert.equal(started[0].agent, 'grok');
+  assert.equal((await handle.startMine('mia-dev', { prompt: 'go', agent: 'grok' }, { startedFrom: 'aaaa0001' })).status, 201);
+  assert.deepEqual([started[1].agent, started[1].startedFrom], ['grok', 'aaaa0001']);
+  assert.equal((await handle.startMine('mia-dev', { prompt: 'go', agent: 'opencode' }, { startedFrom: 'aaaa0001' })).status, 409, 'opencode\'s sign-in is not saved');
+  assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'opencode' }, as)).status, 409);
+  for (const id of ['codex', 'claude', 'nope']) assert.equal((await post(port, `/api/my/agent-auth/${id}`, { value: 'x' }, as)).status, 404, id);
+  assert.equal((await post(port, '/api/my/agent-auth/grok/remove', {}, as)).body.agents.grok, false);
+  assert.equal((await post(port, '/api/my/agent-auth/grok', { value: 'x' }, { ...as, origin: 'https://evil.example' })).status, 403);
+  // A multi-provider auth.json past the usual 16 KiB body, within the registry's limit: held to that limit, not the body's.
+  const big = JSON.stringify(Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`provider${i}`, { type: 'api', key: `"k${i}"-${'x'.repeat(400)}` }])));
+  assert.ok(big.length > 16 * 1024 && big.length < agentsRegistry.agent('opencode').signIn.maxChars, String(big.length));
+  const bigSaved = await post(port, '/api/my/agent-auth/opencode', { value: big }, as);
+  assert.equal(bigSaved.status, 200, JSON.stringify(bigSaved.body));
+  assert.equal(bigSaved.body.agents.opencode, true);
+  // The request itself stays bounded (the registry's limit on the decoded value is checkSignIn's, in shared/agents.test.mjs).
+  assert.deepEqual(await post(port, '/api/my/agent-auth/opencode', { value: 'x'.repeat(170 * 1024) }, as), { status: 400, body: { error: 'body too large' } });
+});
+
+test('New session\'s Grok Build models are the owner\'s own list, forgotten when the sign-in changes', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const forgot = [];
+  const listed = { models: [{ slug: 'grok-4.7', name: 'Grok 4.7', description: '', efforts: ['low', 'high'], defaultEffort: 'high' }], source: 'login', note: null };
+  const grokModels = { list: async (login) => ({ ...listed, login }), forget: (login) => forgot.push(login) };
+  const own = new Map();
+  const userSettings = {
+    refresh: async () => {},
+    view: () => ({
+      claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: true, available: true,
+      agentAuth: Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, { set: own.has(id), savedAt: null }])),
+    }),
+    setAgentAuth: async (login, id, value) => { own.set(id, value); },
+    removeAgentAuth: async (login, id) => { own.delete(id); },
+  };
+  const started = [];
+  const fleet = { sessions: () => [], find: () => null, startPrivate: async (args) => { started.push(args); return { id: '0a1b2c3e', owner: args.owner, token: 'secret', status: 'queued' }; } };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet, auth, userSettings, grokModels });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+
+  assert.deepEqual(JSON.parse(await getBody(port, '/api/my/grok-models', as)), { ...listed, login: 'mia-dev' });
+  assert.equal((await post(port, '/api/my/agent-auth/grok', { value: 'xai-own-key-0123456789' }, as)).status, 200);
+  assert.deepEqual(forgot, ['mia-dev'], 'saving forgets the list');
+  // A model the list does not have still starts: the registry's shape is the check, as when the list cannot be read.
+  assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'grok', model: 'grok-typed-by-hand', effort: 'xhigh' }, as)).status, 201);
+  assert.equal(started[0].model, 'grok-typed-by-hand');
+  await post(port, '/api/my/agent-auth/opencode', { value: JSON.stringify({ p: { type: 'api', key: 'k' } }) }, as);
+  assert.deepEqual(forgot, ['mia-dev'], 'another agent\'s sign-in leaves it');
+  assert.equal((await post(port, '/api/my/agent-auth/grok/remove', {}, as)).status, 200);
+  assert.deepEqual(forgot, ['mia-dev', 'mia-dev'], 'removing forgets it too');
+
+  const handleWithout = createHandler({ config, fleet, auth, userSettings });
+  const without = http.createServer((req, res) => { handleWithout(req, res); });
+  const otherPort = await listen(without);
+  t.after(() => without.close());
+  const none = JSON.parse(await getBody(otherPort, '/api/my/grok-models', as));
+  assert.deepEqual([none.models, none.source], [[], null]);
+  assert.match(none.note, /type a model name/);
 });
 
 test('the first Claude token starts your own databases, and New session waits for them', async (t) => {
@@ -1850,7 +1957,7 @@ test('Console settings turns each source\'s webhooks off and on, says who did, a
 test('My settings\' Reviews card: each person picks who reviews their pull requests, from what can run for them', async (t) => {
   const { createReviewAgents } = await import('./reviewAgents.mjs');
   const { createUserSettings } = await import('./userSettings.mjs');
-  const secrets = { values: new Map(), async read(n) { return this.values.get(n) ?? null; }, async write(n, v) { this.values.set(n, v); }, async remove(n) { this.values.delete(n); }, async list() { return [...this.values.keys()]; } };
+  const secrets = { values: new Map(), async read(n) { return this.values.get(n) ?? null; }, async write(n, v) { this.values.set(n, v); }, async save(n, v) { this.values.set(n, v); }, async remove(n) { this.values.delete(n); }, async list() { return [...this.values.keys()]; } };
   const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets });
   const reviewAgents = createReviewAgents({ userSettings, connected: async () => ({ claude: true, codex: false }) });
   const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
@@ -1862,7 +1969,8 @@ test('My settings\' Reviews card: each person picks who reviews their pull reque
   const as = { cookie: 'woodshed_session=mia-dev' };
   const get = async () => (await fetch(`http://127.0.0.1:${port}/api/my/reviews`, { headers: as })).json();
 
-  assert.deepEqual(await get(), { available: { claude: true, codex: false }, own: { claude: false, codex: false }, best: 'claude', choice: null },
+  const off = { grok: false, opencode: false };
+  assert.deepEqual(await get(), { available: { claude: true, codex: false, ...off }, own: { claude: false, codex: false, ...off }, ownWhy: { grok: null, opencode: null }, best: 'claude', expanded: true, choice: null },
     'the team Anthropic key alone: Claude Code is the most there is');
   const none = await post(port, '/api/my/reviews', { choice: 'none', login: 'joel' }, as);
   assert.equal(none.status, 200);
@@ -1872,6 +1980,17 @@ test('My settings\' Reviews card: each person picks who reviews their pull reque
   assert.equal((await post(port, '/api/my/reviews', { choice: 'everyone' }, as)).status, 400);
   assert.equal((await post(port, '/api/my/reviews', { choice: null }, as)).body.choice, null, 'back to the default');
   assert.equal((await post(port, '/api/my/reviews', { choice: 'both' }, { ...as, origin: 'https://evil.example' })).status, 403);
+
+  // Grok Build reviews only on the person's own sign-in, switched on for reviews: offered once one is saved.
+  assert.equal((await post(port, '/api/my/agent-auth/grok/reviews', { on: true }, as)).status, 409, 'no sign-in saved yet');
+  assert.equal((await post(port, '/api/my/agent-auth/grok', { value: 'xai-made-up-mia-0123456789' }, as)).status, 200);
+  const withGrok = await get();
+  assert.deepEqual([withGrok.available.grok, withGrok.own.grok, withGrok.choice, withGrok.best], [true, true, null, 'claude+grok'], 'the default includes Grok Build once its sign-in is on for reviews');
+  const picked = await post(port, '/api/my/reviews', { choice: 'grok+claude' }, as);
+  assert.equal(picked.body.choice, 'claude+grok');
+  const offNow = await post(port, '/api/my/agent-auth/grok/reviews', { on: false }, as);
+  assert.deepEqual([offNow.status, offNow.body.ownAgentForReviews.grok, (await get()).available.grok], [200, false, false]);
+  assert.equal((await post(port, '/api/my/agent-auth/claude/reviews', { on: true }, as)).status, 404, 'Claude Code has no own sign-in here');
 });
 
 test('My settings\' Agent terminal: each person picks tmux or Herdr for their own private sessions, tmux by default', async (t) => {
@@ -2708,7 +2827,8 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   const mine = { id: '0a1b2c3d', status: 'running', title: 't', token: 'tok', owner: 'local', endpoint: { host: '127.0.0.1', termPort: 1, statusPort } };
   const theirs = { ...mine, id: '1b2c3d4e', owner: 'octocat' };
   const tainted = { ...mine, id: '2c3d4e5f', taintedAt: '2026-11-23T10:00:00Z' };
-  const all = [mine, theirs, tainted];
+  const grok = { ...mine, id: '3d4e5f6a', options: { agent: 'grok' } };
+  const all = [mine, theirs, tainted, grok];
   const allowed = [];
   const fleet = {
     sessions: () => all, find: (id) => all.find((s) => s.id === id) ?? null, isLocked: () => false,
@@ -2718,7 +2838,9 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
     host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
     maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, launcher: { kind: 'docker' }, localLogin: 'local',
   };
-  const server = http.createServer(createHandler({ config, fleet }));
+  let hasClaude = false;
+  const userSettings = { claudeToken: async () => hasClaude ? 'dummy-owner-claude-token' : null };
+  const server = http.createServer(createHandler({ config, fleet, userSettings }));
   const port = await listen(server);
   t.after(() => server.close());
   const call = (path, body, method = 'POST') => fetch(`http://127.0.0.1:${port}${path}`, {
@@ -2733,7 +2855,18 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'bash' })).status, 400);
   assert.equal((await call('/api/sessions/1b2c3d4e/agents', { agent: 'claude' })).status, 404, 'someone else\'s session');
   assert.equal((await call('/api/sessions/2c3d4e5f/agents', { agent: 'claude' })).status, 409, 'a tainted session starts none');
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'grok' })).status, 400, 'Grok Build and OpenCode never start beside another');
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'opencode', model: 'openai/gpt-5' })).status, 400);
+  const missingClaude = await call('/api/sessions/3d4e5f6a/agents', { agent: 'claude' });
+  assert.equal(missingClaude.status, 409);
+  assert.match((await missingClaude.json()).error, /save your Claude token on My settings/);
   assert.equal(asked.length, 1, 'nothing refused reached the session');
+  hasClaude = true;
+  assert.equal((await call('/api/sessions/3d4e5f6a/agents', { agent: 'claude' })).status, 200);
+  assert.equal((await call('/api/sessions/3d4e5f6a/agents', undefined, 'GET')).status, 200);
+  assert.deepEqual(allowed.at(-1), ['3d4e5f6a', 'claude']);
+  assert.equal(asked[1].url, '/agents/with-claude-token');
+  assert.equal(JSON.parse(asked[1].body).claudeToken, 'dummy-owner-claude-token');
 
   assert.equal((await call('/api/sessions/0a1b2c3d/agents', undefined, 'GET')).status, 200);
   assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/transcript?limit=50&since=x', undefined, 'GET')).status, 200);
@@ -2741,7 +2874,7 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/interrupt', { keys: 'rm -rf /' })).status, 200);
   assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/stop', {})).status, 200);
   assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-1/stop', {})).status, 404, 'not an agent beside the session\'s own');
-  assert.deepEqual(asked.slice(1).map((a) => [a.method, a.url, a.body]), [
+  assert.deepEqual(asked.slice(3).map((a) => [a.method, a.url, a.body]), [
     ['GET', '/agents', ''],
     ['GET', '/agents/agent-2/transcript?limit=50', ''],
     ['POST', '/agents/agent-2/send', '{"text":"hi","id":"msg-00000001"}'],

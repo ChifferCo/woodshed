@@ -9,7 +9,7 @@
 const MAX_COMMENT_CHARS = 8000;
 // A cheap first cut, so ordinary comments are not queued; the console parses the command itself.
 const COMMAND_PREFIX = /^\s*\/woodshed\b/i;
-// A session asking for a person (session/readyGate.mjs, prompt.md): the console messages its assignee. Only the App's
+// A session asking for a person (its rules, or a review or CI feedback): the console messages its assignee. Only the App's
 // own comments count, since a session comments as the App and anyone could type the words; the console checks that,
 // against its App's login (console/appIdentity.mjs), because each installation names its App itself.
 const NEEDS_HUMAN_PREFIX = /^\s*Needs a human:/i;
