@@ -112,3 +112,13 @@ test('a public video\'s name opens only its own run\'s videos, by the secret the
   assert.equal(path, `/qa-video/0a1b2c3d/${share}/1.webm`);
   assert.deepEqual(QA_PUBLIC_VIDEO_RE.exec(path).slice(1), ['0a1b2c3d', share, '1']);
 });
+
+test('a video whose file fails to read once found ends its response, and the console keeps serving', async (t) => {
+  // The file went between the store's look and the read, as a sweep or a disk's error can make it.
+  const gone = path.join(os.tmpdir(), `qa-recordings-missing-${process.pid}`, 'video-1.webm');
+  const recordings = createQaRecordings({ store: { put() {}, get() {}, list() {}, remove() {}, file: async () => ({ path: gone, bytes: 10 }) } });
+  const get = await serving(t, recordings);
+  const failed = await get(qaVideoPath(ID, 1)).then(() => 'answered', (err) => `ended: ${err.cause?.code ?? err.message}`);
+  assert.match(failed, /ended/);
+  assert.equal((await get('/nothing')).status, 404, 'the server still answers');
+});

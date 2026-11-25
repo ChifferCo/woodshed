@@ -153,5 +153,12 @@ function sendFile(req, res, { path: file, bytes }, type) {
     res.writeHead(200, { 'content-type': type, 'content-length': bytes, 'accept-ranges': 'bytes', 'cache-control': 'private, no-store' });
   }
   if (req.method === 'HEAD') return res.end();
-  return fs.createReadStream(file, { start, end }).pipe(res);
+  // A read that fails once the file is open ends this response, never the console: a public run's video is open to
+  // anyone with its link.
+  const stream = fs.createReadStream(file, { start, end });
+  stream.on('error', (err) => {
+    console.error('qaRecordings: video not read', { code: err?.code ?? 'unknown' });
+    res.destroy();
+  });
+  return stream.pipe(res);
 }
