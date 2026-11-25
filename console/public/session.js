@@ -172,9 +172,8 @@
       // A private window keeps the pick for this page only.
     }
   }
-  // Only beside Claude Code or Codex (shared/agents.cjs, teamCredential): a Grok Build or OpenCode session starts none.
-  const canRunAgents = (s) => s?.status === 'running' && Array.isArray(s.agents) && Boolean(s.owner) && s.owner === data?.login
-    && window.WoodshedAgents.agent(W.agentOf(s)).teamCredential;
+  // The session reports an agents array when its image supports starting extra agents.
+  const canRunAgents = (s) => s?.status === 'running' && Array.isArray(s.agents) && Boolean(s.owner) && s.owner === data?.login;
   // This run's: a Resume starts the session's own agent alone, and the console's last read may still be the run before.
   // One started from this page, until the console's read of the session has it (a read asked for before the start
   // would take it off the switch again for a few seconds).
