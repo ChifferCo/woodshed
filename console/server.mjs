@@ -1728,12 +1728,18 @@ export function createHandler({
   // What each agent's "default" is in the person's next session, as of their last look at /api/my (savedChoices in
   // claudeSettings.mjs): New session names it in its Model and Effort menus and on each agent's card.
   const choicesSeen = new Map();
+  // The logins whose copy did not read, warned of once: an open page asks /api/my on every poll.
+  const choicesUnread = new Set();
   async function readSavedChoices(login) {
     let items = null;
     try {
       items = claudeSettings ? (await claudeSettings.peek(login)).items : null;
+      choicesUnread.delete(login);
     } catch (err) {
-      console.warn('console: shared Claude settings not read for New session', { login, message: String(err?.message ?? err).split('\n')[0] });
+      if (!choicesUnread.has(login)) {
+        choicesUnread.add(login);
+        console.warn('console: shared Claude settings not read for New session', { login, message: String(err?.message ?? err).split('\n')[0] });
+      }
     }
     // Grok Build and OpenCode keep their model in nothing a session carries: each picks its own (null).
     const found = { ...savedChoices(items), grok: null, opencode: null };
