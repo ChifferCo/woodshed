@@ -102,7 +102,11 @@ function guard(win) {
     // to show once its address went to the browser.
     if (win !== mainWindow && ['', 'about:blank'].includes(contents.getURL())) win.close();
   });
-  // A redirect (sign-in's callback, an app's /auth/app) is checked as a navigation is.
+  // Whether the window has shown a page yet: one the page opened on the console's /auth/app (an app with no port lent
+  // yet) is redirected to the app before it shows anything.
+  let shown = false;
+  contents.on('did-navigate', (_event, url) => { if (url && url !== 'about:blank') shown = true; });
+  // A redirect (sign-in's callback, /auth/app's to the app) is checked as a navigation is.
   contents.on('will-redirect', (event, url) => {
     // A signed-out page sent to sign in by a redirect (the hosted console's /login): the browser too, but only for a
     // console that said it hands sign-ins back, so the window's own sign-in, when it falls back to it, is never caught.
@@ -115,6 +119,8 @@ function guard(win) {
     if (where(url) === 'external') {
       event.preventDefault();
       openExternal(url);
+      // A window that has shown nothing has nothing to show once its address went to the browser.
+      if (win !== mainWindow && !shown) win.close();
     }
   });
 }
