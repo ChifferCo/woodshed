@@ -51,6 +51,7 @@
 // from that terminal), so an agent there can `hc wait --children` on it: the session, started or resumed with
 // herdrParent, waits for it rather than make its own.
 
+import { randomUUID } from 'node:crypto';
 import { sessionOptions } from './commands.mjs';
 import {
   HC_MINIMUM, WATCH_SPACE, WATCH_TERMINAL, addMachine, agentOn, hcVersion, leftoverMachines, machineName, nameAgentPlace, parentTerminal, removeMachine,
@@ -113,6 +114,12 @@ Commands:
       --agent claude|codex   which (default claude), --model <name>, --effort <level> and --mode <permissions>, as
                              session new takes them (auto by default)
   agent <id> stop <agent-N>  end one of them
+  send <id> "message"        type a message in at one of your running sessions' agent, as the Chat tab's Send does;
+                             held while it works or a prompt is on its screen, typed in once it is back at its prompt
+      --wait                 then wait until it has gone in and been worked on, and print what it said
+  wait <id>                  until one of your sessions is done with its turn, needs you, or stops
+  read <id> [--last <n>]     what it was asked and said, newest last (default 10, up to 100), from its Chat. Never a
+                             session that has seen production data: its conversation is read on the console only
   herdr <id>                 make one of your sessions a machine in Herdr (hc ${HC_MINIMUM} or newer), woodshed-<id>,
                              reached through woodshed tunnel; a paused one is resumed first, and waited for. Run on
                              your computer: inside a Woodshed session it adds nothing and says so (exit 3)
@@ -1136,6 +1143,63 @@ export async function sessionCommand({ origin, rest }, ctx) {
   const id = opts.id;
   const { login, s } = await find(id);
 
+  // ---- a session's conversation, from here: send, wait and read (the page's Chat routes, cliSessions.mjs) ----
+  const SETTLED = new Set(['done', 'needs-you', 'idle']);
+  // How long a message that went in may go unworked on before it is said not to have been taken up.
+  const NO_REPLY_MS = 90_000;
+
+  // Until the session is done with its turn, needs its person or stops. With `held`, the id of the message just sent:
+  // a turn only once the console no longer holds it (it is typed in when the agent is back at its prompt), so the turn
+  // it was held behind is not its answer, and one too quick to be seen working is told by a newer last message. As
+  // sessionStarts.mjs's waitLoop does for woodshed-session.
+  async function waitTurn(held = null) {
+    let deliveredAt = held === null ? now() : null;
+    let worked = false;
+    for (;;) {
+      const { s: x } = await find(id);
+      if (!LIVE.has(x.status)) return { s: x, ended: true, deliveredAt };
+      if (held !== null && (Array.isArray(x.heldIds) ? x.heldIds.includes(held) : x.pendingMessages > 0)) {
+        // Held behind a question or approval only its person can answer: said now, the message left in line.
+        if (x.status === 'running' && x.state === 'needs-you') return { s: x, stillHeld: true, deliveredAt: null };
+        deliveredAt = null;
+        worked = false;
+      } else if (deliveredAt === null) deliveredAt = now();
+      // statusd's last message is `you` or `claude` (shared/sessionState.mjs), whichever agent it is.
+      const answered = x.lastMessage?.role === 'claude' && x.lastMessage.at && Date.parse(x.lastMessage.at) > deliveredAt;
+      if (deliveredAt !== null && (x.state === 'working' || (held !== null && answered))) worked = true;
+      const settled = x.status === 'running' && SETTLED.has(x.state) && deliveredAt !== null;
+      if (settled && (held === null || worked)) return { s: x, deliveredAt };
+      if (settled && now() - deliveredAt >= NO_REPLY_MS) return { s: x, noReply: true, deliveredAt };
+      await sleep(POLL_MS);
+    }
+  }
+
+  // The most statusd gives (its /transcript's limit), of which the tool calls are left out here.
+  async function conversation() {
+    try {
+      const body = await ask(`/api/sessions/${id}/transcript?limit=300`);
+      return (Array.isArray(body.entries) ? body.entries : []).filter((e) => (e.role === 'user' || e.role === 'assistant') && typeof e.text === 'string' && e.text.trim());
+    } catch (err) {
+      if (err.http === 409) throw fail(`Session ${id}: ${err.message}`, { code: EXIT.refused, status: 'refused' });
+      throw err;
+    }
+  }
+
+  // Its lines kept, each cleaned as any text from the console is, so no escape reaches this terminal.
+  // Its time only when it reads as one: the slice is the transcript's own text, which no terminal is handed as is.
+  const timeOf = (at) => { const hm = String(at ?? '').slice(11, 16); return /^\d\d:\d\d$/.test(hm) ? ` ${hm}` : ''; };
+  const entryText = (e) => `[${e.role === 'assistant' ? 'said' : 'asked'}${timeOf(e.at)}] ${e.text.trim().slice(0, 20_000).split(/\r?\n/).map((line) => printable(line, 20_000)).join('\n')}`;
+
+  // 0 done with its turn, 2 it needs you (a message still held behind its question too), 1 it stopped first or never took the message up.
+  const turnCode = ({ s: x, ended, noReply }) => (ended || noReply ? EXIT.failed : x.state === 'needs-you' ? EXIT.waiting : EXIT.done);
+
+  function turnLine(x, { ended, noReply, stillHeld }) {
+    if (stillHeld) return `Session ${id} needs you: your message is held until it is answered, on the console or with woodshed session connect ${id}.`;
+    if (ended) return `Session ${id} is ${stateOf(x).word}: it stopped before it was done.`;
+    if (noReply) return `Session ${id} did not take it up: it did not start working on it.`;
+    return `Session ${id} is ${stateOf(x).word}.`;
+  }
+
   // The agents beside a running private session's own (session/agents.mjs): its owner's alone, as on the page.
   async function agentsOf() {
     ownPrivate(s, login, 'run other agents in');
@@ -1148,6 +1212,49 @@ export async function sessionCommand({ origin, rest }, ctx) {
       throw err;
     }
     return (Array.isArray(body.agents) ? body.agents : []).filter((a) => a && AGENT_ID_RE.test(a.id)).map(agentSummary);
+  }
+
+  if (sub === 'send') {
+    if (s.status !== 'running') throw fail(`Session ${id} is ${stateOf(s).word}: a message is typed in only while it runs. woodshed session resume ${id} first.`, { code: EXIT.refused, status: 'not-running' });
+    // Its own id, which the console lists in `heldIds` while it holds the message.
+    const messageId = randomUUID();
+    let sent;
+    try {
+      sent = await ask(`/api/sessions/${id}/send`, { method: 'POST', body: { text: opts.text, id: messageId } });
+    } catch (err) {
+      if (err.http === 409) throw fail(`Session ${id}: ${err.message}`, { code: EXIT.refused, status: 'refused' });
+      throw err;
+    }
+    if (json) emit({ event: 'sent', session: id, held: Boolean(sent.held), ...(sent.unknown ? { unknown: true } : {}) });
+    else say(sent.held ? `Held for session ${id}: it is typed in once its agent's turn ends.` : `Sent to session ${id}${sent.unknown ? ' (the console did not hear back in time: it may have gone in)' : ''}.`);
+    if (!opts.wait) return EXIT.done;
+    const turn = await waitTurn(messageId);
+    // What it said since the message went in. What a session that has seen production data said stays on the console.
+    const said = turn.ended || turn.noReply || turn.stillHeld || turn.s.taintedAt ? [] : (await conversation()).filter((e) => e.role === 'assistant' && e.at && Date.parse(e.at) >= turn.deliveredAt);
+    if (json) {
+      emit({ event: 'turn', session: summary(turn.s, { origin, login, appsOn }), ended: Boolean(turn.ended), noReply: Boolean(turn.noReply), held: Boolean(turn.stillHeld), said });
+      return turnCode(turn);
+    }
+    say(turnLine(turn.s, turn));
+    if (turn.s.taintedAt) say(`It has seen production data: read what it said on the console, ${summary(turn.s, { origin, login, appsOn }).url}`);
+    for (const e of said) say(entryText(e));
+    return turnCode(turn);
+  }
+
+  if (sub === 'wait') {
+    const turn = await waitTurn();
+    if (json) emit({ event: 'turn', session: summary(turn.s, { origin, login, appsOn }), ended: Boolean(turn.ended) });
+    else say(turnLine(turn.s, turn));
+    return turnCode(turn);
+  }
+
+  if (sub === 'read') {
+    if (s.status !== 'running') throw fail(`Session ${id} is ${stateOf(s).word}: its conversation is read while it runs. woodshed session resume ${id} first.`, { code: EXIT.refused, status: 'not-running' });
+    const last = opts.last === undefined ? 10 : Number(opts.last);
+    const entries = (await conversation()).slice(-last);
+    if (json) emit({ event: 'conversation', session: id, entries });
+    else say(entries.length ? entries.map(entryText).join('\n') : 'Nothing said yet.');
+    return EXIT.done;
   }
 
   if (sub === 'agents') {
@@ -1574,6 +1681,7 @@ export function parseSessionArgs(sub, words, fail) {
   const wordsOf = {
     new: 'prompt', connect: 'id', agents: 'id', agent: 'id-agent', herdr: 'id', list: null, get: 'id', app: 'id-action',
     extend: 'id', limits: 'id', stop: 'id', resume: 'id', handoff: 'id', remove: 'id', prune: null, watch: null,
+    send: 'id-text', wait: 'id', read: 'id',
   };
   const commands = Object.fromEntries(Object.entries(wordsOf).map(([name, w]) => [name, { ...sessionOptions(name), words: w }]));
   // Its own keys only: `constructor` or `toString` is no command.
@@ -1612,6 +1720,7 @@ export function parseSessionArgs(sub, words, fail) {
   }
   for (const flag of PARENT_FLAGS) if (out[flag] && !out.parent) throw fail(`--${flag} goes with --parent`);
   if (sub === 'resume' && out.herdr && out.wait === false) throw fail('--herdr waits for the session to run: leave out --no-wait');
+  if (sub === 'read' && out.last !== undefined && !/^(100|[1-9][0-9]?)$/.test(out.last)) throw fail('--last needs a number from 1 to 100');
   if (sub === 'limits' && out['idle-hours'] === undefined && out['lifetime-hours'] === undefined) throw fail('session limits needs --idle-hours or --lifetime-hours (a number, or default)');
   if (sub === 'connect' && out.agent !== undefined) {
     if (!AGENT_ID_RE.test(out.agent)) throw fail(`--agent needs an agent beside the session's own, agent-2 to agent-9, as woodshed session agents lists them`);
@@ -1644,6 +1753,13 @@ export function parseSessionArgs(sub, words, fail) {
       out.action = 'start';
       out.prompt = positional.slice(1).join(' ');
     }
+  }
+  else if (takes.words === 'id-text') {
+    // session send <id> message words
+    if (!positional.length || !ID_RE.test(positional[0])) throw fail(`session ${sub} takes a session id first, then the message\n\n${SESSION_USAGE}`);
+    out.id = positional[0];
+    out.text = positional.slice(1).join(' ');
+    if (!out.text.trim()) throw fail(`session ${sub} needs the message: woodshed session ${sub} ${out.id} "what to say"`);
   }
   else if (takes.words === 'id-action') {
     // session app <id> [start|stop|share]

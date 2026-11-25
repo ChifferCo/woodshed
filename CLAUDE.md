@@ -403,7 +403,11 @@ URL on top of each env file's Repo settings values
   changed`. A wait that stays at `Waiting in line` is the person's limit (`fleet: private session waits in line, at the
   limit`); otherwise it reads the same start steps as the page's checklist, above. Ctrl-C stops the wait, not the
   session. `extend` refused with `Extend is offered in the last 15 min` is the console's rule: `session get` says when
-  it pauses.
+  it pauses. `session read` refused with `seen production data` is a tainted session, whose
+  conversation stays on the console (`cliSessions: refused, a tainted session's conversation`); `send` with exit 3 is the Chat
+  tab's own refusal: a session that cannot send safely (`console: message from the page refused, the session cannot
+  send safely`), or a message that went into the agent's box as a prompt came up. While the agent works, or has a
+  question or approval on screen, it is held instead (`Held`, `fleet: message held until the agent is at its prompt`).
 - **`woodshed config set` is refused.** Exit 3 with `Valid:` is a value the console's own check refused (the same as
   My settings'); with `On My settings:` a step only the page does first (save a Claude token or Codex sign-in, connect
   GitHub); `is a secret` is a key it never sends. The console logs `cliSessions: call` with the path, then the page's

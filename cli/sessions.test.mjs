@@ -132,6 +132,8 @@ const iso = (ms) => new Date(ms).toISOString();
 // ones. A session the fleet starts or resumes takes the next of `script`'s steps each time the list is read, as a start
 // moves while the command line waits. The command line is signed in as mia-dev before each test.
 async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false, hc = fakeHc(), app = fakeApp(null, { missing: true }), relativeConfig = false, tty = true, terminal = null, extra = [], onSleep = null, signal = undefined, githubSessions = null, appDomain = null, appScript = [], env = {} } = {}) {
+  const locking = new Set();
+  const lockingListeners = [];
   let clock = T0;
   const now = () => clock;
   const store = { state: {}, save() {} };
@@ -187,8 +189,17 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       moving.set(s.id, script.map((step) => ({ ...step })));
       return s;
     },
-    // The agents beside a session's own (server.mjs, agentAction): allowed once statusd started one.
-    isLocked: (s) => Boolean(s.taintedAt),
+    // The Chat tab's send (server.mjs, terminalAction): held while the agent works, as the fleet's is.
+    send: async (session, text, { id } = {}) => {
+      calls.push(['send', { id: session.id, text }]);
+      if (session.state !== 'working') return 'sent';
+      session.pendingMessages = [...(session.pendingMessages ?? []), { id, text }];
+      return 'queued';
+    },
+    // The agents beside a session's own (server.mjs, agentAction): allowed once statusd started one. A lockdown as the
+    // fleet's starts one: locking until the test taints it, its listeners told at once.
+    isLocked: (s) => Boolean(s.taintedAt) || locking.has(s.id),
+    onLocking: (fn) => lockingListeners.push(fn),
     allowAgent: (s, agent) => { calls.push(['allowAgent', { id: s.id, agent }]); return true; },
     removePrivateSession: async ({ owner, id }) => {
       calls.push(['remove', { owner, id }]);
@@ -291,7 +302,8 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
   };
   const signed = await run(['login', '--console', origin]);
   assert.equal(signed.code, EXIT.done, signed.err);
-  return { origin, run, calls, sessions, cli, hc, app, dir, answer: (a) => { answer = a; }, listFailures, now, appShares };
+  const lockDown = (id) => { locking.add(id); for (const fn of lockingListeners) fn(id); };
+  return { origin, run, calls, sessions, cli, hc, app, dir, answer: (a) => { answer = a; }, listFailures, now, appShares, lockDown };
 }
 
 // A start as the fleet moves it: in line, starting, each step, then running.
@@ -1883,4 +1895,128 @@ test('session agent and connect --agent take only what an agent beside the sessi
   for (const words of [['0a1b2c3d', '--agent', 'claude'], ['0a1b2c3d', '--agent', 'agent-2', '--shell']]) {
     assert.throws(() => parseSessionArgs('connect', words, fail), undefined, words.join(' '));
   }
+});
+
+// A session's statusd answering the Chat tab's read: the conversation so far, which the test adds to.
+async function standInTranscript(t) {
+  const entries = [];
+  const asked = [];
+  const server = http.createServer((req, res) => {
+    asked.push(req.url);
+    res.writeHead(req.url.startsWith('/transcript') ? 200 : 404, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(req.url.startsWith('/transcript') ? { agent: 'claude', entries } : { error: 'not found' }));
+  });
+  const port = await listen(server);
+  t.after(() => server.close());
+  return { entries, asked, endpoint: { host: '127.0.0.1', statusPort: port, termPort: 1 } };
+}
+
+test('session send --wait types a message in, waits for the turn on it, and prints what it said; read and wait', async (t) => {
+  const statusd = await standInTranscript(t);
+  const steps = [];
+  let c;
+  c = await consoleFor(t, {
+    extra: [
+      { id: 'c0c0aa01', owner: 'mia-dev', title: 'Billing page', status: 'running', state: 'done', safeSend: true, endpoint: statusd.endpoint },
+      { id: 'c0c0aa02', owner: 'mia-dev', title: 'Read prod', status: 'running', state: 'done', safeSend: true, taintedAt: iso(T0), endpoint: statusd.endpoint },
+    ],
+    onSleep: () => steps.shift()?.(),
+  });
+  const session = at(c.sessions, 'c0c0aa01');
+  const said = (role, text, ms) => statusd.entries.push({ role, text, at: iso(c.now() + ms) });
+  said('assistant', 'An earlier answer.', -60_000);
+  statusd.entries.push({ role: 'user', text: 'A time that is not one.', at: '2026-11-25T\u001b[2J1:00Z' });
+  steps.push(() => { session.state = 'working'; said('user', 'Use cents.', 0); });
+  steps.push(() => { session.state = 'done'; said('assistant', 'Totals are in cents now.\n\u001b[2JTests pass.', 0); });
+
+  const sent = await c.run(['session', 'send', 'c0c0aa01', 'Use', 'cents.', '--wait']);
+  assert.equal(sent.code, EXIT.done, sent.err);
+  assert.deepEqual(c.calls.find(([k]) => k === 'send'), ['send', { id: 'c0c0aa01', text: 'Use cents.' }]);
+  assert.match(sent.out, /^Sent to session c0c0aa01\.\nSession c0c0aa01 is done\.\n\[said \d\d:\d\d\] Totals are in cents now\.\n \[2JTests pass\.\n$/, 'its lines kept, the escape not');
+  assert.doesNotMatch(sent.out, /An earlier answer/, 'only what it said after the message');
+
+  const odd = await c.run(['session', 'read', 'c0c0aa01', '--last', '10']);
+  assert.match(odd.out, /^\[asked\] A time that is not one\.$/m, 'no escape from its time');
+  assert.doesNotMatch(odd.out, /\u001b/);
+  const read = await c.run(['session', 'read', 'c0c0aa01', '--last', '2']);
+  assert.equal(read.code, EXIT.done, read.err);
+  assert.match(read.out, /^\[asked \d\d:\d\d\] Use cents\.\n\[said \d\d:\d\d\] Totals are in cents now\.\n \[2JTests pass\.\n$/);
+
+  session.state = 'working';
+  steps.push(() => { session.state = 'needs-you'; });
+  const waited = await c.run(['session', 'wait', 'c0c0aa01']);
+  assert.equal(waited.code, EXIT.waiting, waited.err);
+  assert.match(waited.out, /^Session c0c0aa01 is .+\.\n$/);
+
+  // Sent while it works: held behind the turn already running, whose answer is not this message's.
+  session.state = 'working';
+  steps.push(() => { session.state = 'done'; said('assistant', 'The turn it was held behind.', 0); session.lastMessage = { role: 'claude', text: 'The turn it was held behind.', at: iso(c.now()) }; });
+  steps.push(() => { session.pendingMessages = []; session.state = 'working'; said('user', 'Then the tests.', 0); });
+  steps.push(() => { session.state = 'done'; said('assistant', 'Its answer.', 1); });
+  const held = await c.run(['session', 'send', 'c0c0aa01', 'Then the tests.', '--wait']);
+  assert.equal(held.code, EXIT.done, held.err);
+  assert.match(held.out, /^Held for session c0c0aa01: .+\nSession c0c0aa01 is done\.\n\[said \d\d:\d\d\] Its answer\.\n$/);
+
+  // Held behind a question only its person can answer: said, not waited on, and the message left in line.
+  session.state = 'working';
+  steps.push(() => { session.state = 'needs-you'; });
+  const asking = await c.run(['session', 'send', 'c0c0aa01', 'And the docs.', '--wait']);
+  assert.equal(asking.code, EXIT.waiting, asking.err);
+  assert.match(asking.out, /\nSession c0c0aa01 needs you: your message is held until it is answered/);
+  assert.equal(session.pendingMessages.length, 1);
+  session.pendingMessages = [];
+  session.state = 'done';
+
+  // What a session that has seen production data said stays on the console.
+  const before = statusd.asked.length;
+  const tainted = await c.run(['session', 'read', 'c0c0aa02']);
+  assert.equal(tainted.code, EXIT.refused);
+  assert.match(tainted.err, /seen production data: its conversation is read on the console only/);
+  assert.equal(statusd.asked.length, before, 'its statusd never asked');
+
+  // Only a running session takes a message.
+  assert.equal((await c.run(['session', 'send', 'bbbb0002', 'hi'])).code, EXIT.refused);
+});
+
+test('session send needs a message, and read --last a number', () => {
+  const fail = (message) => Object.assign(new Error(message), { usage: true });
+  assert.deepEqual(parseSessionArgs('send', ['0a1b2c3d', '--wait', 'do', 'it'], fail), { wait: true, id: '0a1b2c3d', text: 'do it' });
+  assert.throws(() => parseSessionArgs('send', ['0a1b2c3d'], fail), /needs the message/);
+  assert.deepEqual(parseSessionArgs('read', ['0a1b2c3d', '--last', '3'], fail), { last: '3', id: '0a1b2c3d' });
+  for (const n of ['0', '-1', '101', 'x', '1.5']) assert.throws(() => parseSessionArgs('read', ['0a1b2c3d', `--last=${n}`], fail), /--last needs a number from 1 to 100/, n);
+});
+
+test('a conversation read the command line waits on is cut when the session\'s lockdown starts, and refused while it locks', async (t) => {
+  // A statusd that answers slowly, by when the test says: what it sends after the lockdown started could be production's.
+  let answer;
+  const server = http.createServer((req, res) => {
+    answer = () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ entries: [{ role: 'assistant', text: 'Customer 4411 owes 1,204.50.', at: iso(T0) }] })); };
+  });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const c = await consoleFor(t, { extra: [
+    { id: 'c0c0aa03', owner: 'mia-dev', title: 'About to read prod', status: 'running', state: 'working', safeSend: true, lastMessage: { role: 'claude', text: 'Reading.', at: iso(T0) },
+      endpoint: { host: '127.0.0.1', statusPort: port, termPort: 1 } },
+  ] });
+  const reading = c.run(['session', 'read', 'c0c0aa03']);
+  while (!answer) await new Promise((r) => setTimeout(r, 10));
+  c.lockDown('c0c0aa03');
+  answer();
+  const read = await reading;
+  assert.notEqual(read.code, EXIT.done);
+  assert.doesNotMatch(read.out + read.err, /4411/, 'nothing statusd sent after the lockdown started reached the command line');
+
+  const again = await c.run(['session', 'read', 'c0c0aa03']);
+  assert.equal(again.code, EXIT.refused, 'refused while it locks');
+  assert.match(again.err, /seen production data/);
+
+  // Nor does a tainted session's last message reach it on the list.
+  at(c.sessions, 'c0c0aa03').taintedAt = iso(T0);
+  const listed = await c.run(['session', 'get', 'c0c0aa03', '--json']);
+  assert.doesNotMatch(listed.out, /Reading\./);
+  const device = c.cli.start({ name: 'test' });
+  c.cli.decide({ code: device.userCode, login: 'mia-dev', approve: true });
+  const { token } = c.cli.poll(device.deviceCode);
+  const body = await (await fetch(`${c.origin}/api/sessions`, { headers: { authorization: `Bearer ${token}` } })).json();
+  assert.equal(at(body.sessions, 'c0c0aa03').lastMessage, null, 'the console\'s own answer to the token carries none');
 });

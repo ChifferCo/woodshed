@@ -162,7 +162,7 @@ test('a started session\'s mode is never looser than its starter\'s, for every p
 
 test('it lists the sessions it started, and reads another of its person\'s too', async (t) => {
   const { token, session } = holder();
-  const mine = { id: 'bbbb0002', owner: 'joel', status: 'running', state: 'done', startedFrom: session.id, title: 'CSV export', createdAt: new Date(NOW).toISOString(), lastMessage: { role: 'assistant', text: 'Done.\nThe export downloads.' } };
+  const mine = { id: 'bbbb0002', owner: 'joel', status: 'running', state: 'done', startedFrom: session.id, title: 'CSV export', createdAt: new Date(NOW).toISOString(), lastMessage: { role: 'claude', text: 'Done.\nThe export downloads.' } };
   const other = { id: 'cccc0003', owner: 'joel', status: 'running', title: 'Another of joel\'s', createdAt: new Date(NOW).toISOString() };
   const api = await serve({ sessions: [session, mine, other] });
   t.after(api.close);
@@ -293,7 +293,7 @@ test('wait answers once it worked on what was sent and is done, or says nothing 
   t.after(api.close);
   child.state = 'done';
   setTimeout(() => { child.state = 'working'; }, 40);
-  setTimeout(() => { child.state = 'done'; child.lastMessage = { role: 'assistant', text: 'Totals are in cents now.' }; }, 90);
+  setTimeout(() => { child.state = 'done'; child.lastMessage = { role: 'claude', text: 'Totals are in cents now.' }; }, 90);
   const replied = await api.call('GET', `/sessions/${child.id}/wait?for=reply`, { token });
   assert.equal(replied.body.session.lastMessage, 'Totals are in cents now.');
   assert.equal(replied.body.noReply, undefined);
@@ -317,10 +317,10 @@ test('a message held behind a turn is answered by the turn after it, not by the 
   // Working on the last thing it was told, with this message held for after.
   Object.assign(child, { state: 'working', pendingMessages: ['held'], lastMessage: null });
   const steps = [
-    () => Object.assign(child, { state: 'done', lastMessage: { role: 'assistant', text: 'The turn it was held behind.', at: new Date().toISOString() } }),
+    () => Object.assign(child, { state: 'done', lastMessage: { role: 'claude', text: 'The turn it was held behind.', at: new Date().toISOString() } }),
     () => Object.assign(child, { pendingMessages: [] }),
     () => Object.assign(child, { state: 'working' }),
-    () => Object.assign(child, { state: 'done', lastMessage: { role: 'assistant', text: 'Its answer.', at: new Date().toISOString() } }),
+    () => Object.assign(child, { state: 'done', lastMessage: { role: 'claude', text: 'Its answer.', at: new Date().toISOString() } }),
   ];
   steps.forEach((step, i) => setTimeout(step, 60 * (i + 1)));
   const out = await api.call('GET', `/sessions/${child.id}/wait?for=reply`, { token });
@@ -386,7 +386,7 @@ test('a session renames itself, and another of its person\'s, as the page does',
 
 test('of a session that has seen production data, no route hands over what its agent wrote', async (t) => {
   const { token, child, sibling, sessions } = family();
-  for (const s of [child, sibling]) Object.assign(s, { taintedAt: new Date(NOW).toISOString(), state: 'done', lastMessage: { role: 'assistant', text: 'Customer 4411 owes 1,204.50.', at: new Date(NOW).toISOString() } });
+  for (const s of [child, sibling]) Object.assign(s, { taintedAt: new Date(NOW).toISOString(), state: 'done', lastMessage: { role: 'claude', text: 'Customer 4411 owes 1,204.50.', at: new Date(NOW).toISOString() } });
   const api = await serve({ sessions });
   t.after(api.close);
   const answers = [
