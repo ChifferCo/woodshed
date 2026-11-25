@@ -55,8 +55,9 @@ runClaude() {
   "$SESSION_DIR/bin/claude" --model opus -p "$(cat "$DIR/review-prompt.md")" --max-turns 60 \
     --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(ls:*),Bash(wc:*),Read,Grep,Glob,Write,Edit" \
     --output-format stream-json --verbose 2>&1 | tee "$DIR/logs/review.jsonl" \
-    | jq -rR --unbuffered 'fromjson? | select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text' \
-    || true
+    | jq -rR --unbuffered 'fromjson? | select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text'
+  # claude's own status, for why it wrote no verdict (the pipeline's last command is jq).
+  echo "${PIPESTATUS[0]}" > "$DIR/logs/claude.exit"
   # How claude ended, so a review that stops early says why in the pane and the session's log.
   jq -rR 'fromjson? | select(.type == "result") | "subtype=\(.subtype) is_error=\(.is_error) turns=\(.num_turns // "?")"' \
     "$DIR/logs/review.jsonl" 2>/dev/null | tail -1 | while read -r ended; do say "Claude ended ($ended)"; done

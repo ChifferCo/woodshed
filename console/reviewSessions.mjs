@@ -3,6 +3,7 @@
 // already read these from its files with shared/codeReview/codeReview.mjs; this only validates what arrived.
 import { MAX_REPORT_CHARS, SPINNER_HTML } from './qaSessions.mjs';
 import agentsRegistry from '../shared/agents.cjs';
+import { isKnownReason } from '../shared/codeReview/failureReason.mjs';
 
 const CONCLUSIONS = new Set(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']);
 const TIERS = new Set(['Low', 'Medium', 'High']);
@@ -82,6 +83,18 @@ export function reviewDoneComment({ conclusion, tier }) {
   return `**Review finished**: ${verdict}${tier ? `, merge risk ${tier}` : ''}. Details in the review.\n`;
 }
 
+const WHY_PRODUCTS = new Set(agentsRegistry.REVIEW_AGENT_IDS.map((id) => agentsRegistry.agent(id).product));
+
+/** The reasons a report gives for no verdict, each `<reviewer>: <sentence>`: only a known reviewer with a sentence the
+ * session's own classifier makes survives, so a session cannot put other text in the log or the pull request. */
+function whyOf(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw.slice(0, 2000).split(';').map((part) => part.trim()).filter(Boolean).filter((part) => {
+    const at = part.indexOf(': ');
+    return at > 0 && WHY_PRODUCTS.has(part.slice(0, at)) && isKnownReason(part.slice(at + 2));
+  }).join('; ');
+}
+
 /**
  * A report with `conclusion: null` says the session wrote no verdict: the console submits nothing and stops it.
  * @returns {{conclusion: string|null, agents?: string[], summary: string, comment: string,
@@ -101,7 +114,7 @@ export function parseReviewReport(raw) {
   const agents = Array.isArray(body.agents) ? agentsRegistry.REVIEW_AGENT_IDS.filter((agent) => body.agents.includes(agent)) : [];
   return {
     conclusion: body.conclusion,
-    ...(body.why ? { why: String(body.why).slice(0, 500) } : {}),
+    ...(whyOf(body.why) ? { why: whyOf(body.why) } : {}),
     ...(agents.length ? { agents } : {}),
     summary: String(body.summary ?? '').slice(0, MAX_REPORT_CHARS),
     comment: String(body.comment ?? '').slice(0, MAX_REPORT_CHARS),

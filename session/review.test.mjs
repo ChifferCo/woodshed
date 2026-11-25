@@ -238,6 +238,14 @@ test('a Claude Code failure reports Codex as the sole contributor to a dual revi
   assert.match(body.summary, /Claude Code \(.+\) wrote no verdict/);
 });
 
+test('when every reviewer fails, the report says why for each', async (t) => {
+  const { reports } = await runReview(t, { agents: 'claude codex', claude: '#!/bin/bash\nexit 3\n', codex: '#!/bin/bash\necho "Error: exceeded your current quota" >&2\nexit 1\n' });
+  const { body } = reports.find((r) => r.path === '/review-report');
+  assert.equal(body.conclusion, null);
+  assert.match(body.why, /Claude Code: it printed nothing and exited with 3/);
+  assert.match(body.why, /Codex: its plan or API usage limit looks used up/);
+});
+
 test('with Codex alone, claude is never run and Codex\'s verdict is the one sent, as its own', async (t) => {
   const { reports, output } = await runReview(t, { agents: 'codex', via: 'key' });
   assert.match(output, /Reviewing the diff of Acme\/widgets with Codex\n/);
