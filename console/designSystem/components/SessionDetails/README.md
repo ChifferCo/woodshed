@@ -13,4 +13,4 @@ phone at the top of the session's ⋯ sheet.
   - the other session's name as a link, or `a session no longer on the list` as text;
   - when, in mono 11px `meta` (`msg-at`);
   - on a line of its own, the start of the message in `sub`, cut to one line with an ellipsis (`msg-text`). The whole
-    message is in the receiving session's Chat.
+    message is in the receiving session's Chat, or, for a reply handed to a wait, in that waiting command's output.
