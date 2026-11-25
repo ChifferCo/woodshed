@@ -346,6 +346,8 @@
       prefixHint(true);
       return;
     }
+    // A move or a tab picked with the palette or the sheet open closes it first, so the new session gets the keys.
+    if (PREFIX_IDS.has(id)) closeAll();
     if (id === 'tab') page.showTab(K.tabOf(e));
     else (ACTS[id] ?? go(K.byId[id].href))();
   }
