@@ -55,6 +55,8 @@
   let toastTimer = null;
   // `ms` keeps it up longer: an error needs time to be read on a phone.
   function toast(text, { ms = 2000 } = {}) {
+    // A toast in the hint's place (an upload's error, a tab's reason) ends the wait too: the next key is the page's.
+    prefixAt = 0;
     prefixHint(false);
     toastEl ??= document.body.appendChild(h('div', { class: 'toast', role: 'status', hidden: true }));
     toastEl.textContent = text;
