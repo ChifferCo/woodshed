@@ -44,7 +44,9 @@ export function redact(text, env = process.env) {
   let out = String(text ?? '');
   // Also the variables the installation names as its install secrets (WOODSHED_INSTALL_SECRETS), whatever they are called.
   const named = new Set(String(env.WOODSHED_INSTALL_SECRETS ?? '').split(/[\s,]+/).filter(Boolean));
-  const values = Object.entries(env).filter(([k, v]) => (SECRET_NAME_RE.test(k) || named.has(k)) && typeof v === 'string' && v.length >= 8).map(([, v]) => v)
+  // A secret-like name's value must be 8 characters to be taken out by value (shorter ones are ordinary words and numbers);
+  // one the installation names as a secret is taken out at 4 (a PIN), since it is known to be one.
+  const values = Object.entries(env).filter(([k, v]) => typeof v === 'string' && ((named.has(k) && v.length >= 4) || (SECRET_NAME_RE.test(k) && v.length >= 8))).map(([, v]) => v)
     .sort((a, b) => b.length - a.length);
   for (const v of values) out = out.split(v).join('[redacted]');
   out = out.replace(PATTERNS[0], '[redacted]').replace(PATTERNS[1], '[redacted]').replace(PATTERNS[2], '[redacted]')

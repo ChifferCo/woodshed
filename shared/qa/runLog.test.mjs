@@ -88,3 +88,10 @@ test('a secret the clip would cut is taken out whole first, so no piece of it su
   }
   assert.ok(!redact(`${'x'.repeat(280)} ${secret}`, env).includes('S3cr3t'));
 });
+
+test('a short value the installation names as an install secret is taken out too', () => {
+  const env = { REGISTRY_PIN: '48151', WOODSHED_INSTALL_SECRETS: 'REGISTRY_PIN', PORT_NUMBER_TOKEN: '1234' };
+  const clean = redact('pin 48151 on port 1234', env);
+  assert.doesNotMatch(clean, /48151/);
+  assert.match(clean, /1234/, 'a short value of a variable only named like a secret stays');
+});

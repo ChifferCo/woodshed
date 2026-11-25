@@ -15,6 +15,7 @@ const QA_MJS = path.join(HERE, '../shared/qa/qa.mjs');
 const FAKE_CLAUDE = `#!/bin/bash
 # The secret screen over the run log: it answers with the line numbers FAKE_SCREEN names, or fails with FAKE_SCREEN=fail.
 case " $* " in *" haiku "*)
+  case " $* " in *' --tools  '*|*' --tools '*) echo "$*" > "\${FAKE_SCREEN_ARGS:-/dev/null}" ;; esac
   [ "\${FAKE_SCREEN:-}" = fail ] && exit 1
   echo "\${FAKE_SCREEN:-NONE}"; exit 0 ;;
 esac

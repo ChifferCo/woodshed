@@ -2493,6 +2493,7 @@
       loaded = true;
       try {
         const res = await fetch(`/api/sessions/${s.id}/qa-log`, { cache: 'no-store' });
+        if (!res.ok) loaded = false;
         body.textContent = res.ok ? await res.text() : `The run log was not read (${res.status}).`;
       } catch {
         loaded = false;
