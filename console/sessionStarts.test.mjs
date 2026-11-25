@@ -612,3 +612,11 @@ test('each message between sessions is noted, by whichever way it reaches the ot
   await waiting;
   assert.deepEqual(api.fleet.noted, [[session.id, child.id, 'Use cents.', false], [child.id, session.id, 'Developers or customers?', true]]);
 });
+
+test('a message left unsent in the other\'s box is not noted, so sending it again lists it once', async (t) => {
+  const { token, child, sessions } = family();
+  const inBox = await serve({ sessions, send: async () => 'in-box' });
+  t.after(inBox.close);
+  assert.equal((await inBox.call('POST', `/sessions/${child.id}/messages`, { token, body: { text: 'Use cents.' } })).status, 409);
+  assert.deepEqual(inBox.fleet.noted, []);
+});
