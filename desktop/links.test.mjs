@@ -41,10 +41,11 @@ test('where each link of a hosted console goes', () => {
 
 test('a session\'s app, its editor and its viewers open in the browser', () => {
   // A hosted console's proxy signs the browser in on the apps' names; a window of the app's would find no one there.
-  const hosted = { consoleUrl: 'https://woodshed.example.com/' };
+  // The app domain is passed as the app once did, so these fail if apps are kept in the app again.
+  const hosted = { consoleUrl: 'https://woodshed.example.com/', appDomain: 'apps.example.com' };
   assert.equal(destination('https://aaaa1111.apps.example.com/', hosted), 'external');
   assert.equal(destination('https://aaaa1111.apps.example.com/__woodshed/code/', hosted), 'external');
-  const local = { consoleUrl: 'http://localhost:7690/' };
+  const local = { consoleUrl: 'http://localhost:7690/', appDomain: 'apps.localhost' };
   assert.equal(destination('http://localhost:7690/s/aaaa1111', local), 'console');
   assert.equal(destination('http://localhost:7701/', local), 'external');
   assert.equal(destination('http://aaaa1111.apps.localhost:7690/', local), 'external');
