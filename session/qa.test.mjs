@@ -152,7 +152,7 @@ test('an app that fails to start is not covered, and says so', async (t) => {
 
 test('the run log reaches the console after each pass and with the report, and says how the passes ended', async (t) => {
   let { logs } = await runQa(t);
-  assert.equal(logs.length, 8, 'a summary and a full log after the plan, as the tests begin, after the tests, and as the run finishes');
+  assert.equal(logs.length, 9, 'a summary before the plan, then a summary and a full log after the plan, as the tests begin, after the tests, and as the run finishes');
   logs = logs.filter((l) => l.tier === 'full');
   assert.deepEqual([logs[0].authorization, logs[0].type], ['Bearer tok', 'text/plain']);
   assert.deepEqual(logs.map((l) => l.reports), [0, 0, 0, 0], 'each before the report');
@@ -208,4 +208,13 @@ test('every summary the script sends is one the console accepts, in each kind of
     assert.ok(summaries.length > 0);
     for (const l of summaries) assert.equal(summaryProblem(l.text, { number: 7, base: 'stacked-base' }), null, `${JSON.stringify(options)}: ${l.text}`);
   }
+});
+
+test('a run stopped while its planner works has left a summary that says the plan\'s outcome is not known', async (t) => {
+  const { logs } = await runQa(t);
+  const first = logs[0];
+  assert.equal(first.tier, 'summary');
+  assert.match(first.text, /Planning the tests[\s\S]*## plan\nStarted; its outcome is not known yet\./);
+  assert.equal(summaryProblem(first.text, { number: 7, base: 'stacked-base' }), null);
+  assert.equal(first.reports, 0);
 });

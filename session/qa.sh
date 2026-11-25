@@ -160,7 +160,7 @@ logBody() {
   if [ "$text" = full ]; then sed '/^$/d' "$DIR/logs/steps.log" 2>/dev/null; else sed -E '/^$/d; /Nothing to test:/d; s/^(.*Video not sent, [^:]*): .*$/\1/; s/^(.*No still sent: ffmpeg made none) from .*$/\1/' "$DIR/logs/steps.log" 2>/dev/null; fi
   echo
   local flag=''; [ "$text" = full ] || flag=--summary
-  node "$RUN_LOG" $flag plan "$DIR/logs/plan.jsonl"
+  if [ -f "$DIR/logs/plan.jsonl" ] || [ ! -f "$DIR/logs/plan-started" ]; then node "$RUN_LOG" $flag plan "$DIR/logs/plan.jsonl"; else printf '## plan\nStarted; its outcome is not known yet.\n'; fi
   echo
   if [ -f "$DIR/logs/test.jsonl" ] || [ ! -f "$DIR/logs/test-started" ]; then node "$RUN_LOG" $flag test "$DIR/logs/test.jsonl"; else printf '## test\nStarted; its outcome is not known yet.\n'; fi
   if [ "$text" = full ]; then
@@ -238,6 +238,10 @@ main() {
   gatherContext
 
   say "Planning the tests"
+  # A checkpoint before the planner, summary only (no model screen to wait for), so a run stopped while it plans still leaves its steps.
+  : > "$DIR/logs/plan-started"
+  logBody summary > "$DIR/logs/run-summary.log" 2>&1
+  postLog summary "$DIR/logs/run-summary.log"
   runClaude "$DIR/plan-prompt.md" "$DIR/logs/plan.jsonl" 40 --allowedTools "Bash,Read,Write,Edit"
   sendLog
   if [ -f "$DIR/plan/SKIP.md" ]; then
