@@ -45,6 +45,7 @@
 //                     session's on Claude Code or Codex alone, 404 anywhere else
 //   POST /agents      {"agent": "claude"|"codex", "model", "effort", "permissionMode", "prompt"} starts another, in a tmux
 //                     session of its own in the same checkout; 409 once the session is tainted, or with three running
+//   POST /agents/with-claude-token   starts Claude beside Grok Build or OpenCode with the owner's claudeToken
 //   ANY  /agents/<id>/transcript|send|interrupt|prompt|answer|stop   as the routes of the same names, for that agent:
 //                     its own record of its conversation, a message typed into its pane (held while it works, and typed
 //                     once it is back at its prompt), Esc, what it asks and the answer; stop ends it
@@ -641,6 +642,7 @@ const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.
   claudeFlagsFile: process.env.WOODSHED_AGENT_CLAUDE_FLAGS_FILE || '/tmp/woodshed-agent-claude-flags',
   codexReady: async () => existsSync(CODEX_READY_FILE),
   codexEnv: codexBeside,
+  claudeEnv: AGENTS.agent(AGENT).teamCredential ? undefined : claudeBeside,
   uploadsDir: process.env.UPLOADS_DIR || '/tmp/uploads',
   stateDir: process.env.WOODSHED_AGENT_STATE_DIR || '/tmp',
   tainted: () => tainted(),
@@ -648,6 +650,23 @@ const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.
   terminal: process.env.WOODSHED_TERMINAL === 'herdr' ? 'herdr' : 'tmux',
   hcBin: process.env.WOODSHED_HC_BIN || 'hc',
 }) : null;
+
+// Start Claude with the owner's own token. Hold it outside every saved home and pass only its filename to the pane.
+async function claudeBeside(token) {
+  if (!token) throw Object.assign(new Error('save your Claude token on My settings first, then start Claude from the console'), { status: 409 });
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'woodshed-extra-claude-'));
+  const file = path.join(dir, 'token');
+  const cleanup = () => fs.rm(dir, { recursive: true, force: true }).catch(() => {
+    console.warn('statusd: could not remove an extra Claude token file');
+  });
+  try {
+    await fs.writeFile(file, token, { mode: 0o600, flag: 'wx' });
+  } catch (err) {
+    await cleanup();
+    throw err;
+  }
+  return { env: { WOODSHED_CLAUDE_AUTH: 'own', WOODSHED_CLAUDE_TOKEN_FILE: file }, undo: cleanup, cleanup };
+}
 
 // An extra Codex agent: its sign-in, the owner's own from My settings when they saved one, which the console sends
 // with the start (console/server.mjs, agentAction) and nothing here asks for, written into codex's home as configureCodex
@@ -2011,12 +2030,18 @@ async function agentsReply(req, res, route, pathname) {
   if (!agents) return reply(res, 404, { error: 'this session runs no other agents: only a private coding session does' });
   if (route === 'GET /agents') return reply(res, 200, { agents: await agents.list() });
   try {
-    if (route === 'POST /agents') {
+    if (route === 'POST /agents' || route === 'POST /agents/with-claude-token') {
       let body;
       try {
         body = JSON.parse((await readBody(req)) || '{}');
       } catch {
         return reply(res, 400, { error: 'body must be JSON' });
+      }
+      if (route === 'POST /agents/with-claude-token' && (body?.agent !== 'claude' || AGENTS.agent(AGENT).teamCredential)) {
+        return reply(res, 400, { error: 'this route starts Claude beside Grok Build or OpenCode' });
+      }
+      if (route === 'POST /agents' && body?.agent === 'claude' && !AGENTS.agent(AGENT).teamCredential) {
+        return reply(res, 409, { error: 'start Claude from a console that can pass your Claude token' });
       }
       return reply(res, 200, { agent: await agents.start(body) });
     }

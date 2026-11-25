@@ -2838,7 +2838,7 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
     maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, launcher: { kind: 'docker' }, localLogin: 'local',
   };
   let hasClaude = false;
-  const userSettings = { view: () => ({ claudeToken: { set: hasClaude } }) };
+  const userSettings = { claudeToken: async () => hasClaude ? 'dummy-owner-claude-token' : null };
   const server = http.createServer(createHandler({ config, fleet, userSettings }));
   const port = await listen(server);
   t.after(() => server.close());
@@ -2864,6 +2864,8 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   assert.equal((await call('/api/sessions/3d4e5f6a/agents', { agent: 'claude' })).status, 200);
   assert.equal((await call('/api/sessions/3d4e5f6a/agents', undefined, 'GET')).status, 200);
   assert.deepEqual(allowed.at(-1), ['3d4e5f6a', 'claude']);
+  assert.equal(asked[1].url, '/agents/with-claude-token');
+  assert.equal(JSON.parse(asked[1].body).claudeToken, 'dummy-owner-claude-token');
 
   assert.equal((await call('/api/sessions/0a1b2c3d/agents', undefined, 'GET')).status, 200);
   assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/transcript?limit=50&since=x', undefined, 'GET')).status, 200);

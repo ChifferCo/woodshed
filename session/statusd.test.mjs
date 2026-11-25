@@ -1632,6 +1632,9 @@ test('a private Grok Build or OpenCode session reports support for extra agents'
       GROK_HOME: dir,
     } });
     assert.deepEqual(await call('GET', '/agents', 'sess'), { status: 200, body: { agents: [] } }, agent);
+    const start = JSON.stringify({ agent: 'claude' });
+    assert.equal((await call('POST', '/agents', 'sess', start)).status, 409, agent + ' refuses the old Claude start route');
+    assert.equal((await call('POST', '/agents/with-claude-token', 'sess', start)).status, 409, agent + ' requires an owner token');
     assert.deepEqual((await call('GET', '/status', 'sess')).body.agents, [], agent);
   }
 });
