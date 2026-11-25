@@ -66,7 +66,7 @@
         if (c.off === c.input.disabled) continue;
         c.off = c.input.disabled;
         c.line.replaceChildren(...(c.input.disabled
-          ? [h('a', { href: `/settings#${id}`, 'aria-label': `Sign in to ${A.agent(id).product} on My settings` }, 'Sign in on My settings')]
+          ? [h('a', { href: `/settings#${id}`, 'aria-label': `Sign in on My settings for ${A.agent(id).product}` }, 'Sign in on My settings')]
           : [cardLine(id)]));
       }
     }
