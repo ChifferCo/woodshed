@@ -342,7 +342,8 @@ export function createSessionStarts({
       return reply(res, 200, { sentAt: at, sent: true, answeredWait: true, session: summary(to) });
     }
     const outcome = await fleet.send(to, `${head}\n\n${said}`);
-    // Left in its box unsent (409 below): not sent yet, and a send again would list it twice.
+    // Noted as sent, held ones too (`queued`: typed in once the other is at its prompt), for Details' history of what was
+    // sent. Left in its box unsent (409 below): not sent yet, and a send again would list it twice.
     if (outcome !== 'in-box') fleet.noteMessage?.({ from, to, text: said, question: asks, unconfirmed: outcome === 'unknown' });
     if (asks && outcome !== 'in-box') fleet.noteQuestion?.(from, { to: to.id });
     console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome, question: asks });

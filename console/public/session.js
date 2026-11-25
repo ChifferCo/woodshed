@@ -1906,7 +1906,8 @@
       ...W.startedLinks(s, data.sessions).map(([term, list]) => row(term, list.flatMap((x, i) => [
         i ? ', ' : null, x.id ? h('a', { href: sessionHref(x) }, x.title) : x.title,
       ]).filter(Boolean))),
-      // What it said to the others of yours and what they said to it, newest first: each in their Chat in full.
+      // What it sent the others of yours and what they sent it, newest first, held ones included as sent: each in full in
+      // the receiving session's Chat once typed in, or, for a reply to an open wait, in that waiting command's output.
       s.messages?.length > 0 && row('Messages', h('ul', { class: 'msg-lines' }, W.messageLines(s, data.sessions).map((m) => h('li', null,
         h('span', { class: 'msg-dir' }, m.dir === 'out' ? (m.question ? 'Asked ' : 'To ') : (m.question ? 'Asked by ' : 'From ')),
         m.other.id ? h('a', { href: sessionHref(m.other) }, m.other.title) : m.other.title,

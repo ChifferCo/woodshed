@@ -8,7 +8,7 @@ phone at the top of the session's ⋯ sheet.
 - **Started from** and **Started here** name the other sessions as links (`a`, `slate`), joined by commas; one no longer
   on the list is named so, as text.
 - **Messages** (`msg-lines`) lists the latest five messages between this session and others of the person's, newest
-  first, one item each, 6px apart. Each item:
+  first, as they were sent (one held for a session at work or paused is listed when sent, and typed in later), one item each, 6px apart. Each item:
   - the direction in `sub`: **From**, **To**, **Asked** (this session asked a question) or **Asked by**;
   - the other session's name as a link, or `a session no longer on the list` as text;
   - when, in mono 11px `meta` (`msg-at`), then `· may not have arrived` the same way when the console did not hear back
