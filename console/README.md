@@ -822,7 +822,9 @@ sign-in is `users/<login>/grok-auth` (an xAI key, `xai-…`, or `~/.grok/auth.js
 (`~/.local/share/opencode/auth.json` from `opencode auth login`), saved with `POST /api/my/agent-auth/<agent>` and
 removed with `…/remove`. The save also takes the command line's token, for `woodshed setup` and `woodshed sign-in push`,
 which send the file from the person's computer after checking it there (cli/README.md, setup's step 4): as the token's
-own person only, through the same `setAgentAuth`, and answered with `{agent, set, savedAt}`, never the page's view. It is
+own person only, through the same `setAgentAuth`, and answered with `{agent, set, savedAt}`, never the page's view. A
+first save from the command line leaves that agent's reviews switch off until they turn it on; My settings' Save turns
+it on, and replacing a sign-in already saved leaves the switch as it is. It is
 handed to that person's private sessions of that agent alone (`/settings`'s `agentAuth`), never to a shared session, a
 question, QA or a review, and a resume needs it saved as a start does. A review of the person's own pull request may
 still run them on it, through the console, which never hands it over ("Who reviews", below). Their logins rotate their
@@ -1244,13 +1246,18 @@ reviewers' ids joined with `+` in the registry's order (`claude+grok`; shared/ag
 - Grok Build: their own Grok sign-in (an xAI key, or a `grok login` that has not expired) while they use it for reviews;
 - OpenCode: an Anthropic or OpenAI API key among their own OpenCode sign-ins, while they use them for reviews.
 
-There is no team key for Grok Build or OpenCode: with the author's own sign-in off, missing or expired, that reviewer is
-left out, and `fleet: review runs other than the author chose` says why (`Grok Build left out: …`). With no choice saved,
-a review runs the most of Claude Code and Codex there is: both, else the one there is, else none; Grok Build and
-OpenCode review only when picked. A saved choice that can no longer run keeps what of it can, else falls back the same
-way, and the console says why. A pull request is the
+There is no team key for Grok Build or OpenCode. With the author's own sign-in off, missing or expired, that reviewer is
+not in the default. `fleet: review runs other than the author chose` says why only when a saved choice named it
+(`Grok Build left out: …`). With no choice saved,
+a review runs every reviewer that can: Claude Code and Codex from the team keys or the author's own sign-ins, and Grok
+Build and OpenCode when the author's own sign-in is on for reviews. A Grok Build or OpenCode sign-in already saved when
+that default shipped, or found later in the secret store without a save on My settings since, stays out of it (`userSettings: previous review default kept`, or `sign-ins follow the secret store` with `reviewDefault: legacy`), and saving a different one of those sign-ins first does not cover an uncached one: the switch was already on, and it
+used to mean the sign-in is used when that agent is picked. My settings says **As before**, and **Include every reviewer
+that can run** (or `woodshed config set reviews default`) accepts the wider default (`accepted: true` on `userSettings:
+reviews of my pull requests`). A saved choice that can no longer run keeps what of
+it can, else falls back the same way (Claude Code and Codex, for someone still on the previous default), and the console says why. A pull request is the
 person's whose session opened it, or its GitHub author otherwise (`pullOwner`); one whose author fails the identity
-checks of their Claude plan (`teamKeyReason`), or a bot, gets the most the team keys can run.
+checks of their Claude plan (`teamKeyReason`), or a bot, gets every reviewer the team keys can run.
 
 The review gets `review.agents` and `REVIEW_AGENTS` (any of `claude`, `codex`, `grok`, `opencode`), and
 `session/review.sh` runs each, every one but Claude in the background beside it, in its own `.review/<agent>/`.
@@ -1317,9 +1324,10 @@ Grok Build and OpenCode review the same way, on the author's own sign-in alone, 
 (`reviewAgentProxy.mjs`) adds to each call; the session holds only its `SESSION_TOKEN`, as the agent's API key:
 
 - **The switch.** On My settings' Grok Build and OpenCode cards, **Also use it for reviews of my pull requests** is on
-  once a sign-in is saved, unless the person turns it off (`POST /api/my/agent-auth/<agent>/reviews`, `woodshed config
-  set grok-reviews|opencode-reviews`). It needs the same checks as Codex's (`teamKeyReason`; never a bot). Picking the
-  agent on the Reviews card is what makes it review. The review keeps `review.ownSignIns`: whose sign-in and how
+  once a sign-in is saved there, unless the person turns it off (`POST /api/my/agent-auth/<agent>/reviews`, `woodshed config
+  set grok-reviews|opencode-reviews`). A first save from the command line (`woodshed sign-in push`) leaves it off until
+  they turn it on; replacing a sign-in already saved leaves it as it is. It needs the same checks as Codex's (`teamKeyReason`; never a bot). With no
+  reviewer choice saved, the default includes it, except a sign-in already saved when that default shipped, or found in the secret store without a save on My settings since, which stays out until they set reviews back to the default; a saved choice that leaves it out does not, unless none of that choice can run, in which case the same default runs. The review keeps `review.ownSignIns`: whose sign-in and how
   (`{grok: {login, via: 'key'|'login'}, opencode: {login, provider}}`), never the sign-in itself.
 - **Grok Build** runs with `XAI_API_KEY` set to the session's token and `GROK_MODELS_BASE_URL` at the console's
   `/grok/v1`, which takes all its model traffic: `GET /v1/models`, `POST /v1/responses` (its session title on a key, and
@@ -2419,7 +2427,7 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   `slack-bot-token` the dialog does. Without the hook the dialog opens on the own app's steps.
 
 A Claude token, Codex sign-in or own sign-in for another agent written straight into the secret store, as
-`users/<login>/claude-token`, `codex-auth`, `grok-auth` or `opencode-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
+`users/<login>/claude-token`, `codex-auth`, `grok-auth` or `opencode-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`). A Grok Build or OpenCode one found that way stays on the previous review default until reviews is set back to it, including when a different one of those sign-ins was saved through My settings before this console looked the uncached one up.
 
 ## Slack
 

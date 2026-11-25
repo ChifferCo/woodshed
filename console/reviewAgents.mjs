@@ -9,12 +9,18 @@
 //   OpenCode      the author's own OpenCode sign-ins while they use them for reviews, and only an API key of a provider
 //                 the proxy forwards (shared/agents.cjs, OPENCODE_REVIEW_PROVIDERS). There is no team key for it either
 //
-// With no choice saved, a review runs the most Claude Code and Codex can: both, else the one there is, else none. Grok
-// Build and OpenCode review only when the author picks them. A saved choice that can no longer run (a key removed, a
-// sign-in turned off or expired since) keeps what of it can, else falls back the same way, and says why. Either way the
-// console's proxies add the credential to each call (anthropicProxy.mjs, openaiProxy.mjs, reviewAgentProxy.mjs): no
-// sign-in enters the review session. The choice itself is kept with the person's settings (userSettings.mjs,
-// reviewAgents), as shared/agents.cjs names it (`both`, or ids joined with `+`).
+// With no choice saved, a review runs every reviewer that can: Claude Code and Codex from the team keys or the author's
+// own sign-ins, and Grok Build and OpenCode when the author's own sign-in is on for reviews. A sign-in for one of those
+// two already saved when that default shipped, or found in the secret store afterwards without a save on My settings,
+// stays out of it (userSettings.mjs, reviewDefault `legacy`) until the author sets reviews back to the default: the
+// switch was already on, and it used to mean "when you pick this agent". Saving a different sign-in first does not
+// cover one this console has not looked up yet. A sign-in first saved from the command line starts that switch off
+// before the secret is stored, and again in the same settings update as the sign-in (server.mjs), so a stop after
+// the secret lands still leaves it out until they turn it on; replacing one already saved leaves the switch as it is.
+// A saved choice that can no longer run (a key removed, a sign-in turned off or expired since) keeps what of it can,
+// else falls back the same way, and says why. Either way the console's proxies add the credential to each call
+// (anthropicProxy.mjs, openaiProxy.mjs, reviewAgentProxy.mjs): no sign-in enters the review session. The choice itself is kept with the person's settings
+// (userSettings.mjs, reviewAgents), as shared/agents.cjs names it (`both`, or ids joined with `+`).
 import { credentialOf } from './codexModels.mjs';
 import { credentialOf as grokCredentialOf } from './grokModels.mjs';
 import agentsRegistry from '../shared/agents.cjs';
@@ -69,11 +75,18 @@ export function ownReviewCredential(id, saved, now = Date.now()) {
   return cred;
 }
 
-/** The most a review can run with these, when its author chose nothing: both, else the one there is, else none. */
-export function bestChoice({ claude, codex }) {
-  if (claude && codex) return 'both';
-  if (claude) return 'claude';
-  return codex ? 'codex' : 'none';
+/**
+ * Every reviewer that can run, when its author chose nothing, named as a choice (shared/agents.cjs, reviewChoiceOf):
+ * all of them, else what there is, else none. Grok Build and OpenCode are in it when `available` says they can run.
+ * `expanded: false` is the previous default, Claude Code and Codex only, for an author who has not accepted the wider
+ * one (userSettings.mjs, reviewDefault `legacy`).
+ * @param {Record<string, boolean>} available
+ * @param {{expanded?: boolean}} [opts]
+ * @returns {string}
+ */
+export function bestChoice(available, { expanded = true } = {}) {
+  const ids = expanded ? agentsRegistry.REVIEW_AGENT_IDS : ['claude', 'codex'];
+  return agentsRegistry.reviewChoiceOf(ids.filter((id) => available?.[id]));
 }
 
 /**
@@ -81,6 +94,7 @@ export function bestChoice({ claude, codex }) {
  *          userSettings?: {reviewAgents: (login: string) => string|null, usesOwnTokenForShared: (login: string) => boolean,
  *            usesOwnCodexForReviews: (login: string) => boolean, codexAuth: (login: string) => Promise<string|null>,
  *            usesOwnAgentForReviews?: (login: string, id: string) => boolean,
+ *            usesExpandedReviewDefault?: (login: string) => boolean,
  *            agentAuth?: (login: string, id: string) => Promise<string|null>}|null,
  *          now?: () => number}} deps
  *   `connected` says whether the console has each team key: Anthropic's and OpenAI's
@@ -107,6 +121,13 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
     }
   }
 
+  // False only for an author whose Grok Build or OpenCode sign-in was already saved when the default grew, or was found
+  // in the secret store without a save on My settings since, and who has not set reviews back to the default. Missing
+  // means the wider default, so a stand-in without the method does too.
+  function expandedDefault(login) {
+    return !login || userSettings?.usesExpandedReviewDefault?.(login) !== false;
+  }
+
   // The author's own sign-in for an agent with no team key (Grok Build, OpenCode), when they use it for reviews and it
   // can still be used: what the review records of it (never the credential itself), else why not. `off` says they did
   // not turn it on for reviews, or saved none, which is no failure.
@@ -128,7 +149,8 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
 
   /**
    * What `login` may choose from, and what they get with no choice saved. `ownWhy` says, for Grok Build and OpenCode
-   * turned on for reviews, why one cannot run now (an expired login, no provider a review runs on).
+   * turned on for reviews, why one cannot run now (an expired login, no provider a review runs on). `expanded` is false
+   * while this author still has the previous default.
    * @param {string|null} login  null for nobody's own sign-ins: team keys only
    */
   async function options(login) {
@@ -139,7 +161,8 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
     const available = { claude: team.claude || own.claude, codex: team.codex || own.codex };
     for (const id of OWN_ONLY_REVIEWERS) available[id] = own[id];
     const ownWhy = Object.fromEntries(OWN_ONLY_REVIEWERS.map((id) => [id, others[id].use || others[id].off ? null : others[id].why]));
-    return { available, own, ownWhy, best: bestChoice(available) };
+    const expanded = expandedDefault(login);
+    return { available, own, ownWhy, best: bestChoice(available, { expanded }), expanded };
   }
 
   /**
@@ -153,7 +176,7 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
    * @param {{login?: string|null}} [args]  the pull request's author, or null when nobody's own sign-in may be used
    * @returns {Promise<{agents: string[], choice: string|null, codexLogin: string|null, codexVia: 'chatgpt'|'key'|null,
    *   codexAccount?: string, ownSignIns?: Record<string, {login: string, via?: string, provider?: string}>, why: string|null,
-   *   keysUnread: boolean}>}
+   *   keysUnread: boolean, expanded: boolean}>}
    */
   async function forReview({ login = null } = {}) {
     const team = await teamKeys();
@@ -166,13 +189,15 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
     const chosen = agentsRegistry.reviewersOf(saved);
     const choice = chosen ? saved : null;
     const why = [];
-    let agents = chosen ?? agentsRegistry.REVIEW_PRESETS[bestChoice(available)];
+    const expanded = expandedDefault(login);
+    const fallback = agentsRegistry.reviewersOf(bestChoice(available, { expanded }));
+    let agents = chosen ?? fallback;
     if (chosen && agents.some((a) => !available[a])) {
       const left = agents.filter((a) => available[a]);
       why.push(`the author chose ${choice}, which this console cannot run now`);
       // Grok Build and OpenCode run on nothing but the author's own sign-in: why each was left out.
       for (const id of agents.filter((a) => !available[a] && OWN_ONLY_REVIEWERS.includes(a))) why.push(`${agentsRegistry.agent(id).product} left out: ${others[id].why}`);
-      agents = left.length ? left : agentsRegistry.REVIEW_PRESETS[bestChoice(available)];
+      agents = left.length ? left : fallback;
     }
     if (team.why) why.push(team.why);
     let codex = { codexLogin: null, codexVia: null };
@@ -191,7 +216,7 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
     for (const o of unread) if (!why.some((w) => w.endsWith(o.why))) why.push(o.why);
     return {
       agents, choice, ...codex, ...(Object.keys(ownSignIns).length ? { ownSignIns } : {}),
-      why: why.length ? why.join('; ') : null, keysUnread: Boolean(team.why || unread.length),
+      why: why.length ? why.join('; ') : null, keysUnread: Boolean(team.why || unread.length), expanded,
     };
   }
 

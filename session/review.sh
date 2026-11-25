@@ -9,7 +9,7 @@
 # the higher merge risk. Codex reaches OpenAI through the console either way (console/openaiProxy.mjs), so the session
 # holds no one's sign-in: on a key (REVIEW_CODEX_AUTH=key, the author's or the team's), or on the author's ChatGPT login
 # (=chatgpt), for which codex holds a stand-in whose access token is the SESSION_TOKEN.
-# With REVIEW_AGENTS naming grok or opencode (the author's own choice on My settings), Grok Build or OpenCode review the
+# With REVIEW_AGENTS naming grok or opencode (My settings' reviews: the default, or the author's own choice), Grok Build or OpenCode review the
 # same way, in .review/grok/ and .review/opencode/, on the author's own sign-in, which the console adds to their calls
 # (console/reviewAgentProxy.mjs): each holds the SESSION_TOKEN as its API key, with its model API pointed at the console.
 # There is no team key for them, and the session never holds the author's sign-in.
