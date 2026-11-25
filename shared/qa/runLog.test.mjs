@@ -102,3 +102,9 @@ test('a quoted credential in a tool error keeps the event valid JSON, so the err
   assert.match(text, /Tool errors: 1/);
   assert.doesNotMatch(text, /opaqueValue123/);
 });
+
+test('a credential in a prefixed name, as an app prints its env file, is taken out', () => {
+  const clean = redact('STRIPE_SECRET_KEY=opaqueStripe99\nDATABASE_PASSWORD: opaqueDb77\nMY_API_TOKEN=opaqueTok55\nPORT=3000', {});
+  assert.doesNotMatch(clean, /opaqueStripe99|opaqueDb77|opaqueTok55/);
+  assert.match(clean, /PORT=3000/);
+});

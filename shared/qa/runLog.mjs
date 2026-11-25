@@ -31,7 +31,7 @@ const PATTERNS = [
   /\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]*/g,
   /\b(Bearer|Basic|token)\s+[A-Za-z0-9._~+/=\-]{8,}/gi,
   // `name=value`, `name: value` and JSON's `"name": "value"`, the value quoted or not.
-  /([?&;]|\b)((?:access_?|auth_?|api_?|private_?|client_?)?(?:token|secret|password|passwd|key|signature|sig|credential)s?|authorization|_authToken)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'[^']*'|[^\s&;,"'}\]]+)/gi,
+  /([?&;]|\b)((?:[A-Za-z0-9]+_)*(?:access_?|auth_?|api_?|private_?|client_?)?(?:token|secret|password|passwd|key|signature|sig|credential)s?|authorization|_authToken)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'[^']*'|[^\s&;,"'}\]]+)/gi,
   /\b([a-z][a-z0-9+.\-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/gi,
 ];
 
