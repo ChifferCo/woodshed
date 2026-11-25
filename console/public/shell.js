@@ -292,9 +292,9 @@
   const MOVING_IDS = new Set(['nextSession', 'prevSession', 'needsYou', 'tab', 'cancel']);
   const MODIFIERS = new Set(['Shift', 'Meta', 'Control', 'Alt', 'AltGraph', 'CapsLock']);
   function onKey(e, inFrame, modOnly = false) {
+    hideHint();
     // Shift pressed on its way to a digit (AZERTY) is not a key of the mode, nor the one after G.
     if (MODIFIERS.has(e.key)) return;
-    hideHint();
     // Esc ends ⌘B's mode and goes no further: not to a terminal, whose agent would take it as its own Esc. With the
     // palette or the sheet open, it also closes that, below.
     if (e.key === 'Escape' && moving) {
@@ -310,6 +310,12 @@
       if (!palette.hidden && actionsFor) return;
       e.preventDefault();
       closeAll();
+      return;
+    }
+    // A key held down in ⌘B's mode moves once, and its repeats go nowhere: not into a field that has the focus still.
+    if (e.repeat && moving) {
+      e.preventDefault();
+      e.stopPropagation();
       return;
     }
     if (e.repeat || e.isComposing) return;
