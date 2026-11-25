@@ -164,7 +164,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   placeholder names the pick.
 - Under the cards, the picked agent's Model, Effort and Permissions are a panel headed `<Agent>'s settings`: the pick's
   `amber` border on `amber-tint`, the field labels in `amber-ink`, open on every width. Each agent keeps its own
-  settings while the page is open, so picking Codex again finds what was picked for it. Never orange: the panel is the
+  settings while the page is open, a session started from it included, so picking Codex again finds what was picked for it. Never orange: the panel is the
   pick's, not the page's primary action.
 
 ## Work on

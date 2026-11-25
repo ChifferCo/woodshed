@@ -849,7 +849,7 @@ it runs on; only the agents set up to run can be picked (`agents` in `GET /api/m
 Codex with a Codex sign-in saved or the team's `openai-api-key`. The others stay shown, disabled, with a link to their
 box on My settings, and a Codex start with neither is refused (409). Each card says, in one line, the model, effort and
 permissions that agent would start with; the picked one's menus are a panel under the cards, and each agent keeps its own
-while the page is open. Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
+while the page is open, so the next session started from it offers them again. Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
 (`codexModels.mjs`): `GET https://chatgpt.com/backend-api/codex/models?client_version=<codex's version>`, asked with
 your own Codex sign-in, or the team's OpenAI key with none, kept 10 minutes. A model OpenAI ships shows the day it
 ships, and a start is refused with a model or effort the list does not offer. The console never refreshes a ChatGPT
