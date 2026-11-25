@@ -223,12 +223,20 @@
     const bare = shortcut.bare && shortcut.bare.split(' ').map((k) => h('kbd', null, k));
     return [combo, combo && bare && h('span', { class: 'kor' }, 'or'), bare].filter(Boolean);
   }
-  const keys = sheet('Keyboard shortcuts', [
-    K.SHORTCUTS.filter((s) => !s.bell || notifications().available).map((s) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, keyCaps(s)), h('div', null, s.id === 'keys' ? 'This list' : s.what, s.where && h('span', { class: 'kwhere' }, ` on ${s.where}`)))),
-    h('p', { class: 'sheet-note' }, MAC
-      ? 'Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal\'s. A key alone works while you are not typing. J and K move through the rail, 1 to 4 pick a tab, and ⌘B before any of them works even while typing or in a terminal. ⌘K, then a name, jumps to any session.'
-      : 'A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal\'s: click outside it first. J and K move through the rail, 1 to 4 pick a tab, and Ctrl+B before any of them works while typing. Ctrl+K, then a name, jumps to any session.'),
-  ]);
+  // Drawn as it opens, from what the page registered: a page with no rail (My settings) lists no session keys, and
+  // says nothing of them in its note.
+  function keyRows() {
+    const moves = Boolean(page.moveSession);
+    const shown = K.SHORTCUTS.filter((s) => (!s.bell || notifications().available) && (!s.page || page[s.page]));
+    return [
+      shown.map((s) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, keyCaps(s)), h('div', null, s.id === 'keys' ? 'This list' : s.what, s.where && h('span', { class: 'kwhere' }, ` on ${s.where}`)))),
+      h('p', { class: 'sheet-note' }, MAC
+        ? `Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal's. A key alone works while you are not typing. ${moves ? 'J and K move through the rail, 1 to 4 pick a tab, and ⌘B before any of them works even while typing or in a terminal. ' : ''}⌘K, then a name, jumps to any session.`
+        : `A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal's: click outside it first. ${moves ? 'J and K move through the rail, 1 to 4 pick a tab, and Ctrl+B before any of them works while typing. ' : ''}Ctrl+K, then a name, jumps to any session.`),
+    ];
+  }
+  const keys = sheet('Keyboard shortcuts', []);
+  keys.onOpen = () => keys.dialog.querySelector('.sheet-body').replaceChildren(...keyRows().flat());
 
 
   // ---- the prefix's word: what ⌘B waits for, until a key or its time is up ----
@@ -269,6 +277,11 @@
     // Shift pressed on its way to a digit (AZERTY) is not the key after ⌘B or G.
     if (MODIFIERS.has(e.key)) return;
     hideHint();
+    // An Esc that closes the palette or the sheet cancels a waiting ⌘B too: the next key is the page's again.
+    if (e.key === 'Escape' && prefixAt) {
+      prefixAt = 0;
+      prefixHint(false);
+    }
     if (e.key === 'Escape' && (!palette.hidden || !keys.el.hidden)) {
       if (!palette.hidden && actionsFor) return;
       e.preventDefault();
