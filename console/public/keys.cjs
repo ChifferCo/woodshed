@@ -16,7 +16,7 @@
     { id: 'rail', mod: '⌘.', what: 'Show or hide the rail' },
     // Herdr's prefix: ⌘B, then one key, from anywhere, typing or in a terminal (Ctrl+B off a Mac, outside a terminal,
     // where Ctrl+B is tmux's own prefix). AFTER_PREFIX says which keys follow it.
-    { id: 'prefix', mod: '⌘B', what: 'Then J, K, 1–4 or N, even while typing or in a terminal', page: 'moveSession' },
+    { id: 'prefix', mod: '⌘B', what: 'Then J, K, 1–4 or N, even while typing', page: 'moveSession' },
     // Moving through the sessions as Herdr moves through its panes: J and K alone, and ⌥⌘ with an arrow, which a
     // terminal frame passes to the page on a Mac. Only where there is a rail (session.js registers them).
     { id: 'nextSession', mod: '⌥⌘↓', bare: 'J', what: 'Next session in the rail', page: 'moveSession' },
