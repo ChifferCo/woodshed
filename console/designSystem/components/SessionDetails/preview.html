@@ -1,0 +1,27 @@
+<!-- @dsCard group="Overlays" height=380 subtitle="A session's Details, with the sessions it came from and its messages" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
+ .menu{width:300px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--ground);box-shadow:0 6px 20px rgba(27,34,50,.14)}
+ dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;padding:6px 10px;font-size:12.5px}
+ dt{color:var(--meta)}
+ dd{margin:0;min-width:0;overflow-wrap:anywhere;color:var(--ink)}
+ a{color:var(--slate)}
+ .mono{font-family:"JetBrains Mono",ui-monospace,monospace}
+ ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+ li{display:flex;flex-wrap:wrap;column-gap:4px;min-width:0}
+ .dir{color:var(--sub)}
+ .at{color:var(--meta);font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px}
+ .text{flex-basis:100%;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+</style>
+<div class="menu"><dl>
+ <dt>Branch</dt><dd class="mono">woodshed/joel-7cd6208a</dd>
+ <dt>Started by</dt><dd>@octocat, from My Woodshed</dd>
+ <dt>Visible to</dt><dd>Only you</dd>
+ <dt>Started from</dt><dd><a href="#">Plan the billing page</a></dd>
+ <dt>Messages</dt><dd><ul>
+  <li><span class="dir">From</span><a href="#">Plan the billing page</a><span class="at">· 1 min ago</span><span class="text">Customers.</span></li>
+  <li><span class="dir">Asked</span><a href="#">Plan the billing page</a><span class="at">· 2 min ago</span><span class="text">Should NOTES.md be for developers or for customers?</span></li>
+  <li><span class="dir">From</span><a href="#">Plan the billing page</a><span class="at">· 9 min ago</span><span class="text">Write NOTES.md for the billing page, in cents, not floats, with a line per total.</span></li>
+ </ul></dd>
+</dl></div>

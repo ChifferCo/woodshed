@@ -77,3 +77,17 @@ test('a session that asked its starter a question reads as asking its person, an
   assert.deepEqual(JSON.parse(JSON.stringify(W.groupCounts('main', g.kids))), { count: 2, needs: 1 });
   assert.equal(W.displayStatus(mine('working', { askedAt: at(5), state: 'working' })).key, 'working', 'at work again, it is working');
 });
+
+test('Details lists a session\'s messages newest first, naming a session no longer on the list', () => {
+  const s = mine('main', { messages: [
+    { at: at(3), dir: 'in', with: 'kid', question: true, text: 'Developers or customers?' },
+    { at: at(2), dir: 'out', with: 'gone', question: false, text: 'Use cents.' },
+  ] });
+  const lines = JSON.parse(JSON.stringify(W.messageLines(s, [s, mine('kid', { title: 'README summary' })])));
+  assert.deepEqual(lines.map((m) => [m.dir, m.question, m.other.title, m.text]), [
+    ['in', true, 'README summary', 'Developers or customers?'],
+    ['out', false, 'a session no longer on the list', 'Use cents.'],
+  ]);
+  assert.equal(lines[1].other.id, null);
+  assert.equal(JSON.parse(JSON.stringify(W.messageLines(mine('u', { messages: [{ at: at(1), dir: 'out', with: 'x', unconfirmed: true, text: 'Maybe.' }] }), [])))[0].unconfirmed, true);
+});
