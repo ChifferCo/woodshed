@@ -119,6 +119,9 @@ test('1 to 4, or ⌥⌘ with one, pick a tab by its place, and AltGr typing a ch
   assert.equal(match({ key: '5', code: 'Digit5' }), null);
   assert.equal(match({ key: '2', code: 'Numpad2' }), null);
   assert.equal(match({ key: '@', code: 'Digit2', shiftKey: true }), null);
+  assert.equal(match({ key: '2', code: 'Digit2', shiftKey: true }), 'tab', 'AZERTY types 2 with Shift');
+  assert.equal(match({ key: 'é', code: 'Digit2' }), null, 'AZERTY\'s é is not 2');
+  assert.equal(match({ key: '2', code: 'Digit2', shiftKey: true }, { typing: true }), null);
   assert.equal(match({ key: '2', code: 'Digit2' }, { inFrame: true }), null, '2 in a terminal is typed');
   assert.equal(match({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }, { inFrame: true }), 'tab', '⌥ turns the digit into another character on a Mac');
   assert.equal(match({ key: '{', code: 'Digit7', ctrlKey: true, altKey: true }, { typing: true }), null, 'AltGr+7 types {');

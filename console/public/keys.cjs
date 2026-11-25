@@ -115,11 +115,12 @@
     if (where.afterG) return AFTER_G[k.toLowerCase()] && !e.shiftKey ? AFTER_G[k.toLowerCase()] : null;
     if (k === '?') return 'keys';
     if (k === '/') return 'palette';
+    // By the character it types, Shift or not: on AZERTY the digit row needs Shift for 1 to 4, and on QWERTY Shift+1 is !.
+    if (tabOf(e) && k === String(tabOf(e))) return 'tab';
     if (e.shiftKey) return null;
     if (k === 'n' || k === 'N') return 'new';
     if (k === 'j' || k === 'J') return 'nextSession';
     if (k === 'k' || k === 'K') return 'prevSession';
-    if (tabOf(e) && k === String(tabOf(e))) return 'tab';
     if (k === 'g' || k === 'G') return 'g';
     return null;
   }
