@@ -2866,7 +2866,9 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
    PNG) to `POST /qa-poster`, which the fleet keeps through `qaRecordings.mjs` (`qaVideo`, `qaPoster`) for 14 days,
    then the verdict, the report, the commit it tested and the cost to `POST /qa-report` (`qaSessions.mjs` checks it),
    once.
-5. The fleet writes the report into the QA comment, with the still linking to the first video at `/qa/<session id>/video/1` and a link to each, posts the QA check on the commit tested with the verdict and the
+5. The fleet writes the report into the QA comment, with the still linking to the first video at `/qa/<session id>/video/1` and a link to each
+   (on a repo whose project file says `pullRequests.qa.recordings: public`, at `/qa-video/<session id>/<secret>/<n>.webm`,
+   which plays with no sign-in: the session got its secret, `qa.share`, when it started, and pages never see it), posts the QA check on the commit tested with the verdict and the
    report (the decision brief reads the report from there, since sessions can comment as the App but not post a
    check), and stops the session with `QA finished: <verdict>`. It pushes nothing and is not kept, so its databases go
    at the next sweep.

@@ -13,7 +13,7 @@ import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { finishedComment, runningComment } from './qaSessions.mjs';
-import { QA_RECORDING_DAYS, qaVideoPath } from './qaRecordings.mjs';
+import { QA_RECORDING_DAYS, newRecordingSecret, opensPublicVideo, qaPublicVideoPath, qaVideoPath } from './qaRecordings.mjs';
 import { reviewDoneComment, reviewEndedComment, reviewHeading, reviewRunningComment } from './reviewSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
@@ -2364,7 +2364,11 @@ export function createFleet({
     const commentId = state.sessions.filter((s) => isQa(s) && s.number === number && onProject(s, project) && s.qa.commentId).at(-1)?.qa.commentId ?? null;
     const session = await createSession({
       kind: 'pr', number, title: `QA: ${pull.title}`, startedBy: login, trigger: 'qa', branch: pull.head.ref, project,
-      qa: { base: pull.base.ref, sha: pull.head.sha, heading: qa.heading, check: qa.check, commentId, ...(teamKeyWhy ? { teamKey: true } : {}) },
+      qa: {
+        base: pull.base.ref, sha: pull.head.sha, heading: qa.heading, check: qa.check, commentId, ...(teamKeyWhy ? { teamKey: true } : {}),
+        // A repo whose recordings are public (qa.recordings) gets its run's videos at names only this secret opens.
+        ...(qa.recordings === 'public' ? { share: newRecordingSecret() } : {}),
+      },
     });
     await postQaComment(session, gh, runningComment({ heading: qa.heading, sessionUrl: await qaSessionUrl(session, project) }));
     console.log('fleet: QA session started', { id: session.id, number, login, why, base: pull.base.ref, ...projectField(project) });
@@ -2441,14 +2445,28 @@ export function createFleet({
     return { saved: true };
   }
 
-  // The links a QA comment gives its recordings, on the console's public address; none without one.
+  // The links a QA comment gives its recordings, on the console's public address; none without one. A public run's
+  // (qa.share) open with no sign-in, so they name the console even where the project file says `consoleLinks: false`:
+  // they are what its repo asked to show, and open nothing else there.
   async function qaRecordingLinks(session, project) {
-    const base = await consoleUrlOf(project);
-    if (!base || !session.qa.videos?.length) return { videos: [], poster: null };
+    const { share } = session.qa;
+    const base = share ? config.publicUrl : await consoleUrlOf(project);
+    if (!base || !session.qa.videos?.length) return { videos: [], poster: null, open: false };
+    const pathOf = (n) => (share ? qaPublicVideoPath(session.id, share, n) : qaVideoPath(session.id, n));
     return {
-      videos: session.qa.videos.map((v) => ({ url: `${base}${qaVideoPath(session.id, v.n)}`, bytes: v.bytes })),
+      videos: session.qa.videos.map((v) => ({ url: `${base}${pathOf(v.n)}`, bytes: v.bytes })),
       poster: session.qa.poster ? `${base}${session.qa.poster}` : null,
+      open: Boolean(share),
     };
+  }
+
+  /**
+   * A public run's video, for anyone with its name (GET /qa-video/…): the session its id names, if its secret matches.
+   * @returns {object|null}  the session, or null for a name that opens nothing
+   */
+  function publicQaVideo(id, secret, n) {
+    const session = find(id);
+    return session && isQa(session) && opensPublicVideo(session, { secret, n }) ? session : null;
   }
 
   /**
@@ -2461,8 +2479,8 @@ export function createFleet({
     const project = projectFor(config, session);
     const gh = githubOf(project);
     const sessionUrl = await qaSessionUrl(session, project);
-    const { videos, poster } = await qaRecordingLinks(session, project);
-    await postQaComment(session, gh, finishedComment({ heading: session.qa.heading, verdict, report, sessionUrl, videos, poster }));
+    const { videos, poster, open } = await qaRecordingLinks(session, project);
+    await postQaComment(session, gh, finishedComment({ heading: session.qa.heading, verdict, report, sessionUrl, videos, poster, open }));
     // The check carries the report too: sessions comment as the App, but cannot post a check, so the brief reads it here.
     // The session runs the pull request's code, which can send any commit: only this pull request's gets a check.
     const ours = sha === session.qa.sha || sha === (await safely('QA pull request', () => gh.pull(session.number)))?.head?.sha;
@@ -3176,7 +3194,7 @@ export function createFleet({
   return {
     noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
     createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
-    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
+    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, publicQaVideo, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),
   };

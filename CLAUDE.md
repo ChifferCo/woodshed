@@ -880,7 +880,10 @@ URL on top of each env file's Repo settings values
   it was cut short). A `409` is a second recording sent while one was on its way, or one after the report. The console
   logs `fleet: QA video saved` and `fleet: QA poster saved`, or `sessionApi: a QA video not saved` with the store's
   error. A comment with no recording line though the videos were saved means the console has no public address for it
-  (`fleet: comment names no console address`). Recordings are kept 14 days (`qaRecordings: old recordings deleted`):
+  (`fleet: comment names no console address`): a public repo's project file says `consoleLinks: false`, which leaves
+  the recordings out too unless it also says `pullRequests.qa.recordings: public`. A public video's link that says it is
+  no longer kept, though its run is within 14 days, names another secret than its run's, or a run started before the
+  project file said `public`. Recordings are kept 14 days (`qaRecordings: old recordings deleted`):
   after that the link says so and the still shows as broken. On AWS they are in the homes bucket under `_qa/`
   (`aws s3 ls s3://<prefix>-homes-<account id>/_qa/`), on a local install in the state folder's `qa-recordings/`.
 - **A QA session finished but its pull request has no QA check.** `fleet: QA finished` says `checkPosted: false`, and

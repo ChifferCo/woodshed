@@ -557,8 +557,12 @@ pull request starts a QA session on its branch. It needs nothing in the repo's C
   (`console/qaRecordings.mjs`). A video plays for whoever is signed in to the console and may open the QA session, which
   stays on the list as long as its recordings do (unless someone removes it by hand). The
   still alone needs no sign-in, since GitHub fetches a comment's images with none: it sits at a name nobody can guess,
-  and shows as a broken image once deleted. GitHub plays no video an app links, only one attached by hand. Each later
-  run writes over that comment. It also posts the
+  and shows as a broken image once deleted. GitHub plays no video an app links, only one attached by hand. A public
+  repo's readers are not the console's: with `pullRequests.qa.recordings: public` its comment links each video at
+  `/qa-video/<session id>/<secret>/<n>.webm`, which plays with no sign-in, the secret made for that run alone. Those
+  links name the console's address even where the project file says `consoleLinks: false`. They open only that run's
+  videos: the session and the rest of the console stay behind sign-in, and the comment's other links stay out. Each
+  later run writes over that comment. It also posts the
   `pullRequests.qa.check` check on the commit tested, with the verdict and the report. The decision brief reads a QA
   session's report from that check, never from a comment: sessions comment as the same App, but cannot post a check.
   An installation that has not accepted the App's Checks: write gets no check (the console logs `fleet: QA check

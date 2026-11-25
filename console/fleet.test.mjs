@@ -2781,6 +2781,50 @@ test('a QA session\'s videos and still are kept by the console, and its comment 
   assert.equal(session.qa.videos.length, 2, 'kept past the report');
 });
 
+test('a public repo\'s QA run links its videos with no sign-in, while its comments still name no console otherwise', async () => {
+  const qaRecordings = {
+    async saveVideo(id, n) { return { key: `${id}/video-${n}.webm` }; },
+    async savePoster(id) { return { path: `/qa-poster/${id}/${'e'.repeat(32)}.png` }; },
+  };
+  const gates = { ...QA_GATES, qa: { ...QA_GATES.qa, recordings: 'public' } };
+  const { fleet, calls } = qaSetup({ qaRecordings, gates, consoleLinks: async () => false });
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const [session] = fleet.sessions();
+  const { share } = session.qa;
+  assert.match(share, /^[0-9a-f]{32}$/);
+  assert.doesNotMatch(calls.comments.at(-1).body, /console\.test/, 'the running comment links no session');
+  await fleet.qaVideo(session, Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1]));
+  await fleet.qaVideo(session, Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 2]));
+  await fleet.qaPoster(session, Buffer.from('png'));
+  await fleet.qaFinished(session, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  await settle();
+  const body = calls.comments.at(-1).body;
+  const base = `https://console.test/qa-video/${session.id}/${share}`;
+  assert.ok(body.includes(`[![The QA run's recording](https://console.test/qa-poster/${session.id}/${'e'.repeat(32)}.png)](${base}/1.webm)`), body);
+  assert.ok(body.includes(`[page 1](${base}/1.webm)`) && body.includes(`[page 2](${base}/2.webm)`), body);
+  assert.doesNotMatch(body, /sign in to watch/);
+  const others = body.replaceAll(`https://console.test/qa-video/${session.id}/${share}/`, '').replaceAll(`https://console.test/qa-poster/${session.id}/`, '');
+  assert.doesNotMatch(others, /console\.test/, 'no session link, no signed-in video link');
+
+  assert.equal(fleet.publicQaVideo(session.id, share, 2), session);
+  assert.equal(fleet.publicQaVideo(session.id, share, 3), null, 'a video it never sent');
+  assert.equal(fleet.publicQaVideo(session.id, 'f'.repeat(32), 1), null, 'another secret');
+  assert.equal(fleet.publicQaVideo('0000aaaa', share, 1), null, 'another session');
+});
+
+test('a QA run on a repo whose recordings are signed-in keeps them behind sign-in, with no public name', async () => {
+  const qaRecordings = { async saveVideo(id, n) { return { key: `${id}/video-${n}.webm` }; }, async savePoster() { return { path: null }; } };
+  const { fleet, calls } = qaSetup({ qaRecordings, gates: { ...QA_GATES, qa: { ...QA_GATES.qa, recordings: 'signed-in' } } });
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const [session] = fleet.sessions();
+  assert.equal(session.qa.share, undefined);
+  await fleet.qaVideo(session, Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1]));
+  await fleet.qaFinished(session, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  await settle();
+  assert.match(calls.comments.at(-1).body, /\(sign in to watch\): \[watch\]\(https:\/\/console\.test\/qa\/[0-9a-f]{8}\/video\/1\)/);
+  assert.equal(fleet.publicQaVideo(session.id, '0'.repeat(32), 1), null);
+});
+
 test('a console that keeps no QA recordings refuses a video, and the comment has no recording line', async () => {
   const { fleet, calls } = qaSetup();
   await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });

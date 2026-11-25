@@ -250,6 +250,11 @@ pullRequests:
     # Default: false. With `runner: woodshed` and a `review`, true has the console add the label to each new pull request.
     # QA still starts only once the review approves; removing the label opts a pull request out.
     autoLabel: false
+    # Default: signed-in. Who may watch a QA session's browser recordings from its comment, with `runner: woodshed`:
+    # `signed-in` whoever may open the session on the console, `public` anyone with the comment's link, which names the
+    # console's address even with `consoleLinks: false`, at an unguessable name. For a public repo, whose readers are not
+    # the installation's: only the videos and their still open, never the session or anything else on the console.
+    recordings: signed-in
   # Default: null. The check run that rates the merge; it needs `review`, whose workflow must post it.
   mergeRisk:
     # Required.

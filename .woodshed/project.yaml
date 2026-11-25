@@ -56,3 +56,5 @@ pullRequests:
     label: woodshed-qa
     check: QA
     heading: '## QA'
+    # This repo is public: anyone reading a QA comment may watch its recording, though nothing else on the console.
+    recordings: public

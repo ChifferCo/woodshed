@@ -8,12 +8,15 @@
 //                                               console from its folder, so a browser plays it and seeks in it
 //   GET /qa-poster/<session id>/<secret>.png    with no sign-in, since GitHub's image proxy fetches every image a
 //                                               comment shows without one: the still alone, at an unguessable name
+//   GET /qa-video/<session id>/<secret>/<n>.webm  with no sign-in, only for a run whose project file says
+//                                               `pullRequests.qa.recordings: public` (a public repo): the same video,
+//                                               at the name of the run's own secret, which the session keeps
 //
 // The store (providers/aws/recordingStore.mjs, providers/local/recordingStore.mjs) keeps each under the same key:
 //   <session id>/video-<n>.webm
 //   <session id>/poster-<secret>.png
 
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 
 export const QA_RECORDING_DAYS = 14;
@@ -24,6 +27,7 @@ const TYPES = { webm: 'video/webm', png: 'image/png' };
 // The videos' route is the page a comment links to; the poster's sits outside sign-in.
 export const QA_VIDEO_RE = /^\/qa\/([0-9a-f]{8})\/video\/([1-9][0-9]?)$/;
 export const QA_POSTER_RE = /^\/qa-poster\/([0-9a-f]{8})\/([0-9a-f]{32})\.png$/;
+export const QA_PUBLIC_VIDEO_RE = /^\/qa-video\/([0-9a-f]{8})\/([0-9a-f]{32})\/([1-9][0-9]?)\.webm$/;
 
 export function isPng(buffer) {
   return buffer.length > 8 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
@@ -32,6 +36,29 @@ export function isPng(buffer) {
 /** @returns {string}  where a run's video `n` is watched, for the QA comment */
 export function qaVideoPath(id, n) {
   return `/qa/${id}/video/${n}`;
+}
+
+/** @returns {string}  where anyone with the link watches a public run's video `n` */
+export function qaPublicVideoPath(id, secret, n) {
+  return `/qa-video/${id}/${secret}/${n}.webm`;
+}
+
+/** @returns {string}  a public run's secret, the only lock on its videos' public names */
+export function newRecordingSecret() {
+  return randomBytes(16).toString('hex');
+}
+
+/**
+ * Whether a public video's name opens a session's recordings: its own secret, compared in constant time, and one of the
+ * videos it sent. A session with no secret (signed-in recordings) opens none.
+ * @param {object|null} session
+ * @param {{secret: string, n: number}} asked
+ */
+export function opensPublicVideo(session, { secret, n }) {
+  const own = session?.qa?.share;
+  if (typeof own !== 'string' || !SECRET_RE.test(own) || !SECRET_RE.test(String(secret))) return false;
+  if (!timingSafeEqual(Buffer.from(own), Buffer.from(secret))) return false;
+  return (session.qa.videos ?? []).some((v) => v.n === n);
 }
 
 export function contentTypeOf(key) {

@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createRecordingStore } from '../providers/local/recordingStore.mjs';
-import { QA_POSTER_RE, QA_RECORDING_DAYS, QA_VIDEO_RE, createQaRecordings, isPng, qaVideoPath } from './qaRecordings.mjs';
+import { QA_POSTER_RE, QA_PUBLIC_VIDEO_RE, QA_RECORDING_DAYS, QA_VIDEO_RE, createQaRecordings, isPng, newRecordingSecret, opensPublicVideo, qaPublicVideoPath, qaVideoPath } from './qaRecordings.mjs';
 
 const ID = 'ab12cd34';
 const DAY = 86_400_000;
@@ -95,4 +95,20 @@ test('a key that is not a recording\'s never reaches the folder', async (t) => {
   await assert.rejects(recordings.saveVideo('../../etc', 1, Buffer.from('x')), /not a session id/);
   const store = createRecordingStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'qa-recordings-')) });
   await assert.rejects(store.put('ab12cd34/../../x.webm', Buffer.from('x')), /not a recording name/);
+});
+
+test('a public video\'s name opens only its own run\'s videos, by the secret the run keeps', () => {
+  const share = newRecordingSecret();
+  assert.match(share, /^[0-9a-f]{32}$/);
+  assert.notEqual(newRecordingSecret(), share);
+  const session = { qa: { share, videos: [{ n: 1, bytes: 1 }, { n: 2, bytes: 1 }] } };
+  assert.equal(opensPublicVideo(session, { secret: share, n: 2 }), true);
+  assert.equal(opensPublicVideo(session, { secret: share, n: 3 }), false, 'a video it never sent');
+  assert.equal(opensPublicVideo(session, { secret: newRecordingSecret(), n: 1 }), false, 'another secret');
+  assert.equal(opensPublicVideo(session, { secret: share.slice(0, 31), n: 1 }), false, 'a secret cut short');
+  assert.equal(opensPublicVideo({ qa: { videos: [{ n: 1 }] } }, { secret: share, n: 1 }), false, 'a signed-in run has no public name');
+  assert.equal(opensPublicVideo(null, { secret: share, n: 1 }), false);
+  const path = qaPublicVideoPath('0a1b2c3d', share, 1);
+  assert.equal(path, `/qa-video/0a1b2c3d/${share}/1.webm`);
+  assert.deepEqual(QA_PUBLIC_VIDEO_RE.exec(path).slice(1), ['0a1b2c3d', share, '1']);
 });
