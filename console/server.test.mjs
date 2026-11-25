@@ -296,7 +296,7 @@ test('a stopped session\'s Chat reads the conversation it kept, only for whoever
   };
 
   assert.deepEqual(await get('0a1b2c3d'), { status: 200, body: { ...conversation, saved: true, savedAt: at } });
-  assert.deepEqual(await get('0a1b2c3d', '?since=1764064800000'), { status: 200, body: { agent: 'claude', unchanged: true, writtenAt: 1764064800000 } });
+  assert.deepEqual(await get('0a1b2c3d', '?since=1764064800000'), { status: 200, body: { agent: 'claude', unchanged: true, writtenAt: 1764064800000, savedAt: at } });
   assert.equal((await get('0a1b2c3d', '?since=5')).body.entries.length, 2, 'another since: the whole of it');
   assert.equal((await get('1b2c3d4e')).body.savedAt, at, 'a shared session\'s, with the record\'s time when the file has none');
   assert.equal((await get('2c3d4e5f')).status, 409, 'nothing kept: not running, as before');
