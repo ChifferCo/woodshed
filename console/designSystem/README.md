@@ -157,7 +157,8 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## Agent
 
-- New session's **Agent** is choice cards (`components/ChoiceCards`), between Project and Prompt: every agent, each its
+- New session's **Agent** is choice cards (`components/ChoiceCards`), under the prompt and Continue a PR or branch, right
+  over Model, effort and permissions: every agent, each its
   name and what it runs on (`Your Claude plan`), the pick in the `amber` outline. An agent with no sign-in saved stays,
   disabled, its line a link to its box on My settings. The prompt's placeholder names the pick.
 - Model, effort and permissions follow the pick, under a fold of their own (**Model, effort and permissions**), open on

@@ -728,11 +728,12 @@
     // Where a blocked repo's fix card goes, in place of the rest of the form: the picker above stays.
     const blockedSlot = h('div', { class: 'launch-setup', hidden: true });
     const body = h('div', { class: 'launch-body' },
-      agent.el,
       field('l-prompt', 'Prompt', promptWrap, 'optional when continuing a PR or branch: opens its review'),
       attachments.el, attachments.chips,
       // No name to give: the console names the session from its prompt, and its page offers a rename once it has.
       field('l-on', 'Continue a PR or branch', pulls.el, 'optional: leave empty to start a new branch'),
+      // The agent sits over its own model, effort and permissions, after what it is asked to do.
+      agent.el,
       options,
       error,
       h('div', { class: 'launch-actions' }, start, note));
