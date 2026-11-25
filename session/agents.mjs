@@ -146,7 +146,7 @@ export async function openRollout(shellPid, codexHome, { descendants = descendan
  *   agents too (statusd's WOODSHED_TERMINAL)
  */
 export function createAgents({
-  run, repoDir, bin, claudeDir, codexHome, claudeFlagsFile, codexReady, codexEnv = async () => ({ env: {} }), stateDir = '/tmp', uploadsDir = '/tmp/uploads',
+  run, repoDir, bin, claudeDir, codexHome, claudeFlagsFile, codexReady, claudeEnv = async () => ({ env: {} }), codexEnv = async () => ({ env: {} }), stateDir = '/tmp', uploadsDir = '/tmp/uploads',
   tainted = () => false, now = Date.now, openRollout: findRollout = openRollout, log = console, terminal = 'tmux', hcBin = 'hc',
 }) {
   // Where an agent runs: its tmux session, or its Herdr terminal. Either is made with a shell in the checkout, the agent
@@ -376,7 +376,7 @@ export function createAgents({
   }
 
   // A start once its checks passed: its terminal, its command line typed in, and it on the list.
-  async function launch(options, { claudeFlags, env }) {
+  async function launch(options, { claudeFlags, env, cleanup }) {
     let n = 2;
     while (agents.has(`agent-${n}`)) n++;
     const id = `agent-${n}`;
@@ -391,7 +391,7 @@ export function createAgents({
     const agentEnv = { WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_AGENT_ID: id, ...env };
     await terms.make(id, agentEnv);
     const a = {
-      id, ...options, conversation, stateFile, startedAt: now(), io: terms.io(id), lock: createPaneLock(),
+      id, ...options, conversation, stateFile, cleanup, startedAt: now(), io: terms.io(id), lock: createPaneLock(),
       held: [], delivered: [], refused: [], leftInBox: null, lastSent: null, lastState: null, rollout: null, rolloutAt: 0,
     };
     if (conversation) claimedClaude.add(`${conversation}.jsonl`);
@@ -431,9 +431,11 @@ export function createAgents({
       let claudeFlags = '';
       let env = {};
       let undo = null;
+      let cleanup = null;
       if (options.agent === 'claude') {
         claudeFlags = await fs.readFile(claudeFlagsFile, 'utf8').catch(() => null);
         if (claudeFlags === null) throw Object.assign(new Error('this session started before it could start another claude: start a new session'), { status: 409 });
+        ({ env, undo = null, cleanup = null } = await claudeEnv(typeof body?.claudeToken === 'string' ? body.claudeToken.trim() : ''));
       } else if (!(await codexReady())) {
         throw Object.assign(new Error('codex is not set up in this session: start a new session for it'), { status: 409 });
       } else {
@@ -441,7 +443,7 @@ export function createAgents({
         ({ env, undo = null } = await codexEnv(typeof body?.codexAuth === 'string' && body.codexAuth.trim() ? body.codexAuth : null));
       }
       try {
-        return await launch(options, { claudeFlags, env });
+        return await launch(options, { claudeFlags, env, cleanup });
       } catch (err) {
         await undo?.().catch(() => {});
         throw err;
@@ -452,18 +454,20 @@ export function createAgents({
       const a = find(id);
       agents.delete(id);
       await terms.end(id);
+      await a.cleanup?.();
       log.log('agents: agent stopped', { id, agent: a.agent });
       return { stopped: id };
     },
 
     /** Every one stopped: the session is locked down (taint), or stopping. */
     async stopAll(why) {
-      const ids = [...agents.keys()];
-      for (const id of ids) {
-        agents.delete(id);
-        await terms.end(id);
+      const stopped = [...agents.values()];
+      for (const a of stopped) {
+        agents.delete(a.id);
+        await terms.end(a.id);
+        await a.cleanup?.();
       }
-      if (ids.length) log.log('agents: every agent stopped', { why, stopped: ids.length });
+      if (stopped.length) log.log('agents: every agent stopped', { why, stopped: stopped.length });
     },
 
     /** The conversation, for the Chat tab, as statusd's GET /transcript reads the session's own. */

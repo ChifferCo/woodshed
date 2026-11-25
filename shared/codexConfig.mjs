@@ -9,7 +9,8 @@
 //     typed in, never in the shared copy, which the person's computer and their other sessions read. The console refuses
 //     a copy holding one.
 //
-//   node codexConfig.mjs trust <config.toml> <dir>   adds `[projects."<dir>"] trust_level = "trusted"` unless it is there
+//   node codexConfig.mjs trust <config.toml> <dir>      adds trust for the checkout unless already set
+//   node codexConfig.mjs untrust <config.toml> <dir>    explicitly marks the checkout untrusted
 
 import fs from 'node:fs';
 import { isMain } from './isMain.mjs';
@@ -500,13 +501,21 @@ export function withTrusted(text, dir) {
   return compose(text, readToml(`[${keyText(['projects', dir])}]\ntrust_level = "trusted"\n`));
 }
 
-if (isMain(import.meta.url) && process.argv[2] === 'trust') {
-  const [, , , file, dir] = process.argv;
+function withUntrusted(text, dir) {
+  const statements = readToml(text);
+  if (!statements) throw new Error('cannot mark the checkout untrusted in unreadable Codex config');
+  const project = keyText(['projects', dir]);
+  const remaining = statements.filter((s) => unitOf(s) !== project);
+  return compose(textOf(tidy(remaining)), readToml(`[${project}]\ntrust_level = "untrusted"\n`));
+}
+
+if (isMain(import.meta.url) && ['trust', 'untrust'].includes(process.argv[2])) {
+  const [, , action, file, dir] = process.argv;
   let text = '';
   try {
     text = fs.readFileSync(file, 'utf8');
   } catch (err) {
     if (err.code !== 'ENOENT') throw err;
   }
-  fs.writeFileSync(file, withTrusted(text, dir), { mode: 0o600 });
+  fs.writeFileSync(file, action === 'untrust' ? withUntrusted(text, dir) : withTrusted(text, dir), { mode: 0o600 });
 }
