@@ -930,6 +930,46 @@
     refresh();
   }
 
+  // The rail's groups (W.railGroups), for one of the person's own private sessions: out of the group it is in, or under
+  // another of theirs that runs, as a piece of its work. Never under itself or one in its own group.
+  function groupChoices(s) {
+    if (!W.isPrivate(s) || !W.sameLogin(s.owner, data.login)) return null;
+    const { kids, parentOf } = W.railGroups(data.sessions);
+    const inside = new Set([s.id]);
+    for (const k of inside) for (const x of kids.get(k) ?? []) inside.add(x.id);
+    const parent = parentOf.get(s.id) ?? null;
+    const under = data.sessions.filter((x) => W.isPrivate(x) && W.sameLogin(x.owner, data.login) && W.isLive(x) && !inside.has(x.id) && x.id !== parent?.id);
+    return { parent, under };
+  }
+
+  function groupActions(s) {
+    const choices = groupChoices(s);
+    if (!choices) return [];
+    return [
+      choices.parent && { label: 'Move out of its group', note: `Show it on its own, not under “${choices.parent.title}”`, run: () => regroup(s, null) },
+      choices.under.length && { label: 'Put under…', note: 'Show it under another of your running sessions, as a piece of its work: that session can follow it', run: () => pickGroup(s, choices.under) },
+    ].filter(Boolean);
+  }
+
+  async function pickGroup(s, under) {
+    const picked = await W.askChoice({
+      title: 'Put this session under another', label: 'Under', goLabel: 'Move',
+      options: under.map((x) => ({ value: x.id, label: x.title })),
+    });
+    if (picked) await regroup(s, picked);
+  }
+
+  async function regroup(s, under) {
+    try {
+      await W.postJson(`/api/sessions/${s.id}/group`, { under });
+      const to = under && data.sessions.find((x) => x.id === under);
+      W.shell.toast(to ? `Moved under ${to.title}` : 'Moved out of its group');
+    } catch (err) {
+      W.shell.toast(`Not moved: ${err.message}`);
+    }
+    refresh();
+  }
+
   // A card's ⋯ menu, after the shed's: what can be done to this session, each with what it does. Ending ones last.
   function cardActions(s) {
     const live = W.isLive(s);
@@ -951,6 +991,7 @@
         label: 'Hand off…', note: 'Carry its work on in a new session with another agent, such as Codex or Claude Code', run: () => handOff(s),
       },
       { label: 'Rename…', note: 'Give it a new name, the one the rail and its page show', run: () => rename(s) },
+      ...groupActions(s),
       live && s.kind !== 'ask' && W.canExtend(s, data) && { label: 'Extend 1 hour', note: `${W.pausesIn(s, data)}: put it off by an hour`, run: async () => { await W.extendSession(s); refresh(); } },
       W.ownsLimits(s, data) && { label: 'Pause and stop…', note: 'How long this session alone waits for input before it pauses, and runs before it stops', run: () => editLimits(s) },
       { label: isPinned(s) ? 'Unpin' : 'Pin', note: 'Keep it at the top of its group. Only you see your pins', run: () => setPinned(s, !isPinned(s)) },
@@ -1756,6 +1797,8 @@
       canShareApp(s) && { group: 'App', label: 'Share the app…', run: () => W.shareApp(s, { onChange: render }) },
       s.branch && { group: 'Session', label: 'Open the review', run: open('review') },
       { group: 'Session', label: 'Rename it', run: () => rename(s) },
+      groupChoices(s)?.parent && { group: 'Session', label: 'Move it out of its group', run: () => regroup(s, null) },
+      groupChoices(s)?.under.length && { group: 'Session', label: 'Put it under another session…', run: () => pickGroup(s, groupChoices(s).under) },
       s.status === 'running' && W.canExtend(s, data) && { group: 'Session', label: 'Extend it by an hour', run: async () => { await W.extendSession(s); refresh(); } },
       W.ownsLimits(s, data) && { group: 'Session', label: 'Change when it pauses and stops…', run: () => editLimits(s) },
       { group: 'Session', label: isPinned(s) ? 'Unpin it' : 'Pin it', run: () => setPinned(s, !isPinned(s)) },

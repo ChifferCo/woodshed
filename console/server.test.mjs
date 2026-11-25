@@ -884,7 +884,7 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
     { path: '/auth/app?id=ID&next=/' },
     { method: 'POST', path: '/api/sessions/ID/stop' }, { method: 'POST', path: '/api/sessions/ID/app/start' }, { method: 'POST', path: '/api/sessions/ID/app/stop' },
     { method: 'POST', path: '/api/sessions/ID/resume' }, { method: 'POST', path: '/api/sessions/ID/delete' },
-    { method: 'POST', path: '/api/sessions/ID/pin' }, { method: 'POST', path: '/api/sessions/ID/rename' },
+    { method: 'POST', path: '/api/sessions/ID/pin' }, { method: 'POST', path: '/api/sessions/ID/rename' }, { method: 'POST', path: '/api/sessions/ID/group' },
     { method: 'POST', path: '/api/sessions/ID/extend' }, { method: 'POST', path: '/api/sessions/ID/limits' },
     { method: 'POST', path: '/api/sessions/ID/upload?name=a.png' }, { path: '/api/sessions/ID/image?path=shot.png' }, { method: 'POST', path: '/api/sessions/ID/scroll' },
     { method: 'POST', path: '/api/sessions/ID/send' }, { method: 'POST', path: '/api/sessions/ID/interrupt' }, { method: 'POST', path: '/api/sessions/ID/answer' }, { path: '/api/sessions/ID/prompt' },
@@ -921,9 +921,19 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
 
 test('pins are the signed-in person\'s, a rename is the session\'s, and the app\'s icons need no sign-in', async (t) => {
   const session = { id: '0a1b2c3d', status: 'running', title: 'Old name', owner: null, startedBy: 'octocat' };
+  // Two of mia-dev's own, for the rail's groups.
+  const main = { id: '1a1a1a1a', kind: 'task', status: 'running', title: 'Main', owner: 'mia-dev', startedBy: 'mia-dev' };
+  const piece = { id: '2b2b2b2b', kind: 'task', status: 'running', title: 'Piece', owner: 'mia-dev', startedBy: 'mia-dev' };
+  const all = [session, main, piece];
+  const regrouped = [];
   const fleet = {
-    sessions: () => [session],
-    find: (id) => (id === session.id ? session : null),
+    sessions: () => all,
+    find: (id) => all.find((x) => x.id === id) ?? null,
+    regroup(s, under) {
+      regrouped.push([s.id, under?.id ?? null]);
+      s.startedFrom = under?.id ?? s.startedFrom;
+      return s;
+    },
     rename(s, title) {
       if (!String(title ?? '').trim()) throw Object.assign(new Error('a name cannot be empty'), { shown: true });
       s.title = title;
@@ -976,6 +986,17 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.equal(session.title, 'New name');
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/rename', { title: '  ' }, as('mia-dev'))).status, 400);
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/rename', { title: 'x' })).status, 401, 'signed out');
+  // Its group on the rail is a private session's owner's alone: a shared session is in none.
+  assert.equal((await post(port, '/api/sessions/0a1b2c3d/group', { under: null }, as('mia-dev'))).status, 403);
+  const moved = await post(port, '/api/sessions/2b2b2b2b/group', { under: '1a1a1a1a' }, as('mia-dev'));
+  assert.equal(moved.status, 200);
+  assert.equal(moved.body.startedFrom, '1a1a1a1a');
+  assert.equal((await post(port, '/api/sessions/2b2b2b2b/group', { under: null }, as('mia-dev'))).status, 200);
+  assert.deepEqual(regrouped, [['2b2b2b2b', '1a1a1a1a'], ['2b2b2b2b', null]], 'its owner\'s two moves, through the fleet');
+  assert.equal((await post(port, '/api/sessions/2b2b2b2b/group', { under: 'nope' }, as('mia-dev'))).status, 400);
+  assert.equal((await post(port, '/api/sessions/2b2b2b2b/group', { under: 'ffffffff' }, as('mia-dev'))).status, 404);
+  assert.equal((await post(port, '/api/sessions/2b2b2b2b/group', { under: null }, as('octocat'))).status, 404, 'someone else\'s private session is no session');
+  assert.equal(regrouped.length, 2);
 
   // Extend and a session's own limits are the session's too, for whoever can open it; the fleet's refusals are 400s.
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/extend', {}, as('mia-dev'))).status, 200);

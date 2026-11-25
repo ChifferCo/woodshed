@@ -968,6 +968,12 @@ stopping one does nothing to the other.
   (`startedApart`): at the top of the rail, in no group and in no `list` but `--all`, still saying where it came from.
   The session's rules (`session/prompt.md`) tell Claude to choose by what it is asked: related work is a piece, unrelated
   work or work the person says they will drive is separate, and it says which it chose.
+- **Moving it later**: a session's ⋯ menu (and the command palette) has **Move out of its group** for one in a group,
+  which makes it separate as `--separate` would, and **Put under…** to pick another of the person's running sessions
+  to put it under, a session started on its own included. That session then has it in its `list` and gets its
+  questions, as if it had started it. Only the owner moves their own private sessions, never under itself or under one
+  in its own group (`POST /api/sessions/<id>/group`, `fleet.regroup`). The console logs `fleet: session put under
+  another` with `under` and the old `from`, and `fleet: session taken out of its group`.
 
 The console logs `sessionStarts: session started` with `from`, the new `id` and its `status` (`queued` when it waits in line), `sessionStarts: start
 refused` with `why` (`no prompt`, `same branch`, `not a member`, `write access gone`, or `start checks` with
