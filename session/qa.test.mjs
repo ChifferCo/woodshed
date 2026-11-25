@@ -6,6 +6,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { isolatedEnv } from '../test/isolatedEnv.mjs';
+import { summaryProblem } from '../console/qaSummary.mjs';
 
 const HERE = import.meta.dirname;
 const QA_SH = path.join(HERE, 'qa.sh');
@@ -93,7 +94,7 @@ async function runQa(t, { skip = false, app = 'running', noReport = false, leak 
 
   const env = {
     ...isolatedEnv(), PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', QA_BASE: 'stacked-base',
-    SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`,
+    SESSION_ID: '0a1b2c3d', SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`,
     STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_FFMPEG: ffmpeg, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}), ...(noReport ? { FAKE_NO_REPORT: '1' } : {}), ...(leak ? { FAKE_LEAK: '1' } : {}), ...(screen ? { FAKE_SCREEN: screen } : {}), ...(opaque ? { FAKE_OPAQUE: '1' } : {}),
   };
   const output = await new Promise((resolve, reject) => {
@@ -198,4 +199,13 @@ test('the summary tier never carries what a pass printed, even when the secret s
   assert.match(full.at(-1).text, /zzOpaque7788/, 'the screen missed it: only the full log, for admins and the starter, has it');
   const failed = await runQa(t, { opaque: true, screen: 'fail' });
   for (const l of failed.logs.filter((x) => x.tier === 'summary')) assert.doesNotMatch(l.text, /zzOpaque7788/, 'a screen that cannot run leaves the summary safe');
+});
+
+test('every summary the script sends is one the console accepts, in each kind of run', async (t) => {
+  for (const options of [{}, { skip: true }, { noReport: true }, { app: 'failed' }, { opaque: true, leak: true }]) {
+    const { logs } = await runQa(t, options);
+    const summaries = logs.filter((l) => l.tier === 'summary');
+    assert.ok(summaries.length > 0);
+    for (const l of summaries) assert.equal(summaryProblem(l.text, { number: 7, base: 'stacked-base' }), null, `${JSON.stringify(options)}: ${l.text}`);
+  }
 });

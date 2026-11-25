@@ -119,3 +119,13 @@ test('the summary tier has counts and fixed words, and nothing claude or its too
   assert.match(text, /Said: 1 message\nOther output: 1 line/);
   assert.match(summarize('test', stream), /zzOpaque7788|registry said/, 'the full tier keeps them');
 });
+
+test('a result event\'s odd fields never reach the verdict or the summary: counts are whole numbers, subtypes short words', () => {
+  const stream = line({ type: 'result', subtype: 'error_max_turns', num_turns: 'PRIVATE-MARKER', duration_ms: 'x', total_cost_usd: 'y' });
+  assert.equal(whyEnded('test', stream), 'the test pass ran out of turns before it finished');
+  const odd = line({ type: 'result', subtype: 'PRIVATE-MARKER https://x', is_error: false, num_turns: 3 });
+  assert.doesNotMatch(summarize('test', odd, { text: false }), /PRIVATE/);
+  assert.match(summarize('test', odd, { text: false }), /\(unknown\)/);
+  const denied = line({ type: 'result', subtype: 'success', permission_denials: [{ tool_name: 'PRIVATE-MARKER x' }] });
+  assert.doesNotMatch(summarize('test', denied, { text: false }), /PRIVATE/);
+});

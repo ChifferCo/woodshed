@@ -87,6 +87,7 @@ import { isReviewAgentPath, reviewAgentTokenOf } from './reviewAgentProxy.mjs';
 import { MAX_ANSWER_CHARS, MAX_ISSUE_BODY_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
+import { summaryProblem } from './qaSummary.mjs';
 import { MAX_QA_LOG_BYTES, MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES, MAX_REPORT_CHARS, isWebm, parseQaReport } from './qaSessions.mjs';
 import { MAX_QA_POSTER_BYTES, isPng } from './qaRecordings.mjs';
 import { ACTIVE_STATUSES, START_STEPS, isAsk, isQa, isReview, runsCodex } from './sessions.mjs';
@@ -641,7 +642,15 @@ async function qaLogReply(req, res, session, fleet) {
     chunks.push(chunk);
   }
   const tier = new URL(req.url || '/', 'http://x').searchParams.get('tier') === 'summary' ? 'summary' : 'full';
-  fleet.qaLog(session, Buffer.concat(chunks).toString('utf8'), tier);
+  const text = Buffer.concat(chunks).toString('utf8');
+  // The summary is read by everyone who can open the session and is posted by a process running the pull request's code:
+  // it is kept only if every line is one the run's own script writes (qaSummary.mjs).
+  const problem = tier === 'summary' ? summaryProblem(text, { number: session.number, base: session.qa?.base ?? '' }) : null;
+  if (problem) {
+    console.warn('sessionApi: a QA summary refused', { sessionId: session.id, why: problem });
+    return reply(res, 400, { error: `the summary has only the lines the run's script writes: ${problem}` });
+  }
+  fleet.qaLog(session, text, tier);
   return reply(res, 200, { saved: true });
 }
 

@@ -397,6 +397,7 @@ test('a QA session sends its run log through /qa-log, as often as it likes and e
   const qa = { id: 'aaaaaaaa', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main', conclusion: 'neutral' } };
   const sessions = [qa, { id: 'bbbbbbbb', status: 'running', token: 'pr-token', kind: 'pr', number: 7 }];
   const kept = [];
+  const summary = 'QA of pull request #7 against main, session aaaaaaaa\n\n## test\nEnded: ran out of turns before it finished (error_max_turns)\n';
   const fleet = { sessions: () => sessions, qaLog: (session, text, tier) => kept.push({ id: session.id, text, tier }) };
   const handle = createSessionApi({ fleet, tokens: { token: async () => ({ token: 'ghs', expiresAt: 0 }) } });
   const server = http.createServer((req, res) => { handle(req, res); });
@@ -408,7 +409,12 @@ test('a QA session sends its run log through /qa-log, as often as it likes and e
   assert.equal((await send('Bearer pr-token', 'x')).status, 404, 'only a QA session has a run log');
   assert.equal((await send('Bearer qa-token', '## plan\nEnded: finished\n')).status, 200);
   assert.equal((await send('Bearer qa-token', '## plan\nEnded: finished\n## test\nEnded: ran out of turns\n')).status, 200);
-  assert.equal((await request(port, { path: '/qa-log?tier=summary', authorization: 'Bearer qa-token', body: 'counts' })).status, 200);
+  assert.equal((await request(port, { path: '/qa-log?tier=summary', authorization: 'Bearer qa-token', body: summary })).status, 200);
+  // What the process running the pull request's code posts as a summary is read by every member: only the script's lines.
+  const refused = await request(port, { path: '/qa-log?tier=summary', authorization: 'Bearer qa-token', body: `${summary}registry credential zzOpaque7788\n` });
+  assert.equal(refused.status, 400);
+  assert.ok(!JSON.stringify(refused.body).includes('zzOpaque7788'), 'and its answer does not repeat it');
+  assert.ok(!kept.some((k) => k.text.includes('zzOpaque7788')), 'nothing of it was kept');
   assert.deepEqual(kept.map((k) => k.tier), ['full', 'full', 'summary'], 'full unless it says it is the summary');
   // Last: a body that says it is too big is refused before it is read, and leaves its connection waiting for the rest.
   assert.equal((await send('Bearer qa-token', 'x', { 'content-length': String(1024 * 1024) })).status, 413);

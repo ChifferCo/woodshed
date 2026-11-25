@@ -56,6 +56,11 @@ export function redact(text, env = process.env) {
   return out;
 }
 
+// A result event is read from a file the run's own code can write, so what is printed from it is validated: a count is a
+// whole number and a subtype is a short lowercase word, never a string that could carry anything else.
+const count = (n) => (Number.isInteger(n) && n >= 0 ? n : null);
+const subtypeOf = (t) => (typeof t === 'string' && /^[a-z_]{1,40}$/.test(t) ? t : 'unknown');
+
 const clip = (text, max) => (text.length > max ? `${text.slice(0, max)}…` : text);
 const oneLine = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
 
@@ -111,7 +116,7 @@ export function readStream(stream, env = process.env) {
 export function whyEnded(phase, stream) {
   const { result } = readStream(stream);
   if (!result) return `the ${phase} pass ended without a result: claude was stopped or crashed`;
-  if (ENDINGS[result.subtype]) return `the ${phase} pass ${ENDINGS[result.subtype]}${result.num_turns ? ` (${result.num_turns} turns)` : ''}`;
+  if (ENDINGS[result.subtype]) return `the ${phase} pass ${ENDINGS[result.subtype]}${count(result.num_turns) ? ` (${count(result.num_turns)} turns)` : ''}`;
   if (result.is_error) return `the ${phase} pass ended in an error`;
   return null;
 }
@@ -141,16 +146,17 @@ export function summarize(phase, stream, { text: withText = true } = {}) {
     lines.push('Ended: no result from claude, so it was stopped or crashed before it finished.');
   } else {
     const ending = ENDINGS[result.subtype] ?? (result.is_error ? 'ended in an error' : 'finished');
-    lines.push(`Ended: ${ending} (${result.subtype ?? 'unknown'}${result.is_error ? ', is_error' : ''})`);
+    lines.push(`Ended: ${ending} (${subtypeOf(result.subtype)}${result.is_error ? ', is_error' : ''})`);
     if (Array.isArray(result.permission_denials) && result.permission_denials.length) {
-      const names = [...new Set(result.permission_denials.map((d) => d.tool_name).filter(Boolean))];
+      // The tool names are in the full log only: the summary has counts and fixed words.
+      const names = withText ? [...new Set(result.permission_denials.map((d) => d.tool_name).filter((n) => typeof n === 'string' && /^[A-Za-z0-9_]{1,60}$/.test(n)))] : [];
       lines.push(`Permission denied: ${result.permission_denials.length} call${result.permission_denials.length === 1 ? '' : 's'}${names.length ? ` (${names.join(', ')})` : ''}`);
     }
   }
   const numbers = [
-    `${result?.num_turns ?? turns} turns`, `${tools} tool calls`,
-    Number.isFinite(result?.duration_ms) && `${Math.round(result.duration_ms / 1000)} s`,
-    Number.isFinite(result?.total_cost_usd) && `$${result.total_cost_usd.toFixed(2)}`,
+    `${count(result?.num_turns) ?? turns} turns`, `${tools} tool calls`,
+    Number.isFinite(result?.duration_ms) && result.duration_ms >= 0 && `${Math.round(result.duration_ms / 1000)} s`,
+    Number.isFinite(result?.total_cost_usd) && result.total_cost_usd >= 0 && `$${result.total_cost_usd.toFixed(2)}`,
   ].filter(Boolean);
   lines.push(`Ran: ${numbers.join(', ')}`);
   if (errors.length && !withText) {
