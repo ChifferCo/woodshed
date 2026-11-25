@@ -14,10 +14,11 @@
     { id: 'palette', mod: '⌘K', bare: '/', what: 'Jump to a session, or run a command' },
     { id: 'new', mod: '⇧⌘O', bare: 'N', what: 'New session' },
     { id: 'rail', mod: '⌘.', what: 'Show or hide the rail' },
-    // Herdr's prefix and its navigate mode: ⌘B (Ctrl+B off a Mac, outside a terminal, where Ctrl+B is tmux's own
-    // prefix) turns on a mode where the keys `then` names move through the sessions, wherever the focus is, typing or
-    // in a terminal, until Esc, a click, or a key that is none of them. Only where there is a rail (session.js).
-    { id: 'prefix', mod: '⌘B', what: 'Move through the sessions with the keys below, until Esc or a click', page: 'moveSession' },
+    // Herdr's prefix and its navigate mode, on a key nothing else has: ⌘ tapped twice (Ctrl off a Mac), alone, turns on a
+    // mode where the keys `then` names move through the sessions, wherever the focus is, typing or in a terminal (a
+    // modifier alone sends a terminal nothing), until Esc, a click, or a key that is none of them. `tap` is the key,
+    // written the Mac way; isTap reads it. Only where there is a rail (session.js).
+    { id: 'prefix', tap: '⌘', what: 'Move through the sessions with the keys below, until Esc or a click', page: 'moveSession' },
     { id: 'nextSession', then: 'J ↓', what: 'Next session in the rail', page: 'moveSession' },
     { id: 'prevSession', then: 'K ↑', what: 'Previous session in the rail', page: 'moveSession' },
     // The pane bar's tabs by their place on it, as Herdr's prefix+1..9: Chat, TUI, Terminal, Review. Picking one ends the
@@ -41,7 +42,7 @@
   const byId = Object.fromEntries(SHORTCUTS.map((s) => [s.id, s]));
   // The second key of a G sequence.
   const AFTER_G = { m: 'mine', e: 'everyone', s: 'mySettings' };
-  // What a key is while ⌘B's mode is on: the session keys alone, read whatever has the focus. Arrows too, as Herdr's.
+  // What a key is while the double tap's mode is on: the session keys alone, read whatever has the focus. Arrows too, as Herdr's.
   const AFTER_PREFIX = { j: 'nextSession', k: 'prevSession', n: 'needsYou', arrowdown: 'nextSession', arrowup: 'prevSession' };
   // The tab keys: 1 to 4, read from the key's place.
   const TAB_CODES = ['Digit1', 'Digit2', 'Digit3', 'Digit4'];
@@ -49,6 +50,16 @@
   /** @returns {number}  which tab a tab key names, from 1, or 0 for none */
   function tabOf(e) {
     return TAB_CODES.indexOf(e.code || '') + 1;
+  }
+
+  /**
+   * Whether a key event is the double tap's key on its own: ⌘ on a Mac, Ctrl elsewhere (where the Windows key is the
+   * OS's), with no other modifier held. A tap is its press and release with nothing pressed between (shell.js).
+   * @returns {boolean}
+   */
+  function isTap(e, mac) {
+    if (e.key !== (mac ? 'Meta' : 'Control')) return false;
+    return !e.shiftKey && !e.altKey && !(mac ? e.ctrlKey : e.metaKey);
   }
 
   /** @returns {boolean}  whether this browser is on an Apple computer, where ⌘ is the key */
@@ -92,11 +103,11 @@
   /**
    * Which shortcut a key press is.
    * @param {{key: string, code?: string, metaKey?: boolean, ctrlKey?: boolean, altKey?: boolean, shiftKey?: boolean}} e
-   * @param {{inFrame?: boolean, typing?: boolean, afterG?: boolean, moving?: boolean, mac?: boolean}} where  inFrame:
-   *   pressed in a terminal, where Ctrl and every key alone are the terminal's; typing: focus takes text; afterG: G was
-   *   the last key alone; moving: ⌘B's mode is on, so its keys are ours wherever they are pressed; mac: on a Mac
-   * @returns {string|null}  a shortcut's id, 'g' for the start of a sequence, 'prefix' for ⌘B, 'cancel' for Esc in
-   *   ⌘B's mode, or null when the key is not ours
+   * @param {{inFrame?: boolean, typing?: boolean, afterG?: boolean, moving?: boolean}} where  inFrame: pressed in a
+   *   terminal, where Ctrl and every key alone are the terminal's; typing: focus takes text; afterG: G was the last key
+   *   alone; moving: the double tap's mode is on, so its keys are ours wherever they are pressed
+   * @returns {string|null}  a shortcut's id, 'g' for the start of a sequence, 'cancel' for Esc in the mode, or null
+   *   when the key is not ours (the double tap itself is isTap's, read over two presses)
    */
   function match(e, where = {}) {
     const code = e.code || '';
@@ -105,7 +116,7 @@
       // By the character it types, Shift or not: on AZERTY the digit row needs Shift for 1 to 4, and Shift+1 is ! here.
       if (tabOf(e) && String(e.key) === String(tabOf(e))) return 'tab';
       const move = e.shiftKey ? null : AFTER_PREFIX[String(e.key || '').toLowerCase()];
-      // Any other key is what it would have been without ⌘B: / still opens the palette.
+      // Any other key is what it would have been without the mode: / still opens the palette.
       if (move) return move;
     }
     if (e.metaKey || (e.ctrlKey && !where.inFrame)) {
@@ -116,8 +127,6 @@
       if (code === 'Comma') return 'settings';
       if (code === 'Period') return 'rail';
       if (code === 'KeyO' && e.shiftKey) return 'new';
-      // On a Mac, Ctrl+B in a text field is back one character, as macOS's own: only ⌘B is the prefix there.
-      if (code === 'KeyB' && !e.shiftKey) return !e.metaKey && where.mac && where.typing ? null : 'prefix';
       if (e.key === 'Enter' && !e.shiftKey) return 'start';
       return null;
     }
@@ -132,5 +141,5 @@
     return null;
   }
 
-  return { SHORTCUTS, byId, isMac, caps, label, takesTyping, match, tabOf };
+  return { SHORTCUTS, byId, isMac, isTap, caps, label, takesTyping, match, tabOf };
 });

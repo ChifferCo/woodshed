@@ -23,7 +23,7 @@
   // Which page: /, /all or a session's. They are one page, so moving between them changes these, not the document
   // (navigate, below). /?new=1 is New session as a screen of its own on a phone, where / is the list alone.
   let id = null;
-  // ⌘B's moves (moveSession, below) keep focus out of the session they open, and whether the navigate running now is one.
+  // The mode's moves (moveSession, below) keep focus out of the session they open, and whether the navigate running now is one.
   let movingByKey = false;
   let keyMove = false;
   let onMy = false;
@@ -366,7 +366,7 @@
   // and nothing flashes while a new document loads. The address changes as a link's would, and Back returns.
   const SHELL_PATH_RE = /^\/(all|s\/[0-9a-f]{8})?$/;
   function navigate(href) {
-    // Any move but ⌘B's own (moveTo) lets a session take focus again, so a session opened from the palette or a card
+    // Any move but the mode's own (moveTo) lets a session take focus again, so a session opened from the palette or a card
     // focuses its Chat field as before.
     if (!keyMove) movingByKey = false;
     const url = new URL(href, window.location.href);
@@ -1784,7 +1784,7 @@
   // For a menu another module draws a button for, such as Start app's pick of several apps (common.js).
   W.openMenu = openCardMenu;
 
-  // The keys of ⌘B's mode that move through the sessions (keys.cjs): J and K go down and up the rail as it is drawn, so a
+  // The keys of the double tap's mode that move through the sessions (keys.cjs): J and K go down and up the rail as it is drawn, so a
   // folded zone is skipped as the eye skips it, and N goes to the next session after this one that needs you, in the same
   // order, then any of the rail's folded zones hide. Each cycles round at the end.
   // A session is where its own card is; a copy (one asking its person, in Needs you) counts only when its own card is
@@ -1860,7 +1860,7 @@
 
   W.shell.register({
     sessions: paletteSessions, actions: paletteActions, toggleRail, railShown: () => !railHidden, moveSession, nextNeedsYou, showTab,
-    // ⌘B's mode ended (Esc, another key, a toast): the session shown may take focus again.
+    // The mode ended (Esc, another key, a toast): the session shown may take focus again.
     endMoving: () => { movingByKey = false; },
   });
 

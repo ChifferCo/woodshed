@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import keys from './public/keys.cjs';
 
-const { SHORTCUTS, byId, isMac, caps, label, takesTyping, match, tabOf } = keys;
+const { SHORTCUTS, byId, isMac, isTap, caps, label, takesTyping, match, tabOf } = keys;
 
 test('a key is written the Mac way on a Mac and with Ctrl elsewhere', () => {
   assert.equal(isMac({ platform: 'MacIntel' }), true);
@@ -47,7 +47,7 @@ test('⌘J or Ctrl+J is the notifications, and Ctrl+J in a terminal is the termi
   assert.equal(match({ key: 'j', code: 'KeyJ', metaKey: true }, { inFrame: true }), 'notifications');
   assert.equal(match({ key: 'j', code: 'KeyJ', ctrlKey: true }, { inFrame: true }), null);
   assert.equal(match({ key: 'J', code: 'KeyJ', metaKey: true, shiftKey: true }), null);
-  assert.equal(match({ key: 'j', code: 'KeyJ' }), null, 'J alone is nothing: only ⌘B\'s mode reads it');
+  assert.equal(match({ key: 'j', code: 'KeyJ' }), null, 'J alone is nothing: only the mode reads it');
   assert.equal(byId.notifications.bell, true, 'left off the sheet where there is no list');
   assert.deepEqual(caps(byId.notifications.mod, false), ['Ctrl', 'J']);
 });
@@ -58,14 +58,14 @@ test('G, then a letter, goes to a page; anything else after G is nothing', () =>
   assert.equal(match({ key: 'e', code: 'KeyE' }, { afterG: true }), 'everyone');
   assert.equal(match({ key: 's', code: 'KeyS' }, { afterG: true }), 'mySettings');
   assert.equal(match({ key: 'x', code: 'KeyX' }, { afterG: true }), null);
-  assert.equal(match({ key: 'n', code: 'KeyN' }, { afterG: true }), null, 'G N is not a shortcut: ⌘B, then N is');
+  assert.equal(match({ key: 'n', code: 'KeyN' }, { afterG: true }), null, 'G N is not a shortcut: the mode\'s N is');
   for (const id of ['mine', 'everyone', 'mySettings']) assert.ok(byId[id].href.startsWith('/'));
 });
 
 test('every shortcut has words and at least one key', () => {
   for (const s of SHORTCUTS) {
     assert.ok(s.what, s.id);
-    assert.ok(s.mod || s.bare || s.then, s.id);
+    assert.ok(s.mod || s.bare || s.then || s.tap, s.id);
   }
 });
 
@@ -99,7 +99,7 @@ test('find is written ⌘F on a Mac and Ctrl+Shift+F elsewhere, and left to the 
   assert.ok(byId.find.where);
 });
 
-test('no key alone moves through the sessions, and no ⌥⌘ or Ctrl+Alt key does: only ⌘B\'s mode', () => {
+test('no key alone moves through the sessions, and no ⌥⌘ or Ctrl+Alt key does: only the mode', () => {
   for (const [key, code] of [['j', 'KeyJ'], ['k', 'KeyK'], ['1', 'Digit1'], ['4', 'Digit4']]) {
     assert.equal(match({ key, code }), null, key);
   }
@@ -109,15 +109,28 @@ test('no key alone moves through the sessions, and no ⌥⌘ or Ctrl+Alt key doe
   assert.equal(tabOf({ code: 'Digit5' }), 0);
 });
 
-test('⌘B turns on a mode, as Herdr\'s navigate mode, whose keys move through the sessions from anywhere', () => {
-  assert.equal(match({ key: 'b', code: 'KeyB', metaKey: true }, { inFrame: true }), 'prefix');
-  assert.equal(match({ key: 'b', code: 'KeyB', metaKey: true }, { typing: true }), 'prefix');
-  assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, { typing: true }), 'prefix', 'Ctrl+B off a Mac, while typing');
-  assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, { inFrame: true }), null, 'Ctrl+B in a terminal is tmux\'s prefix');
-  assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, { typing: true, mac: true }), null, 'Ctrl+B in a Mac\'s text field is back one character');
-  assert.equal(match({ key: 'b', code: 'KeyB', metaKey: true }, { typing: true, mac: true }), 'prefix');
-  assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, { mac: true }), 'prefix', 'Ctrl+B on a Mac, not typing');
-  assert.equal(match({ key: 'B', code: 'KeyB', metaKey: true, shiftKey: true }), null, '⇧⌘B is the browser\'s bookmarks bar');
+test('⌘ tapped twice (Ctrl off a Mac) turns on the mode, and ⌘B or Ctrl+B is no key of the console\'s', () => {
+  for (const where of [{}, { typing: true }, { inFrame: true }]) {
+    assert.equal(match({ key: 'b', code: 'KeyB', metaKey: true }, where), null);
+    assert.equal(match({ key: 'b', code: 'KeyB', ctrlKey: true }, where), null, 'Ctrl+B is tmux\'s, readline\'s and the browser\'s');
+  }
+  // The tap's key alone: ⌘ on a Mac, Ctrl elsewhere (the Windows key is the OS's), with nothing else held.
+  assert.equal(isTap({ key: 'Meta', metaKey: true }, true), true);
+  assert.equal(isTap({ key: 'Control', ctrlKey: true }, false), true);
+  assert.equal(isTap({ key: 'Control', ctrlKey: true }, true), false, 'Ctrl on a Mac is not it');
+  assert.equal(isTap({ key: 'Meta', metaKey: true }, false), false, 'the Windows key is the OS\'s');
+  assert.equal(isTap({ key: 'Meta', metaKey: true, shiftKey: true }, true), false, 'with Shift held it is not alone');
+  assert.equal(isTap({ key: 'Control', ctrlKey: true, altKey: true }, false), false, 'Ctrl+Alt is AltGr');
+  assert.equal(isTap({ key: 'Control', ctrlKey: true, metaKey: true }, false), false);
+  assert.equal(isTap({ key: 'k', code: 'KeyK', metaKey: true }, true), false, '⌘K is not a tap');
+  // A modifier alone is no shortcut by itself: the shell counts the taps.
+  assert.equal(match({ key: 'Meta', code: 'MetaLeft', metaKey: true }), null);
+  assert.equal(match({ key: 'Control', code: 'ControlLeft', ctrlKey: true }), null);
+  assert.equal(caps(byId.prefix.tap, true)[0], '⌘', 'written ⌘ ⌘ on a Mac');
+  assert.equal(caps(byId.prefix.tap, false)[0], 'Ctrl', 'and Ctrl Ctrl elsewhere');
+});
+
+test('in the mode its keys move through the sessions from anywhere, and any other key is itself', () => {
   for (const where of [{ typing: true }, { inFrame: true }, {}]) {
     const on = { ...where, moving: true };
     assert.equal(match({ key: 'j', code: 'KeyJ' }, on), 'nextSession');
@@ -134,9 +147,8 @@ test('⌘B turns on a mode, as Herdr\'s navigate mode, whose keys move through t
     assert.equal(match({ key: '/', code: 'Slash' }, on), match({ key: '/', code: 'Slash' }, where), 'and is what it would have been');
   }
   assert.equal(match({ key: 'k', code: 'KeyK', metaKey: true }, { moving: true }), 'palette', 'a ⌘ key in the mode is itself');
-  assert.deepEqual(caps(byId.prefix.mod, false), ['Ctrl', 'B']);
   for (const id of ['nextSession', 'prevSession', 'tab', 'needsYou']) {
-    assert.ok(byId[id].then && !byId[id].bare && !byId[id].mod, `${id} is ⌘B's alone`);
+    assert.ok(byId[id].then && !byId[id].bare && !byId[id].mod, `${id} is the mode's alone`);
     assert.ok(byId[id].page, `${id} is left alone on a page with no rail`);
   }
   assert.equal(byId.prefix.page, 'moveSession');

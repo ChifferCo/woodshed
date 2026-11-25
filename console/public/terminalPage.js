@@ -134,7 +134,7 @@
         opened = true;
         hideOverlay();
       }
-      // Not while ⌘B's mode moves through the sessions (session.js, movingByKey): the terminal is not the keys' place.
+      // Not while the double tap's mode moves through the sessions (session.js, movingByKey): the terminal is not the keys' place.
       let moving = false;
       try {
         moving = Boolean(window.parent?.Woodshed?.movingByKey?.());
