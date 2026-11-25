@@ -74,6 +74,12 @@ test('savedChoices: a config.toml that does not read, or names no plain string, 
   assert.deepEqual(savedChoices(codex('model = ["a", "b"]\n')).codex, unread);
   assert.deepEqual(savedChoices(codex('model = "has space"\n')).codex, unread, 'not a name');
   assert.deepEqual(savedChoices(codex('profile = 3\n')).codex, unread);
+  assert.deepEqual(savedChoices(codex('model = "gpt-5.5"\nprofile = "deep"\n[profiles]\ndeep = { model = "o3" }\n')).codex, unread,
+    'a profile written inline: its model is not the top level\'s');
+  assert.deepEqual(savedChoices(codex('model = "gpt-5.5"\nprofile = "deep"\nprofiles.deep = { model = "o3" }\n')).codex, unread);
+  assert.deepEqual(savedChoices(codex('model = "gpt-5.5"\nprofile = "deep"\nprofiles = { deep = { model = "o3" } }\n')).codex, unread);
+  assert.deepEqual(savedChoices(codex('model = "gpt-5.5"\n[profiles]\ndeep = { model = "o3" }\n')).codex, { read: true, model: 'gpt-5.5', effort: null },
+    'an inline profile not picked counts for nothing');
   assert.deepEqual(savedChoices({ ...settings({ model: 'opus' }), ...codex('model = 5\n') }).claude, { read: true, model: 'opus', effort: null },
     'one agent\'s file does not hide the other\'s');
 });

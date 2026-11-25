@@ -857,7 +857,7 @@ and `effortLevel` in `~/.claude/settings.json`, which `/model` in any private se
 in the menu, `opus (saved)` on the card. With none saved, Claude Code picks Opus or Sonnet by the plan (and switches of
 Anthropic's), which the console cannot see, so the menu says `plan default (Opus or Sonnet)` and the card `plan
 default`, never a model as if it were certain. For Codex it is `model` and `model_reasoning_effort` in
-`~/.codex/config.toml` (its `profile`'s own first); with none, `default`, codex's own pick. A repo's own
+`~/.codex/config.toml` (its `profile`'s own first; a profile written as an inline table shows `default`); with none, `default`, codex's own pick. A repo's own
 `.claude/settings.json` naming a model still wins in the session. Grok Build and OpenCode keep their model in nothing a
 session carries (`agentDefaults` has `null` for them), so theirs is `default`, the agent's own pick; once their
 settings are carried between sessions, `savedChoices` should read their saved model and effort too. A copy that does

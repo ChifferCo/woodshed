@@ -159,6 +159,9 @@ function codexChoice(item) {
   const at = (path) => (values.has(path) ? (values.get(path) === undefined ? { ok: false } : { ok: true, value: values.get(path) }) : { ok: true, value: null });
   const profile = at('profile');
   if (!profile.ok) return unread();
+  // A profile written as an inline table (`profiles.deep = { model = "o3" }`, or `deep = {…}` under `[profiles]`) is not
+  // read here: what it names is not known, rather than the top level's shown in its place.
+  if (profile.value && (values.has('profiles') || values.has(`profiles.${profile.value}`))) return unread();
   const pick = (key, re) => {
     const own = profile.value ? at(`profiles.${profile.value}.${key}`) : { ok: true, value: null };
     const top = at(key);
