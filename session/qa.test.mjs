@@ -46,7 +46,7 @@ function listen(handler) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runQa(t, { skip = false, app = 'running', noReport = false, leak = false, screen = null, opaque = false } = {}) {
+async function runQa(t, { skip = false, app = 'running', noReport = false, leak = false, screen = null, opaque = false, pin = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-sh-'));
   const sessionDir = path.join(dir, 'session');
   const bin = path.join(dir, 'fakebin');
@@ -95,7 +95,7 @@ async function runQa(t, { skip = false, app = 'running', noReport = false, leak 
   const env = {
     ...isolatedEnv(), PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', QA_BASE: 'stacked-base',
     SESSION_ID: '0a1b2c3d', SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`,
-    STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_FFMPEG: ffmpeg, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}), ...(noReport ? { FAKE_NO_REPORT: '1' } : {}), ...(leak ? { FAKE_LEAK: '1' } : {}), ...(screen ? { FAKE_SCREEN: screen } : {}), ...(opaque ? { FAKE_OPAQUE: '1' } : {}),
+    STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_FFMPEG: ffmpeg, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}), ...(noReport ? { FAKE_NO_REPORT: '1' } : {}), ...(leak ? { FAKE_LEAK: '1' } : {}), ...(screen ? { FAKE_SCREEN: screen } : {}), ...(opaque ? { FAKE_OPAQUE: '1' } : {}), ...(pin ? { REGISTRY_PIN: '3999', WOODSHED_INSTALL_SECRETS: 'REGISTRY_PIN' } : {}),
   };
   const output = await new Promise((resolve, reject) => {
     const child = spawn('bash', [QA_SH], { env });
@@ -202,7 +202,7 @@ test('the summary tier never carries what a pass printed, even when the secret s
 });
 
 test('every summary the script sends is one the console accepts, in each kind of run', async (t) => {
-  for (const options of [{}, { skip: true }, { noReport: true }, { app: 'failed' }, { opaque: true, leak: true }]) {
+  for (const options of [{}, { skip: true }, { noReport: true }, { app: 'failed' }, { opaque: true, leak: true }, { pin: true }]) {
     const { logs } = await runQa(t, options);
     const summaries = logs.filter((l) => l.tier === 'summary');
     assert.ok(summaries.length > 0);

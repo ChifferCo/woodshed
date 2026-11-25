@@ -180,7 +180,9 @@ postLog() {
 }
 
 sendLog() {
-  logBody summary 2>&1 | node "$RUN_LOG" --redact > "$DIR/logs/run-summary.log"
+  # Not scrubbed by value: it holds counts and fixed words, which the console checks line by line, and a short install secret
+  # that equals a count or a port would break a line it must accept.
+  logBody summary > "$DIR/logs/run-summary.log" 2>&1
   postLog summary "$DIR/logs/run-summary.log"
   logBody full 2>&1 | node "$RUN_LOG" --redact > "$DIR/logs/run.log"
   screenLog "$DIR/logs/run.log"
