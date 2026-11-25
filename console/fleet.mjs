@@ -1916,11 +1916,6 @@ export function createFleet({
   }
 
   /**
-   * A new name for a session, the one every page shows. A shared session's is everyone's, as its title is.
-   * @param {object} session
-   * @param {string} title
-   */
-  /**
    * Puts one of a person's private sessions under another of theirs on the rail, as a piece of its work, or with `under`
    * null takes it out of its group (railGroups in public/common.js, which nests by `startedFrom`). The session that
    * now has it lists it with woodshed-session list (sessionStarts.mjs), and its questions go there. Never under itself,
@@ -1953,6 +1948,11 @@ export function createFleet({
     return session;
   }
 
+  /**
+   * A new name for a session, the one every page shows. A shared session's is everyone's, as its title is.
+   * @param {object} session
+   * @param {string} title
+   */
   function rename(session, title) {
     const next = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, TITLE_CHARS);
     if (!next) throw shown('a name cannot be empty');
