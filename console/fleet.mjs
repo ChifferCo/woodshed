@@ -758,9 +758,6 @@ export function createFleet({
     return session;
   }
 
-  // A question a session asked another of its person's (sessionStarts.mjs, --question): it waits for an answer, which the
-  // rail says (public/common.js displayStatus). It ends with any message typed into it, or once it works again after its
-  // turn on the question ended: the person may answer in its own Chat or TUI.
   // The messages between two sessions of a person's (sessionStarts.mjs), on both, for the page's Details: when, which
   // way, with which session, whether it asked something, and the start of what it said. The newest MESSAGES_KEPT.
   function noteMessage({ from, to, text, question = false }) {
@@ -771,6 +768,9 @@ export function createFleet({
     }
   }
 
+  // A question a session asked another of its person's (sessionStarts.mjs, --question): it waits for an answer, which the
+  // rail says (public/common.js displayStatus). It ends with any message typed into it, or once it works again after its
+  // turn on the question ended: the person may answer in its own Chat or TUI.
   function noteQuestion(session, { to }) {
     update(session, { askedAt: nowIso(), askedOf: to, askedSettled: false, askedLastAt: null });
     console.log('fleet: session asked a question', { id: session.id, of: to });
