@@ -293,6 +293,13 @@ test('a pull request says which of Woodshed\'s review and QA are at work on it',
   assert.deepEqual(runsOn(null), []);
 });
 
+test('publicSession drops a public QA run\'s secret, and keeps the rest of its QA', () => {
+  const view = publicSession(session({ qa: { base: 'main', share: 'c'.repeat(32), videos: [{ n: 1, bytes: 1 }] } }));
+  assert.deepEqual(view.qa, { base: 'main', videos: [{ n: 1, bytes: 1 }] });
+  assert.deepEqual(publicSession(session({ qa: { base: 'main' } })).qa, { base: 'main' });
+  assert.equal(Object.hasOwn(publicSession(session({})), 'qa'), Object.hasOwn(session({}), 'qa'));
+});
+
 test('publicSession drops the token and the endpoint', () => {
   const view = publicSession(session({ token: 'secret', terminalToken: 'term', endpoint: { host: 'h' }, pendingMessages: ['a', 'b'] }));
   assert.equal(view.token, undefined);

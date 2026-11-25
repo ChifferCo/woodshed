@@ -79,6 +79,8 @@
 //   POST /api/sessions/<id>/stop
 //   POST /api/sessions/<id>/pin     {"on": true}   pinned to the top of your rail; yours alone
 //   POST /api/sessions/<id>/rename  {"title": "..."}   the name every page shows
+//   POST /api/sessions/<id>/group   {"under": "<id>"|null}   its owner's: put it under another of theirs on the rail,
+//                                   or take it out of its group (fleet.regroup)
 //   POST /api/sessions/<id>/extend  its pause or stop, whichever comes first, an hour later. These two are a private
 //                                session's owner's and a shared one's assignee's alone: 403 for anyone else
 //   POST /api/sessions/<id>/limits  {"idleHours": 2, "lifetimeHours": 12}   this session's own pause and stop; a key
@@ -91,6 +93,7 @@
 //   GET  /api/sessions/<id>/image?path=<path>   a picture a terminal path names, from the session
 //   GET  /qa/<id>/video/<n>       a QA run's recording, for whoever may open the session (qaRecordings.mjs)
 //   GET  /qa-poster/<id>/<secret>.png   its still, with no sign-in: the QA comment shows it, through GitHub's image proxy
+//   GET  /qa-video/<id>/<secret>/<n>.webm  a public repo's QA recording (pullRequests.qa.recordings: public), with no sign-in
 //   POST /api/sessions/<id>/scroll  {"steps": -3, "pane": "agent"}   a swipe or wheel past the browser's own scrollback
 //   GET  /api/skills             the repo's skills and commands, for New session's / list
 //   GET  /api/pulls?project=<name>   the project's open pull requests, for New session's Work on list
@@ -248,7 +251,7 @@ import { answerWithView, CLI_CONFIG_PATH, configView, isConfigWrite } from './cl
 import { handleCliSettings } from './cliSettings.mjs';
 import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
-import { QA_POSTER_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
+import { QA_POSTER_RE, QA_PUBLIC_VIDEO_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
 import { CONNECTION_PATH } from './dbTunnel.mjs';
 import { checkGh } from './github.mjs';
 import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
@@ -273,6 +276,7 @@ import { countRequests, createShutdown } from './shutdown.mjs';
 import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
 import { createMcpTester } from './mcpTest.mjs';
 import { ROLES, roleById, roleDiffers, roleOf } from './peopleRoles.mjs';
+import { savedChoices } from './claudeSettings.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // Served from elsewhere in the repo: the desktop app's rule for what notifies, which the console in a browser runs too
@@ -414,7 +418,7 @@ const DATABASES_NOT_READY = 'your own databases are not ready yet: My settings s
 const STOP_RE = /^\/api\/sessions\/([0-9a-f]{8})\/stop$/;
 const ASSIGN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/assign$/;
 const SHARED_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(resume|delete|remove)$/;
-const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename)$/;
+const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename|group)$/;
 const LIMIT_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(extend|limits)$/;
 const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|interrupt|answer|prompt|applog|diff|transcript)$/;
 // The agents started beside a private session's own (session/agents.mjs): the list, a start, and each one's Chat routes.
@@ -1724,6 +1728,29 @@ export function createHandler({
     return teamOpenAiKey;
   }
 
+  // What each agent's "default" is in the person's next session, as of their last look at /api/my (savedChoices in
+  // claudeSettings.mjs): New session names it in its Model and Effort menus and on each agent's card.
+  const choicesSeen = new Map();
+  // The logins whose copy did not read, warned of once: an open page asks /api/my on every poll.
+  const choicesUnread = new Set();
+  async function readSavedChoices(login) {
+    let items = null;
+    try {
+      items = claudeSettings ? (await claudeSettings.peek(login)).items : null;
+      choicesUnread.delete(login);
+    } catch (err) {
+      if (!choicesUnread.has(login)) {
+        choicesUnread.add(login);
+        console.warn('console: shared Claude settings not read for New session', { login, message: String(err?.message ?? err).split('\n')[0] });
+      }
+    }
+    // Grok Build and OpenCode keep their model in nothing a session carries: each picks its own (null). Once one is
+    // carried, savedChoices reads it, as it does Claude Code's and Codex's.
+    const found = { ...savedChoices(items), grok: null, opencode: null };
+    choicesSeen.set(login, found);
+    return found;
+  }
+
   // The blockers each person's projects had at their last look at /api/my, for the answers that cannot wait for a read.
   const blockersSeen = new Map();
   async function readProjectBlockers(login) {
@@ -1746,6 +1773,8 @@ export function createHandler({
       },
       databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last(defaultProject(config).name) ?? null,
       // Each project the person may start on that is not ready, by name (databaseGate.mjs), as last read.
+      // What each agent's default model and effort is, per agent (readSavedChoices): null before the first look.
+      agentDefaults: choicesSeen.get(login) ?? null,
       projectBlockers: blockersSeen.get(login) ?? {}, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
       // The computers the woodshed command line is signed in on as this person (cliSignIn.mjs), never a token.
       cli: cli ? { tokens: cli.list(login) } : null,
@@ -2444,6 +2473,15 @@ export function createHandler({
     }
     try {
       if (action === 'rename') return reply(res, 200, publicSession(fleet.rename(session, body?.title)));
+      // The rail's group it is in, its owner's alone: under another of their sessions, or with `under` null out of it.
+      if (action === 'group') {
+        if (!session.owner || session.owner.toLowerCase() !== login.toLowerCase()) return reply(res, 403, { error: 'only its owner moves a session between groups' });
+        const underId = body?.under ?? null;
+        if (underId !== null && (typeof underId !== 'string' || !/^[0-9a-f]{8}$/.test(underId))) return reply(res, 400, { error: 'under must be a session id, or null' });
+        const under = underId === null ? null : findFor(underId, login);
+        if (underId !== null && !under) return reply(res, 404, { error: 'no such session' });
+        return reply(res, 200, publicSession(fleet.regroup(session, under)));
+      }
       if (!viewPrefs) return reply(res, 404, { error: 'this console keeps no rail preferences' });
       if (typeof body?.on !== 'boolean') return reply(res, 400, { error: 'on must be true or false' });
       return reply(res, 200, viewPrefs.setPinned(login, id, body.on));
@@ -2982,6 +3020,31 @@ export function createHandler({
     return reply(res, 404, { error: 'not found' });
   }
 
+  // A running session's applog, diff, transcript or prompt, read from its statusd for whoever may open it.
+  function statusdRead(req, res, url, login, [, id, what]) {
+    const session = runningFor(id, login);
+    if (!session) return reply(res, findFor(id, login) ? 409 : 404, { error: 'the session is not running' });
+    const limit = what === 'transcript' ? url.searchParams.get('limit') : null;
+    const since = what === 'transcript' ? url.searchParams.get('since') : null;
+    const params = new URLSearchParams({
+      ...(limit && /^\d{1,4}$/.test(limit) && { limit }),
+      ...(since && /^\d{1,16}(\.\d{1,6})?$/.test(since) && { since }),
+    });
+    const query = params.size ? `?${params}` : '';
+    return toStatusd(req, res, session, { method: 'GET', path: `/${what}${query}` });
+  }
+
+  // The command line's conversation reads still being answered, by session: cut the moment its lockdown starts, before
+  // anything it reads from production can be in what statusd sends (a production call goes on only once it is locked).
+  const cliTranscripts = new Map();
+  fleet.onLocking?.((id) => {
+    for (const res of cliTranscripts.get(id) ?? []) {
+      console.log('cliSessions: conversation read cut off, the session is being locked down', { id });
+      res.destroy();
+    }
+    cliTranscripts.delete(id);
+  });
+
   // The command line token's reads and writes, past handleCliCall's checks (cliSessions.mjs). A config write answers
   // with the config alone (cliConfig.mjs).
   async function cliRead(req, res, url, login) {
@@ -2994,7 +3057,30 @@ export function createHandler({
     // woodshed session agents: the agents beside a private session's own (agentAction checks it is theirs).
     const agentsRead = AGENTS_RE.exec(pathname);
     if (agentsRead && !agentsRead[2]) return agentAction(req, res, agentsRead, login);
-    return reply(res, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
+    // woodshed session read: the Chat tab's read, never of a session that has seen production data, whose conversation
+    // stays on the console rather than reach a computer.
+    const transcriptRead = TERMINAL_RE.exec(pathname);
+    if (transcriptRead?.[2] === 'transcript') {
+      const id = transcriptRead[1];
+      const found = findFor(id, login);
+      if (found?.taintedAt || (found && fleet.isLocked?.(found))) {
+        console.log('cliSessions: refused, a tainted session\'s conversation', { login, id, locking: !found.taintedAt });
+        return reply(res, 409, { error: 'this session has seen production data: its conversation is read on the console only' });
+      }
+      const open = cliTranscripts.get(id) ?? new Set();
+      cliTranscripts.set(id, open.add(res));
+      res.on('close', () => {
+        open.delete(res);
+        if (!open.size && cliTranscripts.get(id) === open) cliTranscripts.delete(id);
+      });
+      return statusdRead(req, res, url, login, transcriptRead);
+    }
+    if (pathname === '/api/sessions') {
+      // Nor its last words, which the list carries for the page's cards.
+      const body = sessionsBody(login);
+      return reply(res, 200, { ...body, sessions: body.sessions.map((x) => (x.taintedAt ? { ...x, lastMessage: null } : x)) });
+    }
+    return reply(res, 200, await projectsView(login));
   }
   function cliWrite(req, res, pathname, login) {
     // An own sign-in saved from the command line (woodshed sign-in push): the page's own save, answered with whether one
@@ -3050,6 +3136,15 @@ export function createHandler({
     // A QA comment's still: GitHub's image proxy fetches it with no sign-in, so its unguessable name is its only lock.
     const poster = req.method === 'GET' && QA_POSTER_RE.exec(url.pathname);
     if (poster) return qaRecordings ? qaRecordings.servePoster(req, res, { id: poster[1], secret: poster[2] }) : reply(res, 404, { error: 'this console keeps no QA recordings' });
+    // A public QA run's video (pullRequests.qa.recordings: public): its run's secret is its only lock, as the still's
+    // name is, and it opens that run's videos and nothing else.
+    const openVideo = (req.method === 'GET' || req.method === 'HEAD') && QA_PUBLIC_VIDEO_RE.exec(url.pathname);
+    if (openVideo) {
+      if (!qaRecordings) return reply(res, 404, { error: 'this console keeps no QA recordings' });
+      const n = Number(openVideo[3]);
+      if (!fleet.publicQaVideo(openVideo[1], openVideo[2], n)) return qaRecordings.gone(res);
+      return qaRecordings.serveVideo(req, res, { id: openVideo[1], n });
+    }
     if (await authRoute(req, res, url)) return;
     const user = await signedIn(req, res, url);
     if (!user) return;
@@ -3102,7 +3197,7 @@ export function createHandler({
       const looking = userSettings?.refresh?.(user.login)?.catch((err) => {
         console.warn('userSettings: stored sign-ins not followed', { message: String(err?.message ?? err).split('\n')[0] });
       });
-      await Promise.all([readProjectBlockers(user.login), first ? looking : null, readTeamOpenAiKey()]);
+      await Promise.all([readProjectBlockers(user.login), first ? looking : null, readTeamOpenAiKey(), readSavedChoices(user.login)]);
       return reply(res, 200, myView(user.login));
     }
     if (pathname === '/api/my/reviews') return reply(res, 200, await myReviewsView(user.login));
@@ -3143,16 +3238,7 @@ export function createHandler({
     if (agentRead) return agentAction(req, res, agentRead, user.login);
     const imageMatch = TERMINAL_RE.exec(pathname);
     if (imageMatch?.[2] === 'applog' || imageMatch?.[2] === 'diff' || imageMatch?.[2] === 'transcript' || imageMatch?.[2] === 'prompt') {
-      const session = runningFor(imageMatch[1], user.login);
-      if (!session) return reply(res, findFor(imageMatch[1], user.login) ? 409 : 404, { error: 'the session is not running' });
-      const limit = imageMatch[2] === 'transcript' ? url.searchParams.get('limit') : null;
-      const since = imageMatch[2] === 'transcript' ? url.searchParams.get('since') : null;
-      const params = new URLSearchParams({
-        ...(limit && /^\d{1,4}$/.test(limit) && { limit }),
-        ...(since && /^\d{1,16}(\.\d{1,6})?$/.test(since) && { since }),
-      });
-      const query = params.size ? `?${params}` : '';
-      return toStatusd(req, res, session, { method: 'GET', path: `/${imageMatch[2]}${query}` });
+      return statusdRead(req, res, url, user.login, imageMatch);
     }
     if (imageMatch?.[2] === 'image') {
       const session = runningFor(imageMatch[1], user.login);

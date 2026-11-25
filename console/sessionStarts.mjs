@@ -400,7 +400,8 @@ export function createSessionStarts({
   async function waitLoop(res, session, mode, repliedOf, closedOf, onWake, onHanded) {
     const id = session.id;
     const started = now();
-    const lastAt = (s) => (s.lastMessage?.role === 'assistant' && s.lastMessage.at ? Date.parse(s.lastMessage.at) : 0);
+    // statusd's last message is `you` or `claude` (shared/sessionState.mjs), whichever agent it is.
+    const lastAt = (s) => (s.lastMessage?.role === 'claude' && s.lastMessage.at ? Date.parse(s.lastMessage.at) : 0);
     let deliveredAt = session.pendingMessages?.length ? null : started;
     let worked = false;
     for (;;) {

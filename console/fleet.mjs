@@ -13,7 +13,7 @@ import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { finishedComment, runningComment } from './qaSessions.mjs';
-import { QA_RECORDING_DAYS, qaVideoPath } from './qaRecordings.mjs';
+import { QA_RECORDING_DAYS, newRecordingSecret, opensPublicVideo, qaPublicVideoPath, qaVideoPath } from './qaRecordings.mjs';
 import { reviewDoneComment, reviewEndedComment, reviewHeading, reviewRunningComment } from './reviewSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
@@ -307,6 +307,8 @@ export function createFleet({
   const issueTracking = createIssueTracking({ github });
   const issueTrackings = new Map();
   const prCheckedAt = new Map();
+  // When each pull request with ended review or QA runs was last read for whether it closed (pruneEndedRuns).
+  const pullRunsCheckedAt = new Map();
   // Private sessions whose statusd last refused or missed review feedback, so it is warned of once.
   const untypedSaid = new Set();
   const homeDeleteTriedAt = new Map();
@@ -1305,6 +1307,7 @@ export function createFleet({
       for (const session of [...state.sessions]) await safely('QA run ended without a report', () => qaEndedUnreported(session));
       for (const session of [...state.sessions]) await safely('review ended without a report', () => reviewEndedUnreported(session));
       for (const session of [...state.sessions]) await safely('retention check', () => retain(session));
+      await safely('ended pull request runs', () => pruneEndedRuns());
       for (const session of [...state.sessions]) await safely('tainted session removal', () => removeTainted(session));
       for (const session of [...state.sessions]) await safely('taint notice', () => tellTainted(session));
       await safely('tainted homes', () => retryTaintedHomes());
@@ -1375,6 +1378,9 @@ export function createFleet({
       prCheckedAt.delete(session.id);
       marked.add(number);
     }
+    for (const number of numbers) {
+      if (pullRunsCheckedAt.delete(`${project.name}#${number}`)) marked.add(number);
+    }
     return [...marked];
   }
 
@@ -1420,6 +1426,61 @@ export function createFleet({
     const ms = isQa(session) && session.qa?.videos?.length ? Math.max(listed, QA_RECORDING_DAYS * 86_400_000) : listed;
     if (!Number.isFinite(from) || now() < from + ms) return;
     dropRecord(session, `deleted ${spanText(ms)} ago`);
+  }
+
+  // A review's or QA run's record is what the next run on its pull request reads: whether a commit was reviewed or
+  // tested, the comment it writes over, the approval held for QA, the review's last posted verdict (approvalDismissed)
+  // and the recordings a QA comment links. Each read takes the latest record that has it, and none is read once the pull request
+  // merged or closed. Every run of every commit stayed listed until the delete timer (dropIfDue), weeks later, which
+  // piled up hundreds of cards: the ones nothing reads go off the list as soon as they have ended.
+  async function pruneEndedRuns() {
+    const byPull = new Map();
+    for (const session of state.sessions) {
+      if (session.owner || !Number.isInteger(session.number) || !(isQa(session) || isReview(session))) continue;
+      const key = `${projectFor(config, session).name}#${session.number}`;
+      byPull.set(key, [...(byPull.get(key) ?? []), session]);
+    }
+    // A pull request whose runs all went off the list is not read again.
+    for (const key of pullRunsCheckedAt.keys()) if (!byPull.has(key)) pullRunsCheckedAt.delete(key);
+    for (const [key, runs] of byPull) {
+      // Not yet settled: still going, or its end not yet told (qaEndedUnreported, reviewEndedUnreported), or a Claude
+      // home still being deleted, which nothing retries once the record is gone.
+      const settled = (s) => !ACTIVE_STATUSES.has(s.status) && s.status !== 'stopping' && !s.homeDeletePending
+        && (isQa(s) ? Boolean(s.qa.conclusion || s.qa.endChecked) : Boolean(s.review.reported || s.review.endChecked));
+      const watched = (s) => isQa(s) && s.qa.videos?.length && now() < Date.parse(s.stoppedAt ?? s.createdAt) + QA_RECORDING_DAYS * 86_400_000;
+      const ended = runs.filter(settled);
+      if (!ended.length) continue;
+      const latest = (kind, has = () => true) => runs.filter((s) => (kind === 'qa' ? isQa(s) : isReview(s)) && has(s)).at(-1);
+      // Each run writes over the QA comment, so only the last run's recordings are linked from it. A run that could
+      // not edit it posted a comment of its own, which leaves the old one linking its run's recordings: the last
+      // settled run of each comment is kept while its recordings are.
+      const linked = latest('qa', settled);
+      const comments = new Map();
+      for (const s of runs) if (isQa(s) && settled(s) && s.qa.commentId) comments.set(s.qa.commentId, s);
+      const linking = new Set([linked, ...comments.values()].filter((s) => s && watched(s)));
+      if (ended.length === runs.length && await pullClosed(key, runs[0])) {
+        for (const s of ended) if (!linking.has(s)) dropRecord(s, 'its pull request merged or closed');
+        continue;
+      }
+      // The last settled run of each kind too, while a later one still runs: its result is the pull request's until then.
+      const read = new Set([
+        latest('qa'), linked, latest('qa', (s) => s.qa.commentId),
+        latest('review', settled),
+        latest('review'), latest('review', (s) => s.review.commentId),
+        latest('review', (s) => s.review.conclusion && s.review.posted),
+        ...runs.filter((s) => isReview(s) && s.review.held), ...linking,
+      ]);
+      for (const s of ended) if (!read.has(s)) dropRecord(s, 'a later run on its pull request replaced it');
+    }
+  }
+
+  // Read at most every PR_STATE_CHECK_MS for each pull request with ended runs, and at the next tick after a webhook
+  // said it changed (pullsChanged).
+  async function pullClosed(key, session) {
+    if (now() - (pullRunsCheckedAt.get(key) ?? -Infinity) < PR_STATE_CHECK_MS) return false;
+    pullRunsCheckedAt.set(key, now());
+    const pull = await safely('pull request of ended runs', () => githubOf(projectFor(config, session)).pull(session.number));
+    return pull?.state === 'closed';
   }
 
   function dropRecord(session, why) {
@@ -1851,6 +1912,39 @@ export function createFleet({
     const limits = checkLimits(values);
     update(session, { limits: Object.keys(limits).length ? limits : null });
     console.log('fleet: session limits changed', { id: session.id, by, ...limits });
+    return session;
+  }
+
+  /**
+   * Puts one of a person's private sessions under another of theirs on the rail, as a piece of its work, or with `under`
+   * null takes it out of its group (railGroups in public/common.js, which nests by `startedFrom`). The session that
+   * now has it lists it with woodshed-session list (sessionStarts.mjs), and its questions go there. Never under itself,
+   * one in its own group, a session not running, or someone else's.
+   * @param {object} session
+   * @param {object|null} under
+   */
+  function regroup(session, under) {
+    if (!session.owner) throw shown('only a My Woodshed session is in a group');
+    if (!under) {
+      if (!session.startedFrom || session.startedApart) return session;
+      console.log('fleet: session taken out of its group', { id: session.id, from: session.startedFrom });
+      update(session, { startedApart: true });
+      return session;
+    }
+    if (under.id === session.id) throw shown('a session cannot be put under itself');
+    if (under.owner !== session.owner) throw shown('only under another of your own sessions');
+    if (!ACTIVE_STATUSES.has(under.status)) throw shown(`"${under.title}" is not running: a group is shown only under a running session`);
+    // Not under a session in its own group, which would make a loop.
+    // The whole chain, however long, each session once: one already seen is a loop the rail nests none of.
+    const seen = new Set();
+    for (let p = under; p?.startedFrom && !p.startedApart && !seen.has(p.id); p = find(p.startedFrom)) {
+      if (p.startedFrom === session.id) throw shown(`"${under.title}" is in this session's own group`);
+      seen.add(p.id);
+    }
+    if (session.startedFrom === under.id && !session.startedApart) return session;
+    console.log('fleet: session put under another', { id: session.id, under: under.id, from: session.startedFrom ?? null });
+    delete session.startedApart;
+    update(session, { startedFrom: under.id });
     return session;
   }
 
@@ -2379,7 +2473,11 @@ export function createFleet({
     const commentId = state.sessions.filter((s) => isQa(s) && s.number === number && onProject(s, project) && s.qa.commentId).at(-1)?.qa.commentId ?? null;
     const session = await createSession({
       kind: 'pr', number, title: `QA: ${pull.title}`, startedBy: login, trigger: 'qa', branch: pull.head.ref, project,
-      qa: { base: pull.base.ref, sha: pull.head.sha, heading: qa.heading, check: qa.check, commentId, ...(teamKeyWhy ? { teamKey: true } : {}) },
+      qa: {
+        base: pull.base.ref, sha: pull.head.sha, heading: qa.heading, check: qa.check, commentId, ...(teamKeyWhy ? { teamKey: true } : {}),
+        // A repo whose recordings are public (qa.recordings) gets its run's videos at names only this secret opens.
+        ...(qa.recordings === 'public' ? { share: newRecordingSecret() } : {}),
+      },
     });
     await postQaComment(session, gh, runningComment({ heading: qa.heading, sessionUrl: await qaSessionUrl(session, project) }));
     console.log('fleet: QA session started', { id: session.id, number, login, why, base: pull.base.ref, ...projectField(project) });
@@ -2456,14 +2554,28 @@ export function createFleet({
     return { saved: true };
   }
 
-  // The links a QA comment gives its recordings, on the console's public address; none without one.
+  // The links a QA comment gives its recordings, on the console's public address; none without one. A public run's
+  // (qa.share) open with no sign-in, so they name the console even where the project file says `consoleLinks: false`:
+  // they are what its repo asked to show, and open nothing else there.
   async function qaRecordingLinks(session, project) {
-    const base = await consoleUrlOf(project);
-    if (!base || !session.qa.videos?.length) return { videos: [], poster: null };
+    const { share } = session.qa;
+    const base = share ? config.publicUrl : await consoleUrlOf(project);
+    if (!base || !session.qa.videos?.length) return { videos: [], poster: null, open: false };
+    const pathOf = (n) => (share ? qaPublicVideoPath(session.id, share, n) : qaVideoPath(session.id, n));
     return {
-      videos: session.qa.videos.map((v) => ({ url: `${base}${qaVideoPath(session.id, v.n)}`, bytes: v.bytes })),
+      videos: session.qa.videos.map((v) => ({ url: `${base}${pathOf(v.n)}`, bytes: v.bytes })),
       poster: session.qa.poster ? `${base}${session.qa.poster}` : null,
+      open: Boolean(share),
     };
+  }
+
+  /**
+   * A public run's video, for anyone with its name (GET /qa-video/…): the session its id names, if its secret matches.
+   * @returns {object|null}  the session, or null for a name that opens nothing
+   */
+  function publicQaVideo(id, secret, n) {
+    const session = find(id);
+    return session && isQa(session) && opensPublicVideo(session, { secret, n }) ? session : null;
   }
 
   /**
@@ -2476,8 +2588,8 @@ export function createFleet({
     const project = projectFor(config, session);
     const gh = githubOf(project);
     const sessionUrl = await qaSessionUrl(session, project);
-    const { videos, poster } = await qaRecordingLinks(session, project);
-    await postQaComment(session, gh, finishedComment({ heading: session.qa.heading, verdict, report, sessionUrl, videos, poster }));
+    const { videos, poster, open } = await qaRecordingLinks(session, project);
+    await postQaComment(session, gh, finishedComment({ heading: session.qa.heading, verdict, report, sessionUrl, videos, poster, open }));
     // The check carries the report too: sessions comment as the App, but cannot post a check, so the brief reads it here.
     // The session runs the pull request's code, which can send any commit: only this pull request's gets a check.
     const ours = sha === session.qa.sha || sha === (await safely('QA pull request', () => gh.pull(session.number)))?.head?.sha;
@@ -2767,7 +2879,7 @@ export function createFleet({
    * @param {{conclusion: 'APPROVE'|'REQUEST_CHANGES'|'COMMENT'|null, summary: string, comment: string, agents?: string[]|null,
    *   mergeRisk: {tier: string|null, reason: string, summary: string}, sha: string, costUsd: number|null}} result
    */
-  async function reviewFinished(session, { conclusion, summary, comment, mergeRisk, inlineComments = [], resolved = [], sha, costUsd, agents }) {
+  async function reviewFinished(session, { conclusion, summary, comment, mergeRisk, inlineComments = [], resolved = [], sha, costUsd, agents, why = '' }) {
     const project = projectFor(config, session);
     const gh = githubOf(project);
     const hold = conclusion === 'APPROVE' && await qaWillRun(project, session.number);
@@ -2776,8 +2888,8 @@ export function createFleet({
     const ours = conclusion ? await submitReview(session, gh, { conclusion, heading, summary, comment, mergeRisk, inlineComments, sha, hold }) : false;
     if (ours && conclusion === 'APPROVE' && !hold) await resolveFixedThreads(session, gh, resolved);
     if (!conclusion) {
-      console.warn('fleet: review session wrote no verdict, nothing submitted', { id: session.id, number: session.number });
-      await postReviewEnded(session, project, 'the session wrote no verdict');
+      console.warn('fleet: review session wrote no verdict, nothing submitted', { id: session.id, number: session.number, why });
+      await postReviewEnded(session, project, why ? `the session wrote no verdict (${why.replace(/[;\s]+$/, '')})` : 'the session wrote no verdict');
     } else if (!comment && session.review.runningPosted && session.review.commentId) {
       console.log('fleet: review wrote no comment, its running comment closed', { id: session.id, number: session.number, conclusion });
       await postReviewComment(session, gh, reviewDoneComment({ conclusion, tier: mergeRisk?.tier ?? null }));
@@ -3190,8 +3302,8 @@ export function createFleet({
 
   return {
     noteMessage, noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
-    createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
-    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
+    createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, publicQaVideo, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),
   };
