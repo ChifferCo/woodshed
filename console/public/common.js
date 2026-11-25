@@ -1208,6 +1208,18 @@
    *   group, `kids` each group's sessions by its session's id (those asking their person first, asksPerson, then the
    *   live, then the newest), `parentOf` the group each nested one is in
    */
+  /**
+   * The messages between this session and others of its person's (fleet.mjs noteMessage), newest first, for Details.
+   * @returns {{at: string, dir: 'in'|'out', other: {id: string|null, title: string}, question: boolean, text: string}[]}
+   */
+  function messageLines(s, sessions, { max = 5 } = {}) {
+    return (s.messages ?? []).slice(0, max).map((m) => {
+      const other = sessions.find((x) => x.id === m.with);
+      return { at: m.at, dir: m.dir, question: Boolean(m.question), text: m.text ?? '',
+        other: other ? { id: other.id, title: other.title } : { id: null, title: 'a session no longer on the list' } };
+    });
+  }
+
   function railGroups(listed) {
     const byId = new Map(listed.map((s) => [s.id, s]));
     const parentOf = new Map();
@@ -2148,6 +2160,6 @@
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, askChoice, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, anyAgentSignIn, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, hoursText, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, waitProgress, clock, prChip, prChips, hasPrs, shownPrs, prLines, peekView, startedLinks, railGroups, groupCounts, asksPerson, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
+    startProgress, waitProgress, clock, prChip, prChips, hasPrs, shownPrs, prLines, peekView, startedLinks, messageLines, railGroups, groupCounts, asksPerson, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();

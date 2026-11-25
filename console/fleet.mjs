@@ -282,6 +282,10 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
  *   `repoTriggers`: each repo's label and its switches for labels and /woodshed comments (repoTriggers.mjs); without
  *   it, every repo has the console's label and both on
  */
+// What Details lists of the messages between a person's sessions (noteMessage): the newest, each cut to a line.
+const MESSAGES_KEPT = 20;
+const MESSAGE_PREVIEW_CHARS = 200;
+
 export function createFleet({
   config, store, launcher, github, statusd = callStatusd, startableRepos = null, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, qaRecordings = null, members = null, pings = null,
@@ -757,6 +761,16 @@ export function createFleet({
   // A question a session asked another of its person's (sessionStarts.mjs, --question): it waits for an answer, which the
   // rail says (public/common.js displayStatus). It ends with any message typed into it, or once it works again after its
   // turn on the question ended: the person may answer in its own Chat or TUI.
+  // The messages between two sessions of a person's (sessionStarts.mjs), on both, for the page's Details: when, which
+  // way, with which session, whether it asked something, and the start of what it said. The newest MESSAGES_KEPT.
+  function noteMessage({ from, to, text, question = false }) {
+    const at = nowIso();
+    const said = String(text).replace(/\s+/g, ' ').trim().slice(0, MESSAGE_PREVIEW_CHARS);
+    for (const [s, other, dir] of [[from, to, 'out'], [to, from, 'in']]) {
+      update(s, { messages: [{ at, dir, with: other.id, question: Boolean(question), text: said }, ...(s.messages ?? [])].slice(0, MESSAGES_KEPT) });
+    }
+  }
+
   function noteQuestion(session, { to }) {
     update(session, { askedAt: nowIso(), askedOf: to, askedSettled: false, askedLastAt: null });
     console.log('fleet: session asked a question', { id: session.id, of: to });
@@ -3174,7 +3188,7 @@ export function createFleet({
   }
 
   return {
-    noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
+    noteMessage, noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
     createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,

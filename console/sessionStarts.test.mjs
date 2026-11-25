@@ -17,6 +17,8 @@ async function serve({ sessions, startMine = null, allowed = () => true, canWrit
     sent: [],
     stopped: [],
     questions: [],
+    noted: [],
+    noteMessage({ from, to, text, question }) { fleet.noted.push([from.id, to.id, text, Boolean(question)]); },
     noteQuestion(session, { to }) { fleet.questions.push(['asked', session.id, to]); session.askedAt = 'now'; },
     clearQuestion(session) { if (session.askedAt) fleet.questions.push(['answered', session.id]); session.askedAt = null; },
     // As the fleet's send: a message that went in, or is held to, answers a question it asked; one left in its box not.
@@ -593,4 +595,20 @@ test('an answer handed to the asking session\'s own wait answers its question to
   assert.equal(api.fleet.sent.length, sentBefore, 'handed to its wait, not typed in');
   assert.equal(child.askedAt, null, 'and its question answered');
   assert.deepEqual(api.fleet.questions.at(-1), ['answered', child.id]);
+});
+
+test('each message between sessions is noted, by whichever way it reaches the other', async (t) => {
+  const { token, session, child, sessions } = family();
+  const childToken = newStartToken();
+  child.startTokenHash = startTokenHash(childToken);
+  const api = await serve({ sessions });
+  t.after(api.close);
+  await api.call('POST', `/sessions/${child.id}/messages`, { token, body: { text: 'Use cents.' } });
+  // One handed straight to the waiting session's wait.
+  Object.assign(child, { state: 'working', pendingMessages: [] });
+  const waiting = api.call('GET', `/sessions/${child.id}/wait?for=reply`, { token });
+  await new Promise((r) => setTimeout(r, 50));
+  await api.call('POST', `/sessions/${session.id}/messages`, { token: childToken, body: { text: 'Developers or customers?', question: true } });
+  await waiting;
+  assert.deepEqual(api.fleet.noted, [[session.id, child.id, 'Use cents.', false], [child.id, session.id, 'Developers or customers?', true]]);
 });

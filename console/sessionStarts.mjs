@@ -335,12 +335,14 @@ export function createSessionStarts({
     const waiting = waits.get(waitKey(to.id, from.id));
     const at = new Date(now()).toISOString();
     if (waiting && waiting.answer({ text: said, at, typed: `${head}\n\n${said}` })) {
+      fleet.noteMessage?.({ from, to, text: said, question: asks });
       fleet.clearQuestion?.(to);
       if (asks) fleet.noteQuestion?.(from, { to: to.id });
       console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome: 'answered a wait', question: asks });
       return reply(res, 200, { sentAt: at, sent: true, answeredWait: true, session: summary(to) });
     }
     const outcome = await fleet.send(to, `${head}\n\n${said}`);
+    fleet.noteMessage?.({ from, to, text: said, question: asks });
     if (asks && outcome !== 'in-box') fleet.noteQuestion?.(from, { to: to.id });
     console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome, question: asks });
     if (outcome === 'in-box') return reply(res, 409, { error: 'it went into the session\'s box but was not sent: a prompt came up as it was typed, which the person answers in its TUI tab' });

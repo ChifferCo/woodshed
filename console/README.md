@@ -991,6 +991,9 @@ one session's machine to another's. `list --all` lists them; `list` alone the on
   nothing its agent wrote: no last message, and `tainted: true`.
 - `stop <id>` and `resume <id>` are the page's Stop and Resume, with Resume's checks (`resumeMine` in `server.mjs`).
 - `rename "<name>"` renames the session itself, `rename <id> "<name>"` another of the person's, as the page's rename.
+- Each message is kept on both sessions (`fleet.noteMessage`, the last 20, each cut to 200 characters), and their
+  Details lists the latest as **Messages**: From or To (Asked, Asked by for a question), the other session as a link, when,
+  and the start of the text. The whole message is in the receiving session's Chat.
 - `reply --question "<question>"` (or `send --question`) asks something and waits for the answer: the asking session
   reads **asked a question** on the rail, as asking its person (`key: needs-you`), so its group counts it and Needs you
   shows its copy, until it is sent a message or works again after the turn it asked in (`fleet.noteQuestion`,

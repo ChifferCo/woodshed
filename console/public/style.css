@@ -245,6 +245,11 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 .rgroup { display: flex; flex-direction: column; gap: 6px; margin-left: 10px; padding-left: 8px; border-left: 2px solid var(--line); }
 .rin { padding-left: 13px; font-size: 11px; color: var(--sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rin a { color: var(--sub); }
+.msg-lines { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.msg-lines li { display: flex; flex-wrap: wrap; column-gap: 4px; min-width: 0; }
+.msg-dir { color: var(--sub); }
+.msg-at { color: var(--meta); font-family: var(--mono); font-size: 11px; }
+.msg-text { flex-basis: 100%; color: var(--sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .is-needs-you .rsub b { color: var(--wait); } .is-working .rsub b { color: var(--slate); } .is-done .rsub b { color: var(--green); }
 .is-review .rsub b, .is-job .rsub b { color: var(--slate); } .is-paused .rsub b { color: var(--wait); } .is-finished .rsub b { color: var(--green); }
 .is-failed .rsub b { color: var(--bad); } .is-queued .rsub b { color: var(--wait); }
