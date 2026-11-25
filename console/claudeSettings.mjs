@@ -174,6 +174,8 @@ function codexChoice(item) {
  * What each agent's "default" is in a person's next session, from their shared copy: the model and effort Claude Code's
  * settings.json and Codex's config.toml name, which a new session starts from. Grok Build and OpenCode keep theirs in no
  * file a session carries, so they are not here: each picks its own.
+ * TODO: once a session carries Grok Build's or OpenCode's settings (session/settingsSync.mjs, SYNCED_FILES), read the
+ * model and effort they save here as well, and drop their `null` in readSavedChoices (server.mjs).
  * @param {Record<string, string>|null} items  the copy's items, or null when it could not be read
  * @returns {{claude: SavedChoice, codex: SavedChoice}}
  */

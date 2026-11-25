@@ -1741,7 +1741,8 @@ export function createHandler({
         console.warn('console: shared Claude settings not read for New session', { login, message: String(err?.message ?? err).split('\n')[0] });
       }
     }
-    // Grok Build and OpenCode keep their model in nothing a session carries: each picks its own (null).
+    // Grok Build and OpenCode keep their model in nothing a session carries: each picks its own (null). Once one is
+    // carried, savedChoices reads it, as it does Claude Code's and Codex's.
     const found = { ...savedChoices(items), grok: null, opencode: null };
     choicesSeen.set(login, found);
     return found;

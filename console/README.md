@@ -859,7 +859,8 @@ Anthropic's), which the console cannot see, so the menu says `plan default (Opus
 default`, never a model as if it were certain. For Codex it is `model` and `model_reasoning_effort` in
 `~/.codex/config.toml` (its `profile`'s own first); with none, `default`, codex's own pick. A repo's own
 `.claude/settings.json` naming a model still wins in the session. Grok Build and OpenCode keep their model in nothing a
-session carries (`agentDefaults` has `null` for them), so theirs is `default`, the agent's own pick. A copy that does
+session carries (`agentDefaults` has `null` for them), so theirs is `default`, the agent's own pick; once their
+settings are carried between sessions, `savedChoices` should read their saved model and effort too. A copy that does
 not read (`read: false`, and the console logs `console: shared Claude settings not read for New session`) or names
 something that is not a plain model or effort name shows plain `default` too. Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
 (`codexModels.mjs`): `GET https://chatgpt.com/backend-api/codex/models?client_version=<codex's version>`, asked with
