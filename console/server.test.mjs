@@ -265,6 +265,48 @@ test('the transcript a phone scrolls is read from the running session\'s statusd
   assert.equal(asked.length, 5, 'nothing asked for a stopped or unknown session');
 });
 
+test('a stopped session\'s Chat reads the conversation it kept, only for whoever may open it, and never a tainted one\'s', async (t) => {
+  const conversation = { agent: 'claude', entries: [{ role: 'user', text: 'Fix it', at: null }, { role: 'assistant', text: 'Fixed.', at: null }], partial: false, writtenAt: 1764064800000 };
+  const texts = new Map([
+    ['octocat/sessions/0a1b2c3d/conversation.json', JSON.stringify({ ...conversation, savedAt: '2026-11-25T10:00:00.000Z' })],
+    ['_sessions/1b2c3d4e/conversation.json', JSON.stringify(conversation)],
+    ['octocat/sessions/3d4e5f6a/conversation.json', JSON.stringify(conversation)],
+  ]);
+  const read = [];
+  const homes = { getText: async (key) => { read.push(key); if (key.includes('broken')) throw new Error('S3 down'); return texts.get(key) ?? null; } };
+  const at = '2026-11-25T10:00:00.000Z';
+  const sessions = [
+    { id: '0a1b2c3d', status: 'stopped', title: 'mine', owner: 'octocat', conversationSavedAt: at },
+    { id: '1b2c3d4e', status: 'stopped', title: 'shared', owner: null, kept: true, conversationSavedAt: at },
+    { id: '2c3d4e5f', status: 'stopped', title: 'nothing kept', owner: 'octocat' },
+    { id: '3d4e5f6a', status: 'stopped', title: 'tainted', owner: 'octocat', taintedAt: at, conversationSavedAt: at },
+    { id: '4e5f6a7b', status: 'stopped', title: 'gone from the store', owner: 'octocat', conversationSavedAt: at },
+    { id: '5f6a7b8c', status: 'starting', title: 'resuming', owner: 'octocat', conversationSavedAt: at },
+    { id: '6a7b8c9d', status: 'stopped', title: 'theirs', owner: 'mia-dev', conversationSavedAt: at },
+  ];
+  const fleet = { sessions: () => sessions, find: (id) => sessions.find((s) => s.id === id) ?? null };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const server = http.createServer(createHandler({ config, fleet, auth, homes }));
+  const port = await listen(server);
+  t.after(() => server.close());
+  const get = async (id, query = '') => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${id}/transcript${query}`, { headers: { cookie: 'woodshed_session=octocat' } });
+    return { status: res.status, body: await res.json() };
+  };
+
+  assert.deepEqual(await get('0a1b2c3d'), { status: 200, body: { ...conversation, saved: true, savedAt: at } });
+  assert.deepEqual(await get('0a1b2c3d', '?since=1764064800000'), { status: 200, body: { agent: 'claude', unchanged: true, writtenAt: 1764064800000 } });
+  assert.equal((await get('0a1b2c3d', '?since=5')).body.entries.length, 2, 'another since: the whole of it');
+  assert.equal((await get('1b2c3d4e')).body.savedAt, at, 'a shared session\'s, with the record\'s time when the file has none');
+  assert.equal((await get('2c3d4e5f')).status, 409, 'nothing kept: not running, as before');
+  assert.equal((await get('3d4e5f6a')).status, 409, 'a tainted session\'s is never shown');
+  assert.equal((await get('4e5f6a7b')).status, 404, 'marked, but gone from the store');
+  assert.equal((await get('5f6a7b8c')).status, 409, 'one starting again reads the live one once it runs');
+  assert.equal((await get('6a7b8c9d')).status, 404, 'a teammate\'s private session is never found');
+  assert.ok(!read.some((k) => /3d4e5f6a|5f6a7b8c|6a7b8c9d/.test(k)), 'and none of those was read');
+});
+
 test('the Chat tab\'s Stop is an interrupt sent to the running session\'s statusd, and nothing else', async (t) => {
   const asked = [];
   const statusd = http.createServer((req, res) => {

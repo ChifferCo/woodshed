@@ -1010,6 +1010,15 @@ URL on top of each env file's Repo settings values
   console logs `console: message from the page refused, the session cannot send safely`. Type in the TUI tab, or start
   a new session. Messages the console sends itself (Slack follow-ups, review feedback) still go to such a session, one
   right after each status read that says it is idle.
+- **A stopped session has no Chat tab, or its Chat is older than where the session stopped.** Chat shows a stopped
+  session's conversation only when the session kept one (console/README.md, "A stopped session's conversation"): its
+  record has `conversationSavedAt`. At its stop statusd logged `statusd: conversation kept` with `why` and the entries,
+  or `conversation not kept` with the console's answer; the console logged `sessionApi: conversation kept`, or `conversation
+  refused, the session has seen production data`. None is kept for a question from Slack, a QA run, a review, a tainted
+  session, an image from before it, or a console with no home store (`this console keeps no Claude homes`). A task that
+  ended without its checkpoint (a crash) shows the periodic copy, up to 5 minutes older. `console: saved conversation
+  not read` with the store's error is the 502 the page shows; a 404 is a copy gone from the store, such as after Forget
+  my Claude home.
 - **Chat's Needs you line offers only the TUI tab, for a prompt it should read.** statusd's `GET /prompt` answered 503
   `pane-unread`: statusd logs `statusd: prompt not read, the pane could not be read` with tmux's error. A send refused as
   busy (`why: 'typing'`) right after a session's lockdown is the reopen of claude holding the pane until the new claude

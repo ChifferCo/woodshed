@@ -258,6 +258,8 @@ import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
 import agentsRegistry from '../shared/agents.cjs';
 import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetup.mjs';
 import { createInstallation } from './installation.mjs';
+import { conversationKey, sessionHomeName } from './homes.mjs';
+import { parseSavedConversation } from '../shared/savedConversation.mjs';
 import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sessionOptions, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
 import { WEBHOOK_SECRET } from './settings.mjs';
 import { openStore } from './store.mjs';
@@ -2005,6 +2007,7 @@ export function createHandler({
         if (homes) {
           await homes.removeSessionsOf(login);
           await homes.remove(login);
+          fleet.forgetConversations?.(login);
         }
         await claudeSettings?.remove(login);
         userSettings?.noteHome(login, 0);
@@ -2227,6 +2230,29 @@ export function createHandler({
       return { kind: 'approval', decision: body.decision, key: body.key };
     }
     return null;
+  }
+
+  // Whether a session that is not running has a conversation to show: one it kept at a save (sessionApi.mjs,
+  // /conversation). Never a tainted session's: none is kept after its taint, and one kept before it is not shown.
+  function keptConversation(session) {
+    return Boolean(homes?.getText) && Boolean(session.conversationSavedAt) && !session.taintedAt;
+  }
+
+  // A stopped or paused session's Chat: the conversation it kept, in the live route's shape with `saved` and `savedAt`,
+  // or 404 when it is gone from the store. With `since`, {unchanged: true} while it is still the one the page has.
+  async function savedConversationReply(res, session, since) {
+    let text;
+    try {
+      text = await homes.getText(conversationKey(sessionHomeName(session)));
+    } catch (err) {
+      console.warn('console: saved conversation not read', { id: session.id, message: String(err?.message ?? err).split('\n')[0] });
+      return reply(res, 502, { error: 'the saved conversation could not be read' });
+    }
+    const saved = text ? parseSavedConversation(text) : null;
+    if (!saved) return reply(res, 404, { error: 'no conversation was kept for this session' });
+    const savedAt = saved.savedAt ?? session.conversationSavedAt;
+    if (since && saved.writtenAt !== null && String(saved.writtenAt) === since) return reply(res, 200, { agent: saved.agent, unchanged: true, writtenAt: saved.writtenAt });
+    return reply(res, 200, { ...saved, saved: true, savedAt });
   }
 
   function runningFor(id, login) {
@@ -3023,6 +3049,10 @@ export function createHandler({
   // A running session's applog, diff, transcript or prompt, read from its statusd for whoever may open it.
   function statusdRead(req, res, url, login, [, id, what]) {
     const session = runningFor(id, login);
+    if (!session && what === 'transcript') {
+      const ended = findFor(id, login);
+      if (ended && !ACTIVE_STATUSES.has(ended.status) && keptConversation(ended)) return savedConversationReply(res, ended, url.searchParams.get('since'));
+    }
     if (!session) return reply(res, findFor(id, login) ? 409 : 404, { error: 'the session is not running' });
     const limit = what === 'transcript' ? url.searchParams.get('limit') : null;
     const since = what === 'transcript' ? url.searchParams.get('since') : null;

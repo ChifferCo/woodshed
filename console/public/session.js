@@ -148,7 +148,32 @@
   let routeVersion = 0;
   const launcher = W.createLauncher();
   const messageBox = W.createMessageBox();
-  const chat = W.createChat({ openTerminal: () => setTab('tui'), openDiff: () => setTab('diff') });
+  const chat = W.createChat({ openTerminal: () => setTab('tui'), openDiff: () => setTab('diff'), ended: chatEndedFoot });
+
+  // A session that ended with its conversation kept (shared/savedConversation.mjs): its Chat shows it, read-only, and
+  // nothing is sent until it runs again. Not while it waits, starts or stops: those show their own progress on TUI's
+  // place. Never a tainted session's, which keeps none.
+  function showsSavedChat(s) {
+    return Boolean(s.conversationSavedAt) && !s.taintedAt && !['queued', 'starting', 'running', 'stopping'].includes(s.status);
+  }
+
+  // Under a stopped session's kept conversation, in the composer's place: how it ended, when it was kept, and its Resume.
+  function chatEndedFoot(s, record) {
+    const paused = W.isPaused(s);
+    const shared = W.isResumable(s);
+    const heading = shared ? W.displayStatus(s).word.replace(/^./, (c) => c.toUpperCase())
+      : s.status === 'failed' ? 'Failed' : paused ? 'Paused' : 'Stopped';
+    const kept = record?.savedAt ? `kept ${W.ago(record.savedAt)}` : 'as it was kept';
+    const fresh = W.isPrivate(s) && W.agentOf(s) !== 'claude' ? `: ${W.agentTitle(s)} keeps no conversation between runs, so Resume starts a new one` : '';
+    // A shared session's Resume is on the pane bar already (paneBar), and orange is for the one primary action.
+    const resume = W.canResumePrivate(s) ? resumeButton(s, true) : null;
+    return [
+      h('span', { class: 'chat-ended-text' }, h('b', null, heading), ` · The conversation ${kept}. ${resume || shared ? `Resume to send ${W.agentOf(s)} a message${fresh}.` : 'It can no longer be sent messages.'}`),
+      h('span', { class: 'chat-needs-actions' },
+        h('button', { type: 'button', class: 'btn btn-sm btn-plain', onclick: () => setTab('tui') }, 'Details'),
+        resume),
+    ];
+  }
 
   // ---- The agents started beside a session's own (session/agents.mjs, statusd's /agents). Chat and TUI show the one
   // picked on the pane bar's agent switch, kept per session in this browser tab; the session's own is shown when none is
@@ -2138,7 +2163,7 @@
   // The tab that shows: a session that is not running shows its start or its end where the terminal goes, and the
   // chat comes back once it runs.
   function viewOf(s) {
-    return tab === 'chat' && s.status !== 'running' ? 'tui' : tab;
+    return tab === 'chat' && s.status !== 'running' && !showsSavedChat(s) ? 'tui' : tab;
   }
 
   function paneBar(s, view) {
@@ -2203,7 +2228,7 @@
         type: 'button', class: 'pkeys', title: 'Show or hide the key bar', 'aria-pressed': String(keyBarShown), onclick: toggleKeyBar,
       }, '⌨'),
       h('div', { class: 'ptabs', role: 'tablist', 'aria-label': 'View' },
-        s.status === 'running' && tabButton('chat', 'Chat'),
+        (s.status === 'running' || showsSavedChat(s)) && tabButton('chat', 'Chat'),
         tabButton('tui', 'TUI'),
         tabButton('terminal', 'Terminal'),
         tabButton('review', 'Review')),

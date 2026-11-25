@@ -6,7 +6,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { text } from 'node:stream/consumers';
 
-import { MAX_HOME_BYTES, privateSessionHomeName, sharedHomeName } from '../../console/homes.mjs';
+import { MAX_HOME_BYTES, conversationKey, privateSessionHomeName, sharedHomeName } from '../../console/homes.mjs';
 import { createHomeStore } from './homeStore.mjs';
 
 function tmpDir() {
@@ -65,4 +65,23 @@ test('the settings file beside a home is written, read and removed, and a name t
   await homes.removeKey('joel/claude-settings.json');
   assert.equal(await homes.getText('joel/claude-settings.json'), null);
   for (const key of ['../x', 'joel/../../x', '/etc/passwd', 'a//b']) await assert.rejects(homes.getText(key), /not a home name/, key);
+});
+
+test('a session\'s conversation beside its home goes with it, and with every home of its owner\'s', async () => {
+  const dir = tmpDir();
+  const homes = createHomeStore({ dir });
+  const shared = sharedHomeName('0a1b2c3d');
+  const own = privateSessionHomeName('Joel', '1b2c3d4e');
+  for (const name of [shared, own]) {
+    await homes.put(name, Readable.from(['tar']));
+    await homes.putText(conversationKey(name), '{"entries":[]}');
+  }
+  assert.ok(fs.existsSync(path.join(dir, 'joel/sessions/1b2c3d4e/conversation.json')), 'under the login the stores keep it by');
+  assert.equal(await homes.getText(conversationKey(shared)), '{"entries":[]}');
+  await homes.remove(shared);
+  assert.equal(await homes.getText(conversationKey(shared)), null, 'removed with its home');
+  assert.equal(await homes.get(shared), null);
+  await homes.remove(shared);
+  assert.equal(await homes.removeSessionsOf('joel'), 1, 'counts the homes alone');
+  assert.equal(await homes.getText(conversationKey(own)), null);
 });

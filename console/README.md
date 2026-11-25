@@ -145,7 +145,23 @@ the page shows as `Not answered: <why>` with a way to the TUI tab; the console l
 the page` with the picks' numbers or the decision, never their text. A free-text answer, a question that takes
 several options, and anything else the agent asks only in its terminal stay **Answer in the TUI tab**. The agent still runs in its terminal, on
 the **TUI** tab (`?tab=tui`; `?tab=agent`, its old name, still opens it): hooks, Remote Control and Resume work as before. A session that is not running has
-no Chat tab and shows its start or its end there.
+no Chat tab and shows its start or its end there, unless it kept its conversation: then its Chat shows it read-only.
+
+**A stopped session's conversation.** At the stop's checkpoint, and every 5 minutes while the agent's record changes,
+statusd sends the conversation as Chat draws it to the session API (`POST /conversation`, shared/savedConversation.mjs:
+the newest 300 entries, at most 4 MB, the oldest dropped first and the thread saying so). The console keeps the last one
+beside the session's own Claude home (`<login>/sessions/<id>/conversation.json`, `_sessions/<id>/conversation.json`,
+console/homes.mjs), marks the session (`conversationSavedAt`), and deletes it with the home: the home store's `remove`
+takes both, and Forget my Claude home and Remove My Woodshed every one of the owner's. While the session is stopped,
+paused or failed, its Chat reads that copy (`GET /api/sessions/<id>/transcript` answers it with `saved: true` and
+`savedAt`), with no composer: in its place, how it ended, when the conversation was kept, **Details** (the TUI tab's
+end) and a private session's **Resume** (a shared one's is on the pane bar). Once it runs again, Chat reads the live
+record, which the copy was made from, so nothing shows twice. A question from Slack, a QA run and a review keep none,
+nor does a session that has seen production data: statusd sends nothing once tainted, the session API refuses one
+whose lockdown began (409), and the console shows none of a tainted session's. The console logs `sessionApi:
+conversation kept` with the entries and bytes, or `conversation refused, the session has seen production data`;
+statusd logs `statusd: conversation kept` with `why` (`stop` or `periodic`), or `conversation not kept` with the
+console's answer.
 
 **More than one agent in a session.** The owner of a running My Woodshed session can start another agent in it, beside
 its own: the agent switch on the pane bar, after the tabs while Chat or TUI shows (`components/AgentSwitch`), has
@@ -534,7 +550,8 @@ TUI and Terminal tabs):
   `GET /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>` answers what was asked, what the agent said, and a
   line for each tool it ran (marked when it failed, and with what an edit changed, as `diffs`), newest last, from the agent's own record (statusd's `GET
   /transcript`), or `{unchanged: true}` while nothing was written since the last answer. Anyone who can open the
-  session may read it, while it runs.
+  session may read it, while it runs, and once it has stopped, the copy it kept, with `saved: true` and `savedAt` (409
+  when it kept none).
 
 And what the shed shows about each session:
 - **The pull request's chip**, on the card and the pane bar: open, draft,

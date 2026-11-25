@@ -13,7 +13,8 @@
 //   POST /claude-login  types /woodshed:remote-control into claude, or woodshed-login at the Terminal tab's prompt where
 //                       claude has no such command: {"where": "agent"|"terminal"}
 //   POST /checkpoint  commit whatever is uncommitted and push the branch, after saving the Claude home
-//                     (~/.claude and ~/.claude.json) to the console, for the session's next run
+//                     (~/.claude and ~/.claude.json) to the console, for the session's next run, and before it the
+//                     conversation as the Chat tab draws it, for its Chat while it is stopped (saveConversation)
 //   POST /taint       {"proxy", "ca", "message"}: the console locked this session down (console/mcpRelay.mjs). Every tool
 //                     is pointed at the console's egress proxy, the settings sync stops, the rules gain tainted.md, and
 //                     claude reopens its conversation on the console's Anthropic proxy once its turn ends, with
@@ -92,6 +93,7 @@ import { createReviewHost } from './reviewShed/host.mjs';
 import { createCodeEditor } from './codeEditor.mjs';
 import { readSessionDiff } from './sessionDiff.mjs';
 import { ownClaudeTranscript, readSessionTranscript } from './sessionTranscript.mjs';
+import { fitConversation } from '../shared/savedConversation.mjs';
 import { ENGINE_NAMES, viewersOf } from '../shared/databases/index.mjs';
 import { expandPath, loadProject, usesVariable } from '../shared/project.mjs';
 import { isMain } from '../shared/isMain.mjs';
@@ -705,6 +707,24 @@ async function ownRollout() {
   if (!agents) return undefined;
   const held = await agentIo().shellPid().then((pid) => openRollout(pid, CODEX_HOME)).catch(() => null);
   return held ?? undefined;
+}
+
+// The session's own agent's conversation, as the Chat tab reads it (sessionTranscript.mjs): for GET /transcript, and
+// for the copy the console keeps (saveConversation).
+async function readOwnConversation({ limit, since } = {}) {
+  const claimed = agents?.claimed();
+  return readSessionTranscript({
+    agent: AGENT,
+    home: os.homedir(),
+    claudeDir: transcriptDir(),
+    ...OWN_TRANSCRIPTS,
+    root: REPO_DIR,
+    codexHome: CODEX_HOME,
+    skip: CODEX ? claimed?.codex : CLAUDE ? claimed?.claude : undefined,
+    ...(CODEX ? { file: await ownRollout() } : {}),
+    ...(limit ? { limit } : {}),
+    ...(since !== undefined ? { since } : {}),
+  });
 }
 
 async function transcriptTail() {
@@ -1479,6 +1499,42 @@ async function saveHomeIfChanged() {
   if (changed && !homeSavesOver) await saveHomeInTurn('periodic');
 }
 
+// The conversation as the Chat tab draws it, kept by the console beside the home (shared/savedConversation.mjs), so the
+// session's Chat still shows it once the session is stopped or paused. Sent at the stop's checkpoint, and every
+// HOME_SAVE_EVERY_MS when the agent's record was written since, so a task that ends without a checkpoint keeps what came
+// before its last few minutes. Not for a question from Slack, a QA run or a review, whose Chat nobody reads after, and
+// never once the session has seen production data: what it saw is kept nowhere that outlives it but its own home.
+const KEEPS_CONVERSATION = !ASK && !QA && process.env.SESSION_MODE !== 'review';
+const CONVERSATION_SAVE_TIMEOUT_MS = 10_000;
+// The writtenAt of the record last kept, which the next read is asked against: a record nobody wrote to costs a stat.
+let conversationKeptAt = null;
+let conversationSaving = Promise.resolve();
+
+async function saveConversation(why) {
+  if (!CONSOLE_URL || !KEEPS_CONVERSATION || tainted()) return;
+  const read = await readOwnConversation(conversationKeptAt === null ? {} : { since: conversationKeptAt });
+  if (!read || read.unchanged) return;
+  const body = fitConversation(read);
+  if (!body) return;
+  const res = await fetch(`${CONSOLE_URL}/conversation`, {
+    method: 'POST', headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body,
+    signal: AbortSignal.timeout(CONVERSATION_SAVE_TIMEOUT_MS),
+  });
+  await res.body?.cancel();
+  if (!res.ok) throw new Error(`the console answered ${res.status}`);
+  conversationKeptAt = read.writtenAt;
+  console.log('statusd: conversation kept', { why, entries: read.entries.length, bytes: Buffer.byteLength(body) });
+}
+
+// One at a time, so the stop's lands after a periodic one begun before it. Its failure is logged, never thrown: the
+// home and the push go on without it.
+function saveConversationInTurn(why) {
+  conversationSaving = conversationSaving.then(() => saveConversation(why)).catch((err) => {
+    console.warn('statusd: conversation not kept', { why, message: String(err?.message ?? err).split('\n')[0] });
+  });
+  return conversationSaving;
+}
+
 // Carries on from the version the entrypoint pulled before claude started.
 let settingsState = null;
 // The round in flight, which the stop waits for, and whether the stop has had its last one.
@@ -1551,7 +1607,9 @@ async function checkpointNow() {
   await keepCodexAuth();
   await keepAgentAuth();
   await lastSettingsRound();
-  // Before the push, which can fail: the home is worth keeping either way.
+  // Before the push, which can fail: the home is worth keeping either way. The conversation first: it is small, and
+  // it is what the stopped session's Chat shows.
+  await saveConversationInTurn('stop');
   const home = CONSOLE_URL ? await saveHomeInTurn('stop') : { saved: false };
   if (ASK || QA) {
     console.log('statusd: a session that changes no branch pushes nothing', { mode: process.env.SESSION_MODE });
@@ -2007,16 +2065,7 @@ async function handle(req, res) {
     const params = new URL(req.url, 'http://statusd').searchParams;
     const limit = params.get('limit');
     const since = Number(params.get('since'));
-    const claimed = agents?.claimed();
-    const read = await readSessionTranscript({
-      agent: AGENT,
-      home: os.homedir(),
-      claudeDir: transcriptDir(),
-      ...OWN_TRANSCRIPTS,
-      root: REPO_DIR,
-      codexHome: CODEX_HOME,
-      skip: CODEX ? claimed?.codex : CLAUDE ? claimed?.claude : undefined,
-      ...(CODEX ? { file: await ownRollout() } : {}),
+    const read = await readOwnConversation({
       ...(limit ? { limit: Number(limit) } : {}),
       ...(params.get('since') && Number.isFinite(since) ? { since } : {}),
     }).catch((err) => {
@@ -2141,6 +2190,8 @@ function main() {
     setInterval(() => saveHomeIfChanged().catch((err) => {
       console.warn('statusd: Claude home check failed', { message: err?.message });
     }), HOME_SAVE_EVERY_MS);
+    // As the home's: none after the checkpoint, which may be Remove My Woodshed deleting what it kept.
+    if (KEEPS_CONVERSATION) setInterval(() => { if (!homeSavesOver) saveConversationInTurn('periodic'); }, HOME_SAVE_EVERY_MS);
   }
   if (CONSOLE_URL && process.env.SESSION_KIND === 'private') {
     setInterval(() => syncSettings().catch((err) => {

@@ -1822,3 +1822,77 @@ test('in Herdr, an upload to the agent is saved and answered as not typed, and n
   assert.equal(await fs.readFile(up.body.path, 'utf8'), 'png bytes');
   assert.deepEqual((await hc.calls()).filter(([command]) => command === 'send' || command === 'keys'), [], 'no Enter sent with it');
 });
+
+// The conversation the stopped session's Chat shows (shared/savedConversation.mjs): sent at the stop's checkpoint before
+// the home, once per change, and never by a session that has seen production data or one whose Chat nobody reads after.
+test('the stop sends the conversation before the home, only when it changed, and never once tainted', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-conversation-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const posted = [];
+  const consoleApi = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      posted.push({ url: req.url.split('?')[0], body });
+      if (req.url === '/conversation') return res.writeHead(204).end();
+      return res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+    });
+  });
+  const consolePort = await listen(consoleApi);
+  t.after(() => consoleApi.close());
+  const line = (o) => `${JSON.stringify(o)}\n`;
+  const at = new Date().toISOString();
+  const transcript = [
+    line({ type: 'user', timestamp: at, message: { role: 'user', content: 'Fix the login bug' } }),
+    line({ type: 'assistant', timestamp: at, message: { role: 'assistant', content: [{ type: 'text', text: 'Fixed: the cookie was not secure.' }] } }),
+  ].join('');
+  async function session(name, env) {
+    const home = path.join(dir, name);
+    const taintDir = path.join(dir, `${name}-taint`);
+    await fs.mkdir(taintDir, { recursive: true });
+    const started = await statusdWithApp(t, { env: {
+      HOME: home, SESSION_KIND: 'shared', SESSION_MODE: '', AGENT: '', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consolePort}`,
+      WOODSHED_HOME_RESTORED_FILE: path.join(dir, 'none'), WOODSHED_TAINT_DIR: taintDir, ...env,
+    } });
+    const projects = path.join(home, '.claude', 'projects', started.repo.replace(/[/.]/g, '-'));
+    await fs.mkdir(projects, { recursive: true });
+    await fs.writeFile(path.join(projects, 'a1b2c3d4-0000-4000-8000-000000000000.jsonl'), transcript);
+    return { ...started, taintDir, projects };
+  }
+
+  const { call, projects } = await session('plain', {});
+  await call('POST', '/checkpoint');
+  const urls = posted.map((p) => p.url);
+  assert.ok(urls.includes('/conversation'), 'the conversation was sent');
+  assert.ok(urls.indexOf('/conversation') < urls.indexOf('/home'), 'before the home');
+  const sent = JSON.parse(posted.find((p) => p.url === '/conversation').body);
+  assert.equal(sent.agent, 'claude');
+  assert.deepEqual(sent.entries.map((e) => [e.role, e.text]), [['user', 'Fix the login bug'], ['assistant', 'Fixed: the cookie was not secure.']]);
+  assert.equal(typeof sent.writtenAt, 'number');
+
+  posted.length = 0;
+  await call('POST', '/checkpoint');
+  assert.ok(!posted.some((p) => p.url === '/conversation'), 'nothing written since: nothing sent again');
+
+  await fs.appendFile(path.join(projects, 'a1b2c3d4-0000-4000-8000-000000000000.jsonl'),
+    line({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: 'And the logout one?' } }));
+  posted.length = 0;
+  await call('POST', '/checkpoint');
+  const again = posted.find((p) => p.url === '/conversation');
+  assert.ok(again, 'a change is sent');
+  assert.equal(JSON.parse(again.body).entries.at(-1).text, 'And the logout one?');
+
+  // Tainted: its own home only, never a copy the console keeps.
+  const tainted = await session('tainted', {});
+  await fs.writeFile(path.join(tainted.taintDir, 'tainted'), '');
+  posted.length = 0;
+  await tainted.call('POST', '/checkpoint');
+  assert.ok(posted.some((p) => p.url === '/home'), 'its home is still saved');
+  assert.ok(!posted.some((p) => p.url === '/conversation'), 'its conversation is not');
+
+  // A question from Slack: its Chat is not read after it ends.
+  const ask = await session('ask', { SESSION_MODE: 'ask' });
+  posted.length = 0;
+  await ask.call('POST', '/checkpoint');
+  assert.ok(!posted.some((p) => p.url === '/conversation'));
+});
