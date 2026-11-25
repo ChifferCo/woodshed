@@ -11,6 +11,7 @@ import { createProjectColors } from './projectColors.mjs';
 import { createTunnel } from './dbTunnel.mjs';
 import { createCliSignIn } from './cliSignIn.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
+import { createClaudeSettings } from './claudeSettings.mjs';
 import agentsRegistry from '../shared/agents.cjs';
 import { createSlack } from './slack.mjs';
 import { createUserSettings } from './userSettings.mjs';
@@ -1415,6 +1416,46 @@ test('Remove My Woodshed needs your login typed, and removes only yours; the rai
   assert.deepEqual(await pulls(), [{ number: 7, title: "mia-dev's PR", why: 'yours', project: 'r', repo: 'o/r' }]);
   await pulls();
   assert.equal(asked, 1, 'kept for a minute');
+});
+
+test('/api/my names each agent\'s default as the person\'s shared settings have it, and only theirs', async (t) => {
+  const b64 = (text) => Buffer.from(text).toString('base64');
+  const objects = new Map([
+    ['mia-dev/claude-settings.json', JSON.stringify({ version: 3, items: {
+      '.claude/settings.json': b64(JSON.stringify({ model: 'opus', effortLevel: 'high' })),
+      '.codex/config.toml': b64('model = "gpt-5.5"\n'),
+    } })],
+    ['broken/claude-settings.json', '{not json'],
+  ]);
+  let puts = 0;
+  const store = { getText: async (key) => objects.get(key) ?? null, putText: async () => { puts++; }, removeKey: async () => {} };
+  const claudeSettings = createClaudeSettings({ store });
+  const fleet = { sessions: () => [], find: () => null };
+  const userSettings = { view: () => ({ claudeToken: { set: true, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: true, available: true }) };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet, auth, userSettings, claudeSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const me = async (login) => JSON.parse(await getBody(port, '/api/my', { cookie: `woodshed_session=${login}` }));
+
+  assert.deepEqual((await me('mia-dev')).agentDefaults, {
+    claude: { read: true, model: 'opus', effort: 'high' }, codex: { read: true, model: 'gpt-5.5', effort: null }, grok: null, opencode: null,
+  });
+  assert.deepEqual((await me('octocat')).agentDefaults, {
+    claude: { read: true, model: null, effort: null }, codex: { read: true, model: null, effort: null }, grok: null, opencode: null,
+  }, 'nothing saved: each agent picks its own, and nobody else\'s is shown');
+  const unread = { claude: { read: false, model: null, effort: null }, codex: { read: false, model: null, effort: null }, grok: null, opencode: null };
+  const warned = t.mock.method(console, 'warn', () => {});
+  const broken = await me('broken');
+  assert.equal(broken.login, 'broken', '/api/my still answers');
+  assert.deepEqual(broken.agentDefaults, unread, 'a copy that does not read names nothing');
+  assert.deepEqual((await me('broken')).agentDefaults, unread);
+  const lines = warned.mock.calls.filter((c) => c.arguments[0] === 'console: shared Claude settings not read for New session');
+  assert.equal(lines.length, 1, 'warned of once, not on every poll');
+  assert.equal(lines[0].arguments[1].login, 'broken');
+  assert.equal(puts, 0, 'reading writes nothing');
 });
 
 test('a person\'s files are read and written for the signed-in login only', async (t) => {

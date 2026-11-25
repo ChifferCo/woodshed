@@ -7,7 +7,7 @@
 // whenever another session changed something in between. Servers sent by a computer are kept in a separate map in
 // the same object. The session API never returns that map, so importing a laptop's server cannot install it there.
 
-import { CODEX_CONFIG, configCredential, isCodexMcp, readToml, withEntries } from '../shared/codexConfig.mjs';
+import { CODEX_CONFIG, configCredential, isCodexMcp, pathOf, readToml, stringsOf, withEntries } from '../shared/codexConfig.mjs';
 import { isCarriedSource } from '../shared/pluginSource.mjs';
 import { redact, secretContent } from '../shared/secretLike.mjs';
 import logins from './public/logins.cjs';
@@ -110,6 +110,83 @@ export function parseSyncBody(body) {
   return { version, changed, removed };
 }
 
+const CLAUDE_SETTINGS = '.claude/settings.json';
+// What New session may show of a saved choice: a model or effort name, never anything longer or stranger, since it is
+// drawn on the page and is the person's own file.
+const SHOWN_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:[\]/-]{0,63}$/;
+const SHOWN_EFFORT = /^[a-z]{1,16}$/;
+
+/**
+ * @typedef {{read: boolean, model: string|null, effort: string|null}} SavedChoice
+ *   read: false when the copy, or the agent's file in it, could not be read, so nothing is known of what it names; with
+ *   read true, a null model or effort is one nothing saved, which the agent picks itself
+ */
+
+const unread = () => ({ read: false, model: null, effort: null });
+
+function shown(value, re) {
+  if (value === undefined || value === null) return { ok: true, value: null };
+  return typeof value === 'string' && re.test(value) ? { ok: true, value } : { ok: false };
+}
+
+/** Claude Code's saved `model` and `effortLevel` (what `/model` writes) in a settings.json item. */
+function claudeChoice(item) {
+  if (item === undefined) return { read: true, model: null, effort: null };
+  let settings;
+  try {
+    settings = JSON.parse(Buffer.from(item, 'base64').toString('utf8'));
+  } catch {
+    return unread();
+  }
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return unread();
+  const model = shown(settings.model, SHOWN_MODEL);
+  const effort = shown(settings.effortLevel, SHOWN_EFFORT);
+  return model.ok && effort.ok ? { read: true, model: model.value, effort: effort.value } : unread();
+}
+
+/** Codex's `model` and `model_reasoning_effort` in a config.toml item, the `profile`'s own over the top level's. */
+function codexChoice(item) {
+  if (item === undefined) return { read: true, model: null, effort: null };
+  const statements = readToml(Buffer.from(item, 'base64').toString('utf8'));
+  if (!statements) return unread();
+  // A value is shown only when it is one string, as codex reads it: anything else is not known.
+  const values = new Map();
+  for (const st of statements) {
+    if (st.kind !== 'kv') continue;
+    const strings = stringsOf(st.value);
+    values.set(pathOf(st).join('.'), strings.length === 1 && strings[0].raw === st.value.trim() ? strings[0].said : undefined);
+  }
+  const at = (path) => (values.has(path) ? (values.get(path) === undefined ? { ok: false } : { ok: true, value: values.get(path) }) : { ok: true, value: null });
+  const profile = at('profile');
+  if (!profile.ok) return unread();
+  // A profile written as an inline table (`profiles.deep = { model = "o3" }`, or `deep = {…}` under `[profiles]`) is not
+  // read here: what it names is not known, rather than the top level's shown in its place.
+  if (profile.value && (values.has('profiles') || values.has(`profiles.${profile.value}`))) return unread();
+  const pick = (key, re) => {
+    const own = profile.value ? at(`profiles.${profile.value}.${key}`) : { ok: true, value: null };
+    const top = at(key);
+    if (!own.ok || !top.ok) return { ok: false };
+    return shown(own.value ?? top.value, re);
+  };
+  const model = pick('model', SHOWN_MODEL);
+  const effort = pick('model_reasoning_effort', SHOWN_EFFORT);
+  return model.ok && effort.ok ? { read: true, model: model.value, effort: effort.value } : unread();
+}
+
+/**
+ * What each agent's "default" is in a person's next session, from their shared copy: the model and effort Claude Code's
+ * settings.json and Codex's config.toml name, which a new session starts from. Grok Build and OpenCode keep theirs in no
+ * file a session carries, so they are not here: each picks its own.
+ * TODO: once a session carries Grok Build's or OpenCode's settings (session/settingsSync.mjs, SYNCED_FILES), read the
+ * model and effort they save here as well, and drop their `null` in readSavedChoices (server.mjs).
+ * @param {Record<string, string>|null} items  the copy's items, or null when it could not be read
+ * @returns {{claude: SavedChoice, codex: SavedChoice}}
+ */
+export function savedChoices(items) {
+  if (!items) return { claude: unread(), codex: unread() };
+  return { claude: claudeChoice(items[CLAUDE_SETTINGS]), codex: codexChoice(items[CODEX_CONFIG]) };
+}
+
 /**
  * @param {{store: {getText: (key: string) => Promise<string|null>, putText: (key: string, text: string) => Promise<void>,
  *          removeKey: (key: string) => Promise<void>}}} opts  the provider's home store
@@ -205,5 +282,16 @@ export function createClaudeSettings({ store }) {
     });
   }
 
-  return { sync, remove };
+  /**
+   * The copy as it is, for a page to read from: no version is bumped and nothing written.
+   * @returns {Promise<{version: number, items: Record<string, string>}>}
+   */
+  function peek(login) {
+    return inTurn(login, async () => {
+      const copy = await load(login);
+      return { version: copy.version, items: { ...copy.items } };
+    });
+  }
+
+  return { sync, remove, peek };
 }

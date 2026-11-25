@@ -4,7 +4,8 @@ does, where a select would hide the difference. Console settings' MCP servers ca
 New session's **Agent** uses them for its four agents (`createAgentCards` in `public/launcher.js`, `.lagents`): the one
 place with more than three, since which agent runs is the form's first choice and a select hid what each runs on. They
 sit four across, compact (10px 12px padding, a 12px line), two across under 560px. Each card has a third line,
-`choice-meta` in `meta` mono, with what that agent would start with, and the picked agent's menus are a panel under the
+`choice-meta` in `meta` mono, with what that agent would start with (each part an inline-block, so `gpt-5.5 (saved)`
+moves to the next line whole), and the picked agent's menus are a panel under the
 cards (`.lsettings`: an `amber` border on `amber-tint`, the README's Agent section).
 
 - A `fieldset` whose `legend` is the row's name (`set-name`), then the cards in a grid: two columns on a desktop, one

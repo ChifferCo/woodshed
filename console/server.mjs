@@ -275,6 +275,7 @@ import { countRequests, createShutdown } from './shutdown.mjs';
 import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
 import { createMcpTester } from './mcpTest.mjs';
 import { ROLES, roleById, roleDiffers, roleOf } from './peopleRoles.mjs';
+import { savedChoices } from './claudeSettings.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // Served from elsewhere in the repo: the desktop app's rule for what notifies, which the console in a browser runs too
@@ -1726,6 +1727,29 @@ export function createHandler({
     return teamOpenAiKey;
   }
 
+  // What each agent's "default" is in the person's next session, as of their last look at /api/my (savedChoices in
+  // claudeSettings.mjs): New session names it in its Model and Effort menus and on each agent's card.
+  const choicesSeen = new Map();
+  // The logins whose copy did not read, warned of once: an open page asks /api/my on every poll.
+  const choicesUnread = new Set();
+  async function readSavedChoices(login) {
+    let items = null;
+    try {
+      items = claudeSettings ? (await claudeSettings.peek(login)).items : null;
+      choicesUnread.delete(login);
+    } catch (err) {
+      if (!choicesUnread.has(login)) {
+        choicesUnread.add(login);
+        console.warn('console: shared Claude settings not read for New session', { login, message: String(err?.message ?? err).split('\n')[0] });
+      }
+    }
+    // Grok Build and OpenCode keep their model in nothing a session carries: each picks its own (null). Once one is
+    // carried, savedChoices reads it, as it does Claude Code's and Codex's.
+    const found = { ...savedChoices(items), grok: null, opencode: null };
+    choicesSeen.set(login, found);
+    return found;
+  }
+
   // The blockers each person's projects had at their last look at /api/my, for the answers that cannot wait for a read.
   const blockersSeen = new Map();
   async function readProjectBlockers(login) {
@@ -1748,6 +1772,8 @@ export function createHandler({
       },
       databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last(defaultProject(config).name) ?? null,
       // Each project the person may start on that is not ready, by name (databaseGate.mjs), as last read.
+      // What each agent's default model and effort is, per agent (readSavedChoices): null before the first look.
+      agentDefaults: choicesSeen.get(login) ?? null,
       projectBlockers: blockersSeen.get(login) ?? {}, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
       // The computers the woodshed command line is signed in on as this person (cliSignIn.mjs), never a token.
       cli: cli ? { tokens: cli.list(login) } : null,
@@ -3161,7 +3187,7 @@ export function createHandler({
       const looking = userSettings?.refresh?.(user.login)?.catch((err) => {
         console.warn('userSettings: stored sign-ins not followed', { message: String(err?.message ?? err).split('\n')[0] });
       });
-      await Promise.all([readProjectBlockers(user.login), first ? looking : null, readTeamOpenAiKey()]);
+      await Promise.all([readProjectBlockers(user.login), first ? looking : null, readTeamOpenAiKey(), readSavedChoices(user.login)]);
       return reply(res, 200, myView(user.login));
     }
     if (pathname === '/api/my/reviews') return reply(res, 200, await myReviewsView(user.login));

@@ -23,6 +23,8 @@ import { secretContent } from '../shared/secretLike.mjs';
 import { PLUGIN_ID_RE } from './missingPlugins.mjs';
 
 // codex's settings beside claude's. Never ~/.codex/auth.json: a Codex sign-in is My settings' (userSettings.mjs).
+// When Grok Build's or OpenCode's settings are carried too, read their saved model and effort in savedChoices
+// (console/claudeSettings.mjs), so New session names their default as it does Claude Code's and Codex's.
 export const SYNCED_FILES = ['.claude/settings.json', '.claude/CLAUDE.md', '.claude/keybindings.json', CODEX_CONFIG, '.codex/AGENTS.md'];
 export const SYNCED_DIRS = ['.claude/agents', '.claude/commands', '.claude/skills', '.codex/prompts', '.codex/skills'];
 // codex writes its own skills here at every start, for the version it is: each side has its own.
