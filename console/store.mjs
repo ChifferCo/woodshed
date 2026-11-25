@@ -37,7 +37,8 @@ export function openStore(dir) {
  * @param {{load: () => Promise<object|null>, save: (state: object) => Promise<void>}} service
  * @param {{retryMs?: number}} [opts]
  * @returns {Promise<{state: object, save: () => void, flush: () => Promise<void>, close: () => Promise<void>}>}
- *   `flush` resolves once what was saved so far is written, and rejects when a write failed (a retry is then waiting).
+ *   `flush` resolves once what was saved so far is written, and rejects when a write failed (a retry is then waiting)
+ *   or the store has closed, which drops a save instead of writing it.
  *   `close` flushes, and from then on a save is refused, so an installation that was stopped cannot write over the
  *   state of the one that replaced it
  */
@@ -97,7 +98,9 @@ export async function openServiceStore(service, { retryMs = RETRY_MS } = {}) {
 
   async function flush() {
     while (writing) await writing;
-    if (failed) throw Object.assign(new Error('store: state not saved'), { shown: true });
+    // Closed drops a save without a failed service write, so `failed` stays false. Rejecting is what tells a caller
+    // that the save it just asked for is not durable.
+    if (closed || failed) throw Object.assign(new Error('store: state not saved'), { shown: true });
   }
 
   async function close() {

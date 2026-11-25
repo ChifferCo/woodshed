@@ -483,7 +483,8 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
       touch(login, { ownAgentForReviews: { ...priorFlags, [id]: false } });
       console.log(`userSettings: own ${agent.product} sign-in for reviews`, { login, agent: id, on: false });
       // The file store writes in save. The service store only queues it: flush is awaited before the secret is
-      // written, and it rejects when that write failed, so the credential is not saved over a deny that did not land.
+      // written, and it rejects when that write failed or the store has closed, so the credential is not saved over
+      // a deny that did not land.
       if (typeof store.flush === 'function') {
         try {
           await store.flush();

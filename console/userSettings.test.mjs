@@ -291,6 +291,22 @@ test('a command-line sign-in is not saved when the service store rejects the rev
   assert.deepEqual(saved, [], 'the secret is not written when the deny did not land');
 });
 
+test('a command-line sign-in is not saved when the service store has already closed', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const persisted = [];
+  const store = await openServiceStore({
+    load: async () => ({ reviewDefaultKept: true, people: { mia: { reviewDefault: 'all' } } }),
+    save: async (state) => { persisted.push(structuredClone(state)); },
+  });
+  await store.close();
+  const saved = [];
+  const secrets = { read: async () => null, save: async (name) => { saved.push(name); }, remove: async () => {} };
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-11-25T00:00:00Z') });
+  await assert.rejects(settings.setAgentAuth('mia', 'grok', 'xai-made-up-mia-0123456789', { reviews: false }), /reviews switch could not be saved/);
+  assert.deepEqual(saved, [], 'the secret is not written when the store has closed');
+  assert.equal(persisted.length, 0, 'a closed store does not take the reviews-off write');
+});
+
 test('a command-line reviews deny is durable on the service store before the secret is saved', async () => {
   let release;
   const open = new Promise((resolve) => { release = resolve; });
