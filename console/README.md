@@ -510,6 +510,7 @@ TUI and Terminal tabs):
   in Herdr, which hc cannot type into without an Enter (statusd answers `typed:
   false`). In an agent's TUI, Ctrl+V pastes as ⌘V does (on a Mac, by reading the
   clipboard, which the browser asks for first); the Terminal tab's shell keeps ^V.
+  All of it is `public/terminalPaste.cjs`, which `terminalPaste.test.mjs` drives.
   claude starts with `--add-dir /tmp/uploads`, so it reads them without asking.
 - **Scrolling back** (the wheel, or a swipe on a phone) is the browser's own when
   the pane is on the main screen: claude and codex run inline, never full screen
