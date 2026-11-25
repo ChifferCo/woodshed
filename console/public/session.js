@@ -163,12 +163,13 @@
     const shared = W.isResumable(s);
     const heading = shared ? W.displayStatus(s).word.replace(/^./, (c) => c.toUpperCase())
       : s.status === 'failed' ? 'Failed' : paused ? 'Paused' : 'Stopped';
-    const kept = record?.savedAt ? `kept ${W.ago(record.savedAt)}` : 'as it was kept';
+    // Why there is no message box, and how old the copy is: the stop's save, or a periodic one before a crash.
+    const copy = record?.savedAt ? `Read-only, saved ${W.ago(record.savedAt)}.` : 'Read-only.';
     const fresh = W.isPrivate(s) && W.agentOf(s) !== 'claude' ? `: ${W.agentTitle(s)} keeps no conversation between runs, so Resume starts a new one` : '';
     // A shared session's Resume is on the pane bar already (paneBar), and orange is for the one primary action.
     const resume = W.canResumePrivate(s) ? resumeButton(s, true) : null;
     return [
-      h('span', { class: 'chat-ended-text' }, h('b', null, heading), ` · The conversation ${kept}. ${resume || shared ? `Resume to send ${W.agentOf(s)} a message${fresh}.` : 'It can no longer be sent messages.'}`),
+      h('span', { class: 'chat-ended-text' }, h('b', null, heading), ` · ${copy} ${resume || shared ? `Resume to send ${W.agentOf(s)} a message${fresh}.` : 'It can no longer be sent messages.'}`),
       h('span', { class: 'chat-needs-actions' },
         h('button', { type: 'button', class: 'btn btn-sm btn-plain', onclick: () => setTab('tui') }, 'Details'),
         resume),

@@ -527,7 +527,7 @@
       pending.set(session.id, waiting);
       const list = T.items(record.entries);
       if (record.partial) nodes.push(h('p', { class: 'chat-note' }, 'Older messages are left out: this shows the newest of a long conversation.'));
-      if (!list.length && !waiting.length && ended()) nodes.push(h('p', { class: 'chat-empty' }, 'No messages were kept from this session.'));
+      if (!list.length && !waiting.length && ended()) nodes.push(h('p', { class: 'chat-empty' }, 'No messages were saved from this session.'));
       else if (!list.length && !waiting.length) {
         nodes.push(h('div', { class: 'chat-empty' },
           h('b', null, `No messages with ${agent()} yet`),

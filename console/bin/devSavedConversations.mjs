@@ -40,11 +40,11 @@ const SHARED = [
   { role: 'assistant', text: 'Opened the pull request; the review approved it and the suite passed.', at: at(540) },
 ];
 
-/** The sessions' ids, owners and agents, with what each kept. */
+/** The sessions' ids, owners and agents, with what each kept: saved as the dev console starts, when they stopped. */
 export const SAVED_CONVERSATIONS = [
-  { id: 'ba5ed001', owner: 'local', agent: 'claude', entries: CLAUDE, savedAt: at(60) },
-  { id: 'c0dec0d1', owner: 'local', agent: 'codex', entries: CODEX, savedAt: at(200) },
-  { id: 'ab12cd34', owner: null, agent: 'claude', entries: SHARED, savedAt: at(530) },
+  { id: 'ba5ed001', owner: 'local', agent: 'claude', entries: CLAUDE, savedAt: at(0) },
+  { id: 'c0dec0d1', owner: 'local', agent: 'codex', entries: CODEX, savedAt: at(0) },
+  { id: 'ab12cd34', owner: null, agent: 'claude', entries: SHARED, savedAt: at(0) },
 ];
 
 /**

@@ -72,10 +72,10 @@ its terminal; and a stopped session's, as it kept it at its last save, read-only
   send. Files waiting to go are mono chips on `chip-count` over the field. A message the console refuses (a session
   started before Chat could send safely, whose statusd would type it blind) goes back in the field, and a toast says
   `Not sent: <why>`.
-- **A stopped session's conversation**: the thread as it was kept, with nothing live (no Working, no open question:
+- **A stopped session's conversation**: the thread as it was last saved, with nothing live (no Working, no open question:
   one left unanswered says `Not answered`). In the composer's place, a box on `stopped` with a `line` border
   (`radius 12`), padded as the composer is: how it ended in `ink` 600 (`Paused`, `Stopped`, `Failed`, or a shared
-  session's word, `Finished`), then in `sub` when the conversation was kept and what Resume does (for an agent that
+  session's word, `Finished`), then in `sub` `Read-only, saved <when>.` (why there is no message box, and how old the copy is) and what Resume does (for an agent that
   keeps no conversation between runs, that Resume starts a new one), and at the right a quiet `btn-plain` **Details**
   (the TUI tab's end, with everything else) and, for a private session, **Resume** on `action`: the view's one primary
   action, as Send is while it runs. A shared session's Resume is on the pane bar, so the box has none. Never `wait`:
