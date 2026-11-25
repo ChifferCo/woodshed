@@ -260,6 +260,14 @@
     prefixTimer = setTimeout(() => { prefixEl.hidden = true; }, PREFIX_MS);
   }
 
+  // A click is the pointer's move, not the key ⌘B waits for: it cancels the prefix, as it ends J and K's moving.
+  function cancelPrefixOnClick() {
+    if (!prefixAt) return;
+    prefixAt = 0;
+    prefixHint(false);
+  }
+  document.addEventListener('pointerdown', cancelPrefixOnClick, true);
+
   // ---- the keys ----
   // G waits this long for the second key of a sequence.
   const SEQUENCE_MS = 1500;
@@ -349,6 +357,7 @@
       if (!doc || doc.__woodshedShell) return;
       doc.__woodshedShell = true;
       doc.addEventListener('keydown', (e) => onKey(e, terminal, !terminal), true);
+      doc.addEventListener('pointerdown', cancelPrefixOnClick, true);
     } catch {
       // Not same-origin after all: the page's own keys still work.
     }

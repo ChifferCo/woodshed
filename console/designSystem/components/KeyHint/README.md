@@ -8,3 +8,7 @@ scroll.
 - Line two, at 75%: "Press ? for every shortcut". Left off the hint of Keyboard shortcuts itself.
 - Keys are one cap each, outlined in the text color: `⇧` `⌘` `O` on a Mac, `Ctrl` `Shift` `O` elsewhere.
 - Placed under the control, centred and kept 8px inside the window; above it when there is no room below.
+
+The prefix's hint is the same caps in a toast: after ⌘B (Ctrl+B off a Mac) the toast's place says `⌘B then J K 1–4 or N`,
+with each key a cap outlined in the toast's text color, for 2.5 s or until the next key. It takes the place of a toast
+still showing, never sits over it, and a click or a toast after it takes it away.
