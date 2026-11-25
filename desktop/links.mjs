@@ -41,17 +41,16 @@ const GITHUB_SIGN_IN = /^\/(login(\/|$)|session(\/|$)|sessions\/)/;
 /**
  * Where a URL goes.
  * - `console`: the console itself, kept in the app's windows.
- * - `app`: a session's app, its editor or a viewer, on the console's app domain (or, on a local console with app
- *   ports, another port of the same loopback host): opened in a window of the app's, which shares the console's
- *   cookies, so its sign-in works as it does in a browser.
  * - `signIn`: GitHub's sign-in pages, kept in the window that is signing in.
  * - `blank`: about:blank, which the page opens before it sets where the window goes.
- * - `external`: everything else, handed to the person's default browser.
+ * - `external`: everything else, handed to the person's default browser. A session's app, its editor and its viewers
+ *   on the app domain go there too: a hosted console's proxy signs the browser in on the apps' names, which the app's
+ *   own sign-in (handed back to it from the browser) never does, so in a window of the app's they found no one.
  * @param {string} target
- * @param {{ consoleUrl: string, appDomain?: string | null }} where
- * @returns {'console' | 'app' | 'signIn' | 'blank' | 'external'}
+ * @param {{ consoleUrl: string }} where
+ * @returns {'console' | 'signIn' | 'blank' | 'external'}
  */
-export function destination(target, { consoleUrl, appDomain }) {
+export function destination(target, { consoleUrl }) {
   if (target === 'about:blank' || target === '') return 'blank';
   let url;
   try {
@@ -62,12 +61,6 @@ export function destination(target, { consoleUrl, appDomain }) {
   if (url.protocol !== 'https:' && url.protocol !== 'http:') return 'external';
   const home = new URL(consoleUrl);
   if (url.origin === home.origin) return 'console';
-  const domain = String(appDomain || '').toLowerCase();
-  // The page builds an app's address on the console's own scheme and port (common.js, appUrl): https, or plain http
-  // on a local console whose app domain is a loopback name such as apps.localhost.
-  const onAppDomain = domain && (url.hostname === domain || url.hostname.endsWith(`.${domain}`));
-  if (onAppDomain && (url.protocol === 'https:' || isLoopbackHost(url.hostname))) return 'app';
-  if (isLoopbackHost(home.hostname) && url.hostname === home.hostname) return 'app';
   if (url.protocol === 'https:' && url.hostname === 'github.com' && GITHUB_SIGN_IN.test(url.pathname)) return 'signIn';
   return 'external';
 }

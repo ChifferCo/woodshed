@@ -61,7 +61,7 @@ from Electron's own bundle, and only a built app (`npm run dist`) is called Wood
 | Address | Where |
 | --- | --- |
 | The console itself | The app: the main window, or a window of its own for what the page opens in a new tab (a terminal, a database viewer) |
-| A session's app, editor or viewer on the console's app domain (`appDomain` from `/api/sessions`), or another port of a local console's host | A window of its own, sharing the console's cookie, so its sign-in works as in a browser |
+| A session's app, editor or viewer on the console's app domain, or another port of a local console's host | The default browser, which signs in to it there: a hosted console's proxy signs the browser in on the apps' names, and a window of the app's had no such sign-in ("This app's name did not say who you are") |
 | The console's **Sign in with GitHub** (`/auth/start`) | The default browser, which hands the sign-in back (below); on a console that cannot, the window, as GitHub's sign-in pages (`/login…`, `/session`, `/sessions/…`) are |
 | Everything else: pull requests, issues, docs | The default browser |
 
@@ -161,8 +161,8 @@ console's badge nor notify about the old one's sessions.
 
 Windows run with context isolation, the sandbox and no Node. The preload exposes the app's own setup and sign-in pages'
 calls to them alone, and to any other page in the main window the notifications list (`list`, `markRead`, `onChange`, `onArrived`),
-which main.mjs answers only to the console's own page there. The console's page may use the microphone (dictation), notifications and the clipboard; a
-session app's page the clipboard and full screen; anything else is refused. No page may add a `<webview>`.
+which main.mjs answers only to the console's own page there. The console's page may use the microphone (dictation), notifications and the clipboard;
+anything else is refused. No page may add a `<webview>`.
 
 ## Checks
 
