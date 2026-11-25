@@ -107,8 +107,12 @@ test('no token is never this computer\'s: runCommand refuses it, and main given 
 test('a command that would read the checkout it runs in needs its repo named: it runs in no checkout', async (t) => {
   const c = await consoleFor(t);
   for (const name of ['review status', 'review pulls', 'review start']) {
-    await assert.rejects(runCommand(byName(name), name === 'review start' ? { pulls: ['12'] } : {}, c), /needs repo: there is no checkout here/, name);
+    for (const repo of [undefined, [], ['acme/app'], '', null]) {
+      await assert.rejects(runCommand(byName(name), { ...(name === 'review start' ? { pulls: ['12'] } : {}), ...(repo === undefined ? {} : { repo }) }, c), /needs repo: there is no checkout here/, `${name} ${JSON.stringify(repo)}`);
+    }
   }
+  assert.throws(() => argvOf(byName('review status'), { repo: [] }), /repo takes one value, not a list/);
+  assert.throws(() => argvOf(byName('review start'), { pulls: [] }), /pulls needs at least one/);
   const status = await runCommand(byName('review status'), { repo: 'acme/app' }, c);
   assert.ok(!JSON.stringify(status).includes(process.cwd()), 'nothing of the folder the program runs in');
 });
@@ -131,4 +135,22 @@ test('a run stopped before it starts sends nothing: a tunnel\'s line never reach
 test('session new takes a project\'s name for --repo, as the console does', () => {
   assert.deepEqual(argvOf(byName('session new'), { repo: 'app2' }), ['session', 'new', '--repo=app2']);
   assert.throws(() => argvOf(byName('session new'), { repo: '-x' }));
+});
+
+test('a temporary folder inside a checkout is refused, never read as the folder a command runs in', async (t) => {
+  const { execFileSync, spawnSync } = await import('node:child_process');
+  const { isolatedEnv } = await import('../test/isolatedEnv.mjs');
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'api-checkout-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q', repo]);
+  const tmp = path.join(repo, 'tmp');
+  fs.mkdirSync(tmp);
+  const script = `import('${new URL('./api.mjs', import.meta.url).href}').then(async ({ runCommand }) => {
+    const { COMMANDS } = await import('${new URL('./commands.mjs', import.meta.url).href}');
+    const status = COMMANDS.find((e) => e.path.join(' ') === 'status');
+    await runCommand(status, {}, { origin: 'http://127.0.0.1:9', token: 'wsc_${'0'.repeat(64)}' });
+  }).catch((err) => { console.log(err.message); process.exit(3); });`;
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env: isolatedEnv({ TMPDIR: tmp }), encoding: 'utf8' });
+  assert.equal(run.status, 3, run.stderr);
+  assert.match(run.stdout, /is inside the checkout .*set TMPDIR to a folder outside any checkout/);
 });

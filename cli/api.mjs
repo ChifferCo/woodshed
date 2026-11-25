@@ -25,7 +25,17 @@ export class Stopped extends Error {}
 // The folder a command runs in: an empty one of its own, never a checkout, so a command that would read the checkout
 // it is run in (review status with no --repo) finds none, whatever folder the program itself runs in.
 let emptyDir = null;
-const noCheckout = () => (emptyDir ??= fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-api-')));
+function noCheckout() {
+  if (emptyDir) return emptyDir;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-api-'));
+  // A temporary folder inside a checkout (TMPDIR set to one) would be read as that checkout: refused, not used.
+  for (let at = path.dirname(dir); ; at = path.dirname(at)) {
+    if (fs.existsSync(path.join(at, '.git'))) throw new Error(`runCommand's empty folder ${dir} is inside the checkout ${at}: set TMPDIR to a folder outside any checkout`);
+    if (path.dirname(at) === at) break;
+  }
+  emptyDir = dir;
+  return dir;
+}
 
 /**
  * Runs one command as the person whose `token` it is, on the console at `origin`.
@@ -46,7 +56,7 @@ export async function runCommand(entry, args, { origin, token, fetch: fetchFn = 
   }
   // A command that reads a checkout here when it is given none (--dir, which needs the computer) needs its repo named.
   const repoOption = (entry.options ?? []).find((o) => o.name === 'repo');
-  if (repoOption && (entry.options ?? []).some((o) => o.name === 'dir') && !args.repo) throw new Error(`${commandName(entry)} needs repo: there is no checkout here`);
+  if (repoOption && (entry.options ?? []).some((o) => o.name === 'dir') && (typeof args.repo !== 'string' || !args.repo)) throw new Error(`${commandName(entry)} needs repo: there is no checkout here`);
   const tunnel = entry.waits === 'line';
   // Stopped before it started: nothing is sent, a tunnel's line least of all, which could change the session.
   if (signal?.aborted) return { code: null, events: [], stdout: '', stderr: '', stopped: true, truncated: false };

@@ -312,7 +312,11 @@ export function argvOf(entry, args = {}, global = []) {
     if (why) throw new Error(why);
     return value;
   };
-  const listOf = (spec, value) => (Array.isArray(value) ? value : [value]).map((v) => check(spec, v));
+  // A list only where the catalogue takes one, and never an empty one: either would write a word other than was meant.
+  const listOf = (spec, value) => {
+    if (Array.isArray(value) && (!spec.list || !value.length)) throw new Error(`${spec.name} ${spec.list ? 'needs at least one' : 'takes one value, not a list'}`);
+    return (Array.isArray(value) ? value : [value]).map((v) => check(spec, v));
+  };
   const words = entry.path.map((w) => {
     if (!w.startsWith('<')) return w;
     const spec = entry.args.find((a) => a.name === w.slice(1, -1));
