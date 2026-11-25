@@ -15,7 +15,9 @@
   // Where ⇧⌘, goes: the theme and the rest of what was the settings sheet are a card on My settings (mySettings.js).
   const DISPLAY_HREF = '/settings#my-display';
 
-  let page = { sessions: () => [], actions: () => [], toggleRail: null, railShown: () => true };
+  // moveSession(step), nextNeedsYou() and showTab(n, onlyAsk) are the session page's (keys.cjs, `page`): a page without
+  // them leaves J, K, G N and the tab keys alone.
+  let page = { sessions: () => [], actions: () => [], toggleRail: null, railShown: () => true, moveSession: null, nextNeedsYou: null, showTab: null };
 
   function register(next) {
     page = { ...page, ...next };
@@ -224,8 +226,8 @@
   const keys = sheet('Keyboard shortcuts', [
     K.SHORTCUTS.filter((s) => !s.bell || notifications().available).map((s) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, keyCaps(s)), h('div', null, s.id === 'keys' ? 'This list' : s.what, s.where && h('span', { class: 'kwhere' }, ` on ${s.where}`)))),
     h('p', { class: 'sheet-note' }, MAC
-      ? 'Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal\'s. A key alone works while you are not typing. Sessions have no key of their own: ⌘K, then type a name.'
-      : 'A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal\'s: click outside it first. Sessions have no key of their own: Ctrl+K, then type a name.'),
+      ? 'Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal\'s. A key alone works while you are not typing. J and K move through the rail, 1 to 4 pick a tab, and ⌘K, then a name, jumps to any session.'
+      : 'A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal\'s: click outside it first. J and K move through the rail, 1 to 4 pick a tab, and Ctrl+K, then a name, jumps to any session.'),
   ]);
 
 
@@ -240,6 +242,9 @@
     settings: go(DISPLAY_HREF),
     rail: () => page.toggleRail?.(),
     new: go('/?new=1'),
+    nextSession: () => page.moveSession(1),
+    prevSession: () => page.moveSession(-1),
+    needsYou: () => page.nextNeedsYou(),
   };
   function onKey(e, inFrame, modOnly = false) {
     hideHint();
@@ -258,14 +263,19 @@
     const overlayOpen = !palette.hidden || !keys.el.hidden || notifications().isOpen();
     const id = K.match(e, { inFrame, afterG, typing: overlayOpen || K.takesTyping(e.composedPath?.()[0] ?? e.target) });
     // A form's own key (⌘↵ on New session) is left to the form, which reads it from its fields.
-    if (!id || K.byId[id]?.where || (id === 'rail' && !page.toggleRail) || (id === 'notifications' && !notifications().available)) return;
+    // A key the page does (K.byId[id].page) is nothing on a page that registered no such thing: no rail, no tabs.
+    const pageHook = K.byId[id]?.page;
+    if (!id || K.byId[id]?.where || (pageHook && !page[pageHook]) || (id === 'rail' && !page.toggleRail) || (id === 'notifications' && !notifications().available)) return;
+    // 3 on a page with no third tab is left alone, so a field-less page loses no key it never used.
+    if (id === 'tab' && !page.showTab(K.tabOf(e), true)) return;
     e.preventDefault();
     e.stopPropagation();
     if (id === 'g') {
       gAt = Date.now();
       return;
     }
-    (ACTS[id] ?? go(K.byId[id].href))();
+    if (id === 'tab') page.showTab(K.tabOf(e));
+    else (ACTS[id] ?? go(K.byId[id].href))();
   }
   document.addEventListener('keydown', (e) => onKey(e, false), true);
 

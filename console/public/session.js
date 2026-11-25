@@ -1778,8 +1778,67 @@
   // For a menu another module draws a button for, such as Start app's pick of several apps (common.js).
   W.openMenu = openCardMenu;
 
+  // The keys that move through the sessions (keys.cjs): J and K go down and up the rail as it is drawn, so a folded
+  // zone is skipped as the eye skips it, and G N goes to the next session after this one that needs you, in the same
+  // order, then any the rail does not show. Each cycles round at the end.
+  function railOrder() {
+    const cards = slots.railBody ? [...slots.railBody.querySelectorAll('.rcard[data-session]:not(.is-copy)')] : [];
+    return cards.map((c) => data?.sessions.find((s) => s.id === c.dataset.session)).filter(Boolean);
+  }
+  function after(list, step) {
+    if (!list.length) return null;
+    const at = list.findIndex((s) => s.id === id);
+    if (at < 0) return step > 0 ? list[0] : list[list.length - 1];
+    return list[(at + step + list.length) % list.length];
+  }
+  // As in Herdr, moving is a mode of its own: the session a key opened takes no focus (Chat's field, its terminal), so
+  // the next J moves on rather than typing a j. A tab key, or a click anywhere, ends it.
+  let movingByKey = false;
+  W.movingByKey = () => movingByKey;
+  document.addEventListener('pointerdown', () => { movingByKey = false; }, true);
+  function moveTo(s) {
+    movingByKey = true;
+    // The field or terminal the focus was in stays on the page for the next session: it must let go of it.
+    document.activeElement?.blur?.();
+    window.focus();
+    navigate(sessionHref(s));
+  }
+  function moveSession(step) {
+    const next = after(railOrder(), step);
+    if (next && next.id !== id) moveTo(next);
+  }
+  function nextNeedsYou() {
+    const drawn = railOrder();
+    const order = [...drawn, ...(data?.sessions ?? []).filter((s) => !drawn.includes(s))];
+    // The one shown stays in the list, so the next is the one after it, and it alone is "nothing else".
+    const waiting = order.filter((s) => W.needsYou(s) || s.id === id);
+    const next = after(waiting, 1);
+    if (!next || next.id === id) W.shell.toast('Nothing else needs you');
+    else moveTo(next);
+  }
+  // The pane bar's tabs, by their place on it: a click on the button, so a pair (Terminal, Review) opens the view of it
+  // last open, as a click does. `onlyAsk` says whether there is such a tab without pressing it.
+  function showTab(n, onlyAsk = false) {
+    const button = id ? slots.head?.querySelectorAll('.ptabs .ptab')[n - 1] : null;
+    if (onlyAsk || !button) return Boolean(button);
+    if (button.disabled) {
+      W.shell.toast(button.title || `${button.textContent} is not there now`, { ms: 4000 });
+      return true;
+    }
+    movingByKey = false;
+    button.click();
+    // Into the tab, as Herdr's terminal mode: the chat's field, or the terminal, takes the keys (never on a phone).
+    if (!narrow.matches) {
+      requestAnimationFrame(() => {
+        if (tab === 'chat') chat.focus();
+        else if (tab === 'tui' || tab === 'terminal') shownTerminal()?.contentWindow?.term?.focus();
+      });
+    }
+    return true;
+  }
+
   W.shell.register({
-    sessions: paletteSessions, actions: paletteActions, toggleRail, railShown: () => !railHidden,
+    sessions: paletteSessions, actions: paletteActions, toggleRail, railShown: () => !railHidden, moveSession, nextNeedsYou, showTab,
   });
 
   // What a phone's top bar puts in its ⋯ ahead of the card's: the app, the databases, and the key bar's switch.
@@ -2329,7 +2388,7 @@
       if (!frame) return;
       requestAnimationFrame(() => {
         frame.contentWindow?.dispatchEvent(new Event('resize'));
-        if (focus && !narrow.matches) frame.contentWindow?.term?.focus();
+        if (focus && !narrow.matches && !W.movingByKey?.()) frame.contentWindow?.term?.focus();
       });
     }
 

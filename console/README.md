@@ -588,7 +588,13 @@ And what the shed shows about each session:
   the browser, and whether a session opens on Chat or TUI, one choice for a
   desktop and one for a phone, kept for you on every device; **⇧⌘O** (or **N**) is
   New session; **G** then **M**, **E** or **S** goes to My Woodshed, shared
-  sessions or My settings. Ctrl works for ⌘ outside a terminal, and the pages
+  sessions or My settings. On the session pages, as Herdr moves through its
+  panes: **J** and **K** (or **⌥⌘↓** and **⌥⌘↑**) open the next and previous
+  session in the rail as it is drawn, skipping folded zones; **1** to **4** (or
+  **⌥⌘1** to **⌥⌘4**) pick the pane bar's tabs by their place; **G** then **N**
+  opens the next session that needs you. The ⌥⌘ ones reach the page from a
+  terminal on a Mac; off a Mac they are Ctrl+Alt, never read while typing,
+  since that is AltGr on many keyboards. Ctrl works for ⌘ outside a terminal, and the pages
   write the keys as Ctrl on Windows and Linux. A key alone works only while
   nothing takes typing, and never inside a terminal or the Review, whose
   frame gets the ⌘ keys alone. Which key does what is

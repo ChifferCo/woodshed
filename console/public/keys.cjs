@@ -14,6 +14,12 @@
     { id: 'palette', mod: '⌘K', bare: '/', what: 'Jump to a session, or run a command' },
     { id: 'new', mod: '⇧⌘O', bare: 'N', what: 'New session' },
     { id: 'rail', mod: '⌘.', what: 'Show or hide the rail' },
+    // Moving through the sessions as Herdr moves through its panes: J and K alone, and ⌥⌘ with an arrow, which a
+    // terminal frame passes to the page on a Mac. Only where there is a rail (session.js registers them).
+    { id: 'nextSession', mod: '⌥⌘↓', bare: 'J', what: 'Next session in the rail', page: 'moveSession' },
+    { id: 'prevSession', mod: '⌥⌘↑', bare: 'K', what: 'Previous session in the rail', page: 'moveSession' },
+    // The pane bar's tabs by their place on it, as Herdr's prefix+1..9: Chat, TUI, Terminal, Review.
+    { id: 'tab', mod: '⌥⌘1–4', bare: '1–4', what: 'The session\'s tabs, in their order on its bar', page: 'showTab' },
     // Only where there is a list (notificationBell.js): a page with no one signed in leaves it off the sheet.
     { id: 'notifications', mod: '⌘J', what: 'Notifications', bell: true },
     { id: 'settings', mod: '⇧⌘,', what: 'Display settings: theme, review files, Chat or TUI' },
@@ -26,10 +32,19 @@
     { id: 'mine', bare: 'G M', what: 'Go to My Woodshed', href: '/' },
     { id: 'everyone', bare: 'G E', what: 'Go to shared sessions', href: '/all' },
     { id: 'mySettings', bare: 'G S', what: 'Go to My settings', href: '/settings' },
+    // Herdr's goto picker filtered to the blocked: the next session, after the one shown, that waits on you.
+    { id: 'needsYou', bare: 'G N', what: 'Next session that needs you', page: 'nextNeedsYou' },
   ];
   const byId = Object.fromEntries(SHORTCUTS.map((s) => [s.id, s]));
   // The second key of a G sequence.
-  const AFTER_G = { m: 'mine', e: 'everyone', s: 'mySettings' };
+  const AFTER_G = { m: 'mine', e: 'everyone', s: 'mySettings', n: 'needsYou' };
+  // The tab keys: 1 to 4, read from the key's place (⌥ on a Mac turns the digit into another character).
+  const TAB_CODES = ['Digit1', 'Digit2', 'Digit3', 'Digit4'];
+
+  /** @returns {number}  which tab a tab key names, from 1, or 0 for none */
+  function tabOf(e) {
+    return TAB_CODES.indexOf(e.code || '') + 1;
+  }
 
   /** @returns {boolean}  whether this browser is on an Apple computer, where ⌘ is the key */
   function isMac(nav) {
@@ -79,7 +94,13 @@
   function match(e, where = {}) {
     const code = e.code || '';
     if (e.metaKey || (e.ctrlKey && !where.inFrame)) {
-      if (e.altKey) return null;
+      if (e.altKey) {
+        // Ctrl+Alt is AltGr on many keyboards, which types { or @ with a digit: never ours while typing.
+        if (e.shiftKey || (!e.metaKey && where.typing)) return null;
+        if (code === 'ArrowDown') return 'nextSession';
+        if (code === 'ArrowUp') return 'prevSession';
+        return tabOf(e) ? 'tab' : null;
+      }
       if (e.key === '?' || (e.shiftKey && code === 'Slash')) return 'keys';
       if (code === 'KeyK' && !e.shiftKey) return 'palette';
       if (code === 'KeyJ' && !e.shiftKey) return 'notifications';
@@ -96,9 +117,12 @@
     if (k === '/') return 'palette';
     if (e.shiftKey) return null;
     if (k === 'n' || k === 'N') return 'new';
+    if (k === 'j' || k === 'J') return 'nextSession';
+    if (k === 'k' || k === 'K') return 'prevSession';
+    if (tabOf(e) && k === String(tabOf(e))) return 'tab';
     if (k === 'g' || k === 'G') return 'g';
     return null;
   }
 
-  return { SHORTCUTS, byId, isMac, caps, label, takesTyping, match };
+  return { SHORTCUTS, byId, isMac, caps, label, takesTyping, match, tabOf };
 });
