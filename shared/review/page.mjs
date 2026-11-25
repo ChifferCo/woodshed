@@ -2756,7 +2756,8 @@ ${DARK_PALETTE}
         more.type = 'button';
         more.addEventListener('click', function onMore() {
           descOpen = !descOpen;
-          render();
+          box.classList.toggle('clamped', !descOpen);
+          more.textContent = descOpen ? 'Show less' : 'Show the whole description';
         });
         content.appendChild(more);
       }
