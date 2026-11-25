@@ -16,7 +16,7 @@ const KEYS = ['terminal', 'reviews', 'codex-reviews', 'grok-reviews', 'opencode-
 
 // A console with the real My settings (userSettings.mjs) over a secret store that keeps nothing: mia-dev has a Claude
 // token saved and GitHub connected, octocat has neither. A command line token for each.
-async function consoleFor(t, { writers = null, rememberSecrets = false, saves = null } = {}) {
+async function consoleFor(t, { writers = null, rememberSecrets = false, saves = null, secretSaves = null } = {}) {
   const values = new Map();
   const store = {
     state: {
@@ -28,7 +28,17 @@ async function consoleFor(t, { writers = null, rememberSecrets = false, saves = 
     save() { if (saves) saves.push(structuredClone(this.state)); },
   };
   const secrets = rememberSecrets
-    ? { read: async (name) => values.get(name) ?? null, save: async (name, value) => { values.set(name, value); }, remove: async (name) => { values.delete(name); }, configured: () => true }
+    ? {
+      read: async (name) => values.get(name) ?? null,
+      save: async (name, value) => {
+        values.set(name, value);
+        // The state as the credential becomes readable. A restart that stops before the sign-in metadata is written
+        // reads this, with the secret already in the store.
+        if (secretSaves) secretSaves.push({ name, state: structuredClone(store.state) });
+      },
+      remove: async (name) => { values.delete(name); },
+      configured: () => true,
+    }
     : { read: async () => null, save: async () => {}, remove: async () => {}, configured: () => true };
   const userSettings = createUserSettings({ store, secrets });
   // GitHub's answer on write access, which cliSignIn.mjs's authenticate asks for every call a token makes.
@@ -138,8 +148,13 @@ test('a config write runs the page\'s own route and checks, and answers with the
 
 test('a first command-line sign-in stays out of reviews until that person turns it on', async (t) => {
   const saves = [];
-  const c = await consoleFor(t, { rememberSecrets: true, saves });
+  const secretSaves = [];
+  const c = await consoleFor(t, { rememberSecrets: true, saves, secretSaves });
   const reviews = createReviewAgents({ userSettings: c.userSettings, connected: async () => ({ claude: true, codex: true }) });
+  // Already accepted the wider default, and has no Grok Build sign-in yet. Discovery then keeps `all` and does not
+  // mark the previous default, so a sign-in found in the store reads as on for reviews unless the off flag is already stored.
+  assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { choice: null } })).status, 200);
+  assert.equal(c.userSettings.usesExpandedReviewDefault('mia-dev'), true);
   const grok = 'xai-made-up-key-0123456789';
   const pushed = await c.call('/api/my/agent-auth/grok', { method: 'POST', body: { value: grok } });
   assert.equal(pushed.status, 200);
@@ -153,6 +168,18 @@ test('a first command-line sign-in stays out of reviews until that person turns 
   assert.equal(restarted.usesOwnAgentForReviews('mia-dev', 'grok'), false);
   const afterRestart = createReviewAgents({ userSettings: restarted, connected: async () => ({ claude: true, codex: true }) });
   assert.deepEqual((await afterRestart.forReview({ login: 'mia-dev' })).agents, ['claude', 'codex'], 'the restored snapshot does not put Grok Build in the default');
+  // The credential can land before that metadata write. The state at that moment is what a restart reads, and the
+  // secret is already in the store. Refresh then discovers the sign-in and keeps the accepted wider default.
+  const atCredential = secretSaves.find((saved) => saved.name === 'users/mia-dev/grok-auth');
+  assert.equal(atCredential.state.people['mia-dev'].agentAuthAt?.grok, undefined, 'the credential is stored before the sign-in metadata');
+  assert.equal(atCredential.state.people['mia-dev'].reviewDefault, 'all', 'the wider default was already accepted');
+  assert.equal(atCredential.state.people['mia-dev'].ownAgentForReviews?.grok, false, 'the reviews-off flag is stored before the credential can be discovered');
+  const discovered = createUserSettings({ store: { state: structuredClone(atCredential.state), save() {} }, secrets: c.secrets });
+  await discovered.refresh('mia-dev', { force: true });
+  assert.equal(discovered.usesExpandedReviewDefault('mia-dev'), true, 'discovery keeps the accepted wider default');
+  assert.equal(discovered.usesOwnAgentForReviews('mia-dev', 'grok'), false, 'the switch stays off after the sign-in is discovered');
+  const afterDiscovery = createReviewAgents({ userSettings: discovered, connected: async () => ({ claude: true, codex: true }) });
+  assert.deepEqual((await afterDiscovery.forReview({ login: 'mia-dev' })).agents, ['claude', 'codex'], 'the discovered sign-in does not join the default');
   assert.equal(c.userSettings.usesExpandedReviewDefault('mia-dev'), true, 'the person stays on the wider default; only this sign-in is left out');
   assert.equal((await c.call('/api/cli/config')).body['grok-reviews'], 'off');
   assert.deepEqual((await reviews.forReview({ login: 'mia-dev' })).agents, ['claude', 'codex']);

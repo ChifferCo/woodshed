@@ -1993,10 +1993,11 @@ export function createHandler({
         else {
           // A first save from the command line (woodshed sign-in push, and setup's send of the same file) is a sign-in
           // for private sessions. The reviews switch would otherwise come on with it, and with no reviewer choice saved
-          // the next review of a private pull request would run that agent. The off flag is written in the same settings
-          // update as the sign-in (setAgentAuth's reviews: false): a later write would leave the switch on if the console
-          // stopped between them. My settings' Save still comes on with the sign-in, and replacing one already saved
-          // leaves the switch as it is.
+          // the next review of a private pull request would run that agent. The off flag is stored before the secret
+          // (setAgentAuth's reviews: false), and again in the same settings update as the sign-in. A stop after the
+          // secret lands is a discovery, and an author who already accepted the wider default keeps it, so the switch
+          // would read as on unless that flag is already stored. My settings' Save still comes on with the sign-in,
+          // and replacing one already saved leaves the switch as it is.
           const id = agentMatch[1];
           const had = Boolean(userSettings.view(login).agentAuth?.[id]?.set);
           const reviewsOff = !had && carriesCliToken(req.headers) && agentsRegistry.agent(id).reviews;

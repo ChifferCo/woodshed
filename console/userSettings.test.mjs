@@ -256,6 +256,17 @@ test('Grok Build and OpenCode sign-ins are each kept under the person\'s login, 
   await assert.rejects(settings.setAgentAuth('octocat', 'opencode', '{"x":{"type":"magic"}}'), /OpenCode auth.json/);
 });
 
+test('a command-line reviews deny is taken back when the secret write throws', async () => {
+  const secrets = fakeSecrets();
+  secrets.save = async () => { throw new Error('store down'); };
+  const store = { state: { reviewDefaultKept: true, people: { mia: { reviewDefault: 'all', ownAgentForReviews: { opencode: false } } } }, save() {} };
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-11-25T00:00:00Z') });
+  await assert.rejects(settings.setAgentAuth('mia', 'grok', 'xai-made-up-mia-0123456789', { reviews: false }), /store down/);
+  assert.equal(store.state.people.mia.agentAuthAt, undefined);
+  assert.deepEqual(store.state.people.mia.ownAgentForReviews, { opencode: false }, 'the deny does not stay, and another agent\'s switch is left as it was');
+  assert.equal(secrets.values.size, 0);
+});
+
 test('a Grok Build or OpenCode sign-in found in the store after startup stays on the previous review default', async (t) => {
   const lines = [];
   t.mock.method(console, 'log', (...args) => lines.push(args));
