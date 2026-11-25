@@ -80,6 +80,25 @@ test('a private session whose gh is the App is read-only too', async (t) => {
   assert.equal((await call('PATCH', '/shed-review/reviews/claude-0a1b2c3d/title', { title: 't' })).status, 403);
 });
 
+test('the review image request reaches the shed only in a private session with GitHub connected', async (t) => {
+  const src = 'https://github.com/acme/web/blob/' + 'a'.repeat(40) + '/proof.png?raw=true';
+  const path = '/reviews/claude-0a1b2c3d/image?src=' + encodeURIComponent(src);
+  const cases = [
+    { sessionKind: 'shared', account: 'the-app', expected: 403 },
+    { sessionKind: 'private', account: null, expected: 403 },
+    { sessionKind: 'private', account: 'octocat', expected: 200 },
+  ];
+  for (const { sessionKind, account, expected } of cases) {
+    const shed = fakeShed({ account });
+    const call = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind, load: shed.load }));
+    const res = await call('GET', '/shed-review' + path);
+    assert.equal(res.status, expected, `${sessionKind}, GitHub account ${account}`);
+    assert.deepEqual(shed.calls, expected === 403 ? [] : [
+      { url: path, method: 'GET', repoRoot: '/w', worktree: '/w' },
+    ]);
+  }
+});
+
 test('another session\'s review, and a path outside the prefix, are not answered', async (t) => {
   const call = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'private', load: fakeShed({ account: 'a' }).load }));
   assert.equal((await call('GET', '/shed-review/reviews/claude-ffffffff')).status, 404);
