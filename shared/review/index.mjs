@@ -1010,7 +1010,7 @@ export async function handleReviewRequest(req, res, ctx) {
     }
     const got = await prContextFor(ctx, session);
     const src = url.searchParams.get('src');
-    const image = got.ok && src?.length <= 2048 ? await ctx.readPrImage({ slug: got.slug, src }) : null;
+    const image = got.ok && src?.length <= 2048 ? await ctx.readPrImage({ slug: got.slug, src, log: ctx.log }) : null;
     if (!image) {
       json(res, 404, { ok: false, error: 'review image unavailable' });
     } else {

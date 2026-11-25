@@ -19,6 +19,9 @@ case "$1/$2" in
   api/user) [ "$GH_TOKEN" = fixture-person ] || exit 1; printf 'octocat\\n'; exit ;;
 esac
 [ "$GH_TOKEN" = fixture-person ] || exit 1
+case "$2" in
+  */denied.png\?*) printf 'fixture upstream error details\\n' >&2; exit 1 ;;
+esac
 printf '%s\\n' "$@"
 `, { mode: 0o755 });
   const env = isolatedEnv();
@@ -43,6 +46,10 @@ printf '%s\\n' "$@"
     assert.equal(typeof read, 'function');
     process.env.TEST_GITHUB_CREDENTIAL = 'fixture-app';
     assert.equal(await personalPrImageReader(), null);
+    const logs = [];
+    const denied = urls.at(-1).replace('proof%20shot.png', 'denied.png');
+    assert.equal(await read({ slug, src: denied, log: (...args) => logs.push(args) }), null);
+    assert.deepEqual(logs, [['review.image_not_loaded', { reason: 'subprocess failure' }]]);
     for (const src of urls) {
       const image = await read({ slug, src });
       console.log(JSON.stringify(image && { type: image.type, args: image.bytes.toString().trim().split('\\n') }));

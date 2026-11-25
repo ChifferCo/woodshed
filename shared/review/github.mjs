@@ -28,22 +28,30 @@ const REVIEW_IMAGE_TYPES = new Map([
 
 // prAssets.sh links to a commit, including for private repositories where the
 // browser's cross-site request to github.com may have no GitHub cookie.
-async function fetchPrImage({ slug, src }, env) {
+async function fetchPrImage({ slug, src, log }, env) {
   const match = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/blob\/([a-f0-9]{40})\/([^?#]+)\?raw=true$/i.exec(src || '');
   if (!match || match[1].toLowerCase() !== slug.toLowerCase()) return null;
   const [, , sha, rawPath] = match;
+  let parts;
   try {
-    const parts = rawPath.split('/').map(decodeURIComponent);
-    if (parts.some((part) => !part || part === '.' || part === '..' || /[/\\\x00-\x1f\x7f]/.test(part))) return null;
-    const type = REVIEW_IMAGE_TYPES.get(path.extname(parts.at(-1)).toLowerCase());
-    if (!type) return null;
-    const file = parts.map(encodeURIComponent).join('/');
+    parts = rawPath.split('/').map(decodeURIComponent);
+  } catch {
+    return null;
+  }
+  if (parts.some((part) => !part || part === '.' || part === '..' || /[/\\\x00-\x1f\x7f]/.test(part))) return null;
+  const type = REVIEW_IMAGE_TYPES.get(path.extname(parts.at(-1)).toLowerCase());
+  if (!type) return null;
+  const file = parts.map(encodeURIComponent).join('/');
+  try {
     // exec.mjs decodes stdout as text. The raw contents response is binary.
     const { stdout } = await execFileAsync('gh', [
       'api', `repos/${slug}/contents/${file}?ref=${sha}`, '-H', 'Accept: application/vnd.github.raw',
     ], { env, encoding: 'buffer', timeout: GH_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 });
     return stdout.length ? { type, bytes: stdout } : null;
-  } catch {
+  } catch (err) {
+    const reason = err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'size limit'
+      : err.killed ? 'timeout' : 'subprocess failure';
+    log?.('review.image_not_loaded', { reason });
     return null;
   }
 }
