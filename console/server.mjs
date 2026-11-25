@@ -2160,6 +2160,11 @@ export function createHandler({
       }
       // The agents beside a session's own are Claude Code or Codex alone (session/agents.mjs).
       if (!agentsRegistry.agent(picked.agent).teamCredential) return reply(res, 400, { error: 'the agent must be claude or codex' });
+      // Grok Build and OpenCode get no Claude token at startup. Extra Claude uses the owner's plan via the proxy.
+      const primary = agentsRegistry.agent(agentsRegistry.agentOfSession(session));
+      if (picked.agent === 'claude' && !primary.teamCredential && userSettings && !userSettings.view(login).claudeToken.set) {
+        return reply(res, 409, { error: 'save your Claude token on My settings first' });
+      }
       const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
       if (prompt.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in the first message` });
       // An extra Codex agent runs on its owner's own Codex sign-in, handed to the session with the start itself and

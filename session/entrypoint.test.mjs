@@ -974,7 +974,7 @@ test('a Codex session starts codex with the picked flags, and the rules go in co
 });
 
 // configureCodex as the entrypoint has it, in a codex home of the test's own, after a pull wrote `pulled` into it.
-function configureCodex({ pulled = {}, linkedInstructions = false } = {}) {
+function configureCodex({ pulled = {}, linkedInstructions = false, agent = 'codex' } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-codex-'));
   const codexHome = path.join(tmp, 'codex');
   fs.mkdirSync(codexHome);
@@ -984,7 +984,7 @@ function configureCodex({ pulled = {}, linkedInstructions = false } = {}) {
   const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }',
     fn('configureCodex').replaceAll('/tmp/', `${tmp}/`), 'configureCodex'].join('\n');
   try {
-    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: tmp, SESSION_DIR, SHARED_DIR, REPO_DIR: '/work/app', CODEX_HOME_DIR: codexHome } });
+    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: tmp, SESSION_DIR, SHARED_DIR, REPO_DIR: '/work/app', CODEX_HOME_DIR: codexHome, AGENT: agent } });
     const read = (name) => (fs.existsSync(path.join(codexHome, name)) ? fs.readFileSync(path.join(codexHome, name), 'utf8') : null);
     return { out, config: read('config.toml'), agents: read('AGENTS.md'), override: read('AGENTS.override.md') };
   } finally {
@@ -1002,6 +1002,30 @@ test('a Codex session trusts its checkout in the owner\'s own config.toml, and t
   assert.equal(owner.config, 'model = "gpt-5.5"\n\n[tui]\nnotifications = true\n\n[projects."/work/app"]\ntrust_level = "trusted"\n', 'the owner\'s settings stay, with the checkout trusted');
   assert.equal(owner.agents, 'Use pnpm.\n', 'the synced file is left as it is');
   assert.equal(owner.override, '# Woodshed rules\n\nOpen a pull request.\n\n\n# Your own instructions, from ~/.codex/AGENTS.md\n\nUse pnpm.\n', 'codex reads this in place of AGENTS.md: the rules, then theirs');
+});
+
+test('extra agents in Grok Build and OpenCode sessions skip branch startup configuration', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-extra-agent-flags-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const mcp = path.join(tmp, 'mcp.json');
+  fs.writeFileSync(mcp, '{}');
+  const script = ['set -euo pipefail', 'tainted() { return 1; }', fn('claudeFlags'), fn('extraClaudeFlags'),
+    'extraClaudeFlags > "$FLAGS_FILE"'].join('\n');
+  for (const agent of ['grok', 'opencode', 'claude', 'codex']) {
+    const flagsFile = path.join(tmp, 'flags');
+    execFileSync('bash', ['-c', script], { env: { PATH: process.env.PATH, SESSION_DIR, AGENT: agent, MCP_CONFIG: mcp, FLAGS_FILE: flagsFile } });
+    const flags = fs.readFileSync(flagsFile, 'utf8');
+    assert.match(flags, /--settings .*claudeHooks\.json/);
+    if (agent === 'claude' || agent === 'codex') {
+      assert.ok(flags.includes('--mcp-config ' + mcp));
+      assert.doesNotMatch(flags, /--setting-sources|--strict-mcp-config/);
+      continue;
+    }
+    assert.match(flags, /--setting-sources user --strict-mcp-config --disable-slash-commands/);
+    assert.doesNotMatch(flags, / --mcp-config/);
+    const owner = configureCodex({ agent, pulled: { 'config.toml': 'model = "gpt-5.5"\n\n[projects."/work/app"]\ntrust_level = "trusted"\n' } });
+    assert.equal(owner.config, 'model = "gpt-5.5"\n\n[projects."/work/app"]\ntrust_level = "untrusted"\n');
+  }
 });
 
 test('Codex startup does not copy a linked sign-in into the model instructions', () => {

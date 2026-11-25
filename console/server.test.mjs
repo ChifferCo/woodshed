@@ -2837,7 +2837,9 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
     host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
     maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, launcher: { kind: 'docker' }, localLogin: 'local',
   };
-  const server = http.createServer(createHandler({ config, fleet }));
+  let hasClaude = false;
+  const userSettings = { view: () => ({ claudeToken: { set: hasClaude } }) };
+  const server = http.createServer(createHandler({ config, fleet, userSettings }));
   const port = await listen(server);
   t.after(() => server.close());
   const call = (path, body, method = 'POST') => fetch(`http://127.0.0.1:${port}${path}`, {
@@ -2854,7 +2856,11 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   assert.equal((await call('/api/sessions/2c3d4e5f/agents', { agent: 'claude' })).status, 409, 'a tainted session starts none');
   assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'grok' })).status, 400, 'Grok Build and OpenCode never start beside another');
   assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'opencode', model: 'openai/gpt-5' })).status, 400);
+  const missingClaude = await call('/api/sessions/3d4e5f6a/agents', { agent: 'claude' });
+  assert.equal(missingClaude.status, 409);
+  assert.match((await missingClaude.json()).error, /save your Claude token on My settings/);
   assert.equal(asked.length, 1, 'nothing refused reached the session');
+  hasClaude = true;
   assert.equal((await call('/api/sessions/3d4e5f6a/agents', { agent: 'claude' })).status, 200);
   assert.equal((await call('/api/sessions/3d4e5f6a/agents', undefined, 'GET')).status, 200);
   assert.deepEqual(allowed.at(-1), ['3d4e5f6a', 'claude']);
