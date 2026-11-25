@@ -63,6 +63,9 @@ const count = (n) => (Number.isInteger(n) && n >= 0 ? n : null);
 export const SUBTYPES = ['success', 'error_max_turns', 'error_during_execution', 'error_max_budget_usd', 'error_max_structured_output_retries'];
 const subtypeOf = (t) => (SUBTYPES.includes(t) ? t : 'unknown');
 
+// Own keys only: a subtype a run made up (`constructor`) must not find a function on the prototype.
+const endingOf = (subtype) => (typeof subtype === 'string' && Object.hasOwn(ENDINGS, subtype) ? ENDINGS[subtype] : null);
+
 const clip = (text, max) => (text.length > max ? `${text.slice(0, max)}…` : text);
 const oneLine = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
 
@@ -118,7 +121,7 @@ export function readStream(stream, env = process.env) {
 export function whyEnded(phase, stream) {
   const { result } = readStream(stream);
   if (!result) return `the ${phase} pass ended without a result: claude was stopped or crashed`;
-  if (ENDINGS[result.subtype]) return `the ${phase} pass ${ENDINGS[result.subtype]}${count(result.num_turns) ? ` (${count(result.num_turns)} turns)` : ''}`;
+  if (endingOf(result.subtype)) return `the ${phase} pass ${endingOf(result.subtype)}${count(result.num_turns) ? ` (${count(result.num_turns)} turns)` : ''}`;
   if (result.is_error) return `the ${phase} pass ended in an error`;
   return null;
 }
@@ -147,7 +150,7 @@ export function summarize(phase, stream, { text: withText = true } = {}) {
   if (!result) {
     lines.push('Ended: no result from claude, so it was stopped or crashed before it finished.');
   } else {
-    const ending = ENDINGS[result.subtype] ?? (result.is_error ? 'ended in an error' : 'finished');
+    const ending = endingOf(result.subtype) ?? (result.is_error ? 'ended in an error' : 'finished');
     lines.push(`Ended: ${ending} (${subtypeOf(result.subtype)}${result.is_error ? ', is_error' : ''})`);
     if (Array.isArray(result.permission_denials) && result.permission_denials.length) {
       // The tool names are in the full log only: the summary has counts and fixed words.

@@ -132,3 +132,11 @@ test('a result event\'s odd fields never reach the verdict or the summary: count
   const denied = line({ type: 'result', subtype: 'success', permission_denials: [{ tool_name: 'PRIVATE-MARKER x' }] });
   assert.doesNotMatch(summarize('test', denied, { text: false }), /PRIVATE/);
 });
+
+test('a subtype that names something on the object prototype is not an ending', () => {
+  for (const subtype of ['constructor', 'toString', '__proto__']) {
+    const stream = line({ type: 'result', subtype, num_turns: 1 });
+    assert.equal(whyEnded('test', stream), null);
+    assert.match(summarize('test', stream, { text: false }), /Ended: finished \(unknown\)/);
+  }
+});
