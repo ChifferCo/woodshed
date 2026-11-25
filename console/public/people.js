@@ -43,7 +43,7 @@ window.Woodshed.settingsPage('/people', (app, life) => {
   }
 
   function who(login, line) {
-    const named = data.names?.[login];
+    const named = nameOf({ login }) === login ? null : nameOf({ login });
     return h('div', { class: 'who' },
       h('b', null, named || `@${login}`),
       h('div', { class: 'meta' }, [named && `@${login}`, line].filter(Boolean).join(' · ')));
@@ -296,26 +296,28 @@ window.Woodshed.settingsPage('/people', (app, life) => {
     return h('span', { class: 'sign-in-list' }, m.signIns.map((name) => h('span', { class: 'pill is-ok' }, name)));
   }
 
-  const nameOf = (m) => data.names?.[m.login] || m.login;
+  // The name the reply gives, read as its own string entry: a handle such as `constructor` falls back to itself.
+  const nameOf = (m) => {
+    const named = data.names && Object.hasOwn(data.names, m.login) ? data.names[m.login] : null;
+    return typeof named === 'string' && named ? named : m.login;
+  };
 
-  // Members by role, in the order the roles are offered (Owner first), each role's people by name: a heading row per role.
+  // Members by role, in the order the roles are offered (Owner first), each role's people by name: a body of its own
+  // per role, headed by a row naming it.
   function roleSections() {
     const order = (data.roles ?? []).map((r) => r.id);
     const rank = (m) => { const i = order.indexOf(m.access); return i === -1 ? order.length : i; };
     const sorted = [...data.members].sort((a, b) => rank(a) - rank(b)
       || nameOf(a).localeCompare(nameOf(b), undefined, { sensitivity: 'base' }) || a.login.localeCompare(b.login));
-    const out = [];
-    let last;
+    const bodies = [];
     for (const m of sorted) {
-      if (m.access !== last) {
-        last = m.access;
-        const count = sorted.filter((o) => o.access === m.access).length;
-        out.push(h('tr', { class: 'role-head' }, h('th', { scope: 'colgroup', colspan: String(columns()) },
-          `${roleNamed(m.access)?.label ?? 'Other'} · ${count}`)));
-      }
-      out.push(...memberRows(m));
+      if (bodies.at(-1)?.access !== m.access) bodies.push({ access: m.access, members: [] });
+      bodies.at(-1).members.push(m);
     }
-    return out;
+    return bodies.map(({ access, members }) => h('tbody', { class: 'role-group' },
+      h('tr', { class: 'role-head' }, h('th', { scope: 'rowgroup', colspan: String(columns()) },
+        `${roleNamed(access)?.label ?? 'Other'} · ${members.length}`)),
+      members.flatMap(memberRows)));
   }
 
   // The table sits in the group's box, and scrolls sideways inside it on a phone.
@@ -332,7 +334,7 @@ window.Woodshed.settingsPage('/people', (app, life) => {
           signInsShown() && h('th', { scope: 'col' }, 'Personal tokens'),
           data.slack !== null && h('th', { scope: 'col' }, 'Slack'),
           h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Remove')))),
-        h('tbody', null, roleSections()))),
+        roleSections())),
       inviteRow());
   }
 

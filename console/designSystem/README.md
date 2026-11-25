@@ -204,8 +204,8 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - Members are a table: the person, a **Role** select (Owner, Member, Contributor, Private only), **What they can do**
   (that role in one plain sentence, in `foot`), **Personal tokens**, Slack, and Remove. A role stands for a set of
   switches, so there is one control per person, never a checkbox per switch. Head cells are uppercase `group-label` on
-  `stopped`. Members are grouped by role, in the Role select's order, under a head row per role (`Owner · 2`, the same
-  look as the head cells), and sorted by name within it. Personal tokens names each sign-in the person saved on My
+  `stopped`. Members are grouped by role, in the Role select's order, each role a table body of its own under a head row
+  (`Owner · 2`, a `rowgroup` heading with the same look as the head cells), and sorted by name within it. Personal tokens names each sign-in the person saved on My
   settings (Claude, Codex, Grok Build, OpenCode, and GitHub once connected) as a green `pill`, or None in `foot`: never
   a value. Invite someone
   (Add someone) picks the role from a table under the handle: a row per role with a radio, a column per power (Private sessions,
