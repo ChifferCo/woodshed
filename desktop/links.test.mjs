@@ -24,14 +24,9 @@ test('loopback hosts', () => {
 });
 
 test('where each link of a hosted console goes', () => {
-  const where = { consoleUrl: 'https://woodshed.example.com/', appDomain: 'apps.example.com' };
+  const where = { consoleUrl: 'https://woodshed.example.com/' };
   assert.equal(destination('https://woodshed.example.com/s/aaaa1111', where), 'console');
   assert.equal(destination('https://woodshed.example.com/shell/aaaa1111/', where), 'console');
-  assert.equal(destination('https://aaaa1111.apps.example.com/', where), 'app');
-  assert.equal(destination('https://aaaa1111.apps.example.com/__woodshed/code/', where), 'app');
-  // An app domain over plain http, or one that only ends in the same letters, is not the console's.
-  assert.equal(destination('http://aaaa1111.apps.example.com/', where), 'external');
-  assert.equal(destination('https://evilapps.example.com/', where), 'external');
   assert.equal(destination('https://github.com/login/oauth/authorize?client_id=x', where), 'signIn');
   assert.equal(destination('https://github.com/sessions/two-factor/app', where), 'signIn');
   assert.equal(destination('https://github.com/session', where), 'signIn');
@@ -44,23 +39,16 @@ test('where each link of a hosted console goes', () => {
   assert.equal(destination('not a url', where), 'external');
 });
 
-test('with no app domain known yet, only the console stays in the app', () => {
-  const where = { consoleUrl: 'https://woodshed.example.com/', appDomain: null };
-  assert.equal(destination('https://aaaa1111.apps.example.com/', where), 'external');
-  assert.equal(destination('https://woodshed.example.com/', where), 'console');
-});
-
-test('a local console keeps its app ports in the app', () => {
-  const where = { consoleUrl: 'http://localhost:7690/', appDomain: 'localhost' };
-  assert.equal(destination('http://localhost:7690/s/aaaa1111', where), 'console');
-  assert.equal(destination('http://localhost:7701/', where), 'app');
-  assert.equal(destination('http://127.0.0.1:7701/', where), 'external');
-});
-
-test('a local console\'s apps on a loopback app domain stay in the app over http', () => {
-  const where = { consoleUrl: 'http://localhost:7690/', appDomain: 'apps.localhost' };
-  assert.equal(destination('http://aaaa1111.apps.localhost:7690/', where), 'app');
-  assert.equal(destination('http://aaaa1111.apps.localhost:7690/__woodshed/code/', where), 'app');
+test('a session\'s app, its editor and its viewers open in the browser', () => {
+  // A hosted console's proxy signs the browser in on the apps' names; a window of the app's would find no one there.
+  // The app domain is passed as the app once did, so these fail if apps are kept in the app again.
+  const hosted = { consoleUrl: 'https://woodshed.example.com/', appDomain: 'apps.example.com' };
+  assert.equal(destination('https://aaaa1111.apps.example.com/', hosted), 'external');
+  assert.equal(destination('https://aaaa1111.apps.example.com/__woodshed/code/', hosted), 'external');
+  const local = { consoleUrl: 'http://localhost:7690/', appDomain: 'apps.localhost' };
+  assert.equal(destination('http://localhost:7690/s/aaaa1111', local), 'console');
+  assert.equal(destination('http://localhost:7701/', local), 'external');
+  assert.equal(destination('http://aaaa1111.apps.localhost:7690/', local), 'external');
 });
 
 test('only a Woodshed console\'s /api/me passes setup, not any web app', () => {
