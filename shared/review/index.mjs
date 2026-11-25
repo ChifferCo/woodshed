@@ -2716,6 +2716,9 @@ async function runQaRounds({ ctx, session, review, gen, pin }) {
     frontier = generatedItems(generated.value, frontier);
     if (!frontier.length) {
       if (depth === 1) return fail('no complete questions and answers were written about this change');
+      if (Array.isArray(generated.value.questions) && generated.value.questions.length) {
+        qa.stoppedEarly = 'no complete follow-up questions and answers were written';
+      }
       break;
     }
     qa.items.push(...frontier);

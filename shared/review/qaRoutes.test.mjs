@@ -29,6 +29,11 @@ const argv = process.argv.slice(2);
   }
   const seen = fs.existsSync('a.txt') ? fs.readFileSync('a.txt', 'utf8').trim() : '';
   const answer = (id) => 'Answer to ' + id + '.' + (seen ? ' a.txt: ' + seen : '');
+  const mode = generated && fs.existsSync('qa-mode') ? fs.readFileSync('qa-mode', 'utf8') : '';
+  if (mode === 'provider-error' && ids.length) {
+    console.log(JSON.stringify({ is_error: true, result: 'the provider was unavailable' }));
+    return;
+  }
   let out;
   if (!generated && prompt.includes('please fail')) {
     process.stdout.write(JSON.stringify({ type: 'result', is_error: true, result: 'the stand-in refused', total_cost_usd: 0.001 }));
@@ -48,7 +53,10 @@ const argv = process.argv.slice(2);
     if (argv[argv.indexOf('--tools') + 1] !== 'Read,Grep,Glob' || fs.existsSync('.git')) {
       throw new Error('generated Q&A must have read tools and run in the snapshot');
     }
-    out = { questions: ids.length
+    if (mode === 'first-empty' || (mode === 'empty-followup' && ids.length)) out = { questions: [] };
+    else if (mode === 'invalid-followup' && ids.length) {
+      out = { questions: [{ about: ids[0], question: 'What happened?', answer: ' ' }] };
+    } else out = { questions: ids.length
       ? [{ about: ids[0], question: 'What does that word mean?', answer: answer(ids[0] + '.1') }]
       : [{ question: seen ? 'Why does a.txt say ' + seen + '?' : 'What is a webhook?', answer: answer('q1') },
          { question: 'Why retry?', answer: answer('q2') }] };
@@ -78,11 +86,12 @@ const { writeSessionReview, writeDiff, readQa, writeQa } = await import('./store
 const { makeSnapshot, removeSnapshot, sweepStaleSnapshots, reservedSnapshotBytes } = await import('./qa.mjs');
 
 // A worktree review of a real checkout, whose snapshot is the commit made here: what the diff was taken from.
-function makeReview(session, worktree, createdAt = '2026-11-19T10:00:00.000Z', { aTxt, attributes } = {}) {
+function makeReview(session, worktree, createdAt = '2026-11-19T10:00:00.000Z', { aTxt, attributes, qaMode } = {}) {
   fs.mkdirSync(worktree, { recursive: true });
   const git = (...args) => execFileSync('git', ['-C', worktree, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
   if (!fs.existsSync(path.join(worktree, '.git'))) git('init', '-q');
   if (path.basename(worktree) === 'slow') fs.writeFileSync(path.join(worktree, 'slow-qa'), '');
+  if (qaMode) fs.writeFileSync(path.join(worktree, 'qa-mode'), qaMode);
   if (aTxt !== undefined) fs.writeFileSync(path.join(worktree, 'a.txt'), aTxt);
   if (attributes !== undefined) fs.writeFileSync(path.join(worktree, '.gitattributes'), attributes);
   fs.writeFileSync(path.join(worktree, 'src.mjs'), `// ${createdAt}\n`);
@@ -158,6 +167,26 @@ test('POST /qa runs the rounds and saves the tree: questions, a follow-up, its f
   makeReview(session, path.join(DIR, 'fast'), '2026-11-19T11:00:00.000Z');
   assert.equal(readQa(session).items.length, 4, 'the file is still there');
   assert.equal((await call('GET', `/reviews/${session}/qa`)).body.qa, null);
+});
+
+test('POST /qa distinguishes empty, invalid and failed rounds', async () => {
+  const cases = [
+    ['first-empty', 'failed', 0, null, 'no complete questions and answers were written about this change'],
+    ['empty-followup', 'ready', 2, null, null],
+    ['invalid-followup', 'ready', 2, 'no complete follow-up questions and answers were written', null],
+    ['provider-error', 'ready', 2, 'the provider was unavailable', null],
+  ];
+  for (const [i, [qaMode, status, count, stoppedEarly, error]] of cases.entries()) {
+    const session = `claude-dadadad${i}`;
+    makeReview(session, path.join(DIR, qaMode), undefined, { qaMode });
+    assert.equal((await call('POST', `/reviews/${session}/qa`)).body.status, 'running');
+    const qa = await until(() => {
+      const saved = readQa(session);
+      return ['ready', 'failed'].includes(saved?.status) ? saved : null;
+    });
+    assert.deepEqual([qa.status, qa.items.length, qa.stoppedEarly, qa.error], [status, count, stoppedEarly, error], qaMode);
+    assert.ok(qa.items.every((item) => item.answer));
+  }
 });
 
 test('Discard during a run stops it, and nothing it was doing is written back', async () => {
