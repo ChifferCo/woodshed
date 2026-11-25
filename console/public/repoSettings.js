@@ -385,7 +385,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
             onclick: () => saveTriggers({ label: null }, (n) => `Back to the console's label, ${n.label}.`),
           }, 'Use the console\'s')),
         note(GITHUB),
-        h('p', { class: 'sub' }, 'GitHub matches any case. It must not be this repo\'s QA label. Make it on the repo\'s Labels page so people can pick it.')));
+        h('p', { class: 'sub' }, 'GitHub matches any case. It must not be this repo\'s QA label (its project file\'s ', code('pullRequests.qa.label'), '). Make it on the repo\'s Labels page so people can pick it.')));
   }
 
   // The channel's state in words: where the next pull request goes.

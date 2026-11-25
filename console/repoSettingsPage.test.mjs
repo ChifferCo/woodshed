@@ -631,6 +631,7 @@ test('the label\'s name is a row that opens: a label of the repo\'s own is saved
   const row = () => rowOf(app, 'session-label-row');
   const input = () => walk(row()).find((e) => e.tag === 'input' && e.attrs.id === 'session-label');
   assert.equal(input().value, 'woodshed');
+  assert.match(textOf(row()), /GitHub matches any case\. It must not be this repo's QA label \(its project file's pullRequests\.qa\.label\)\. Make it on the repo's Labels page so people can pick it\./);
   assert.equal(button(row(), 'Save').attrs.disabled, '', 'nothing typed yet');
   assert.equal(button(row(), 'Use the console\'s').attrs.disabled, '');
   input().value = 'a,b';
