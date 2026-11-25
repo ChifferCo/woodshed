@@ -245,6 +245,11 @@ h1.title { margin: 0 0 4px; font-family: "Red Hat Display", -apple-system, Blink
 .rgroup { display: flex; flex-direction: column; gap: 6px; margin-left: 10px; padding-left: 8px; border-left: 2px solid var(--line); }
 .rin { padding-left: 13px; font-size: 11px; color: var(--sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rin a { color: var(--sub); }
+.msg-lines { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.msg-lines li { display: flex; flex-wrap: wrap; column-gap: 4px; min-width: 0; }
+.msg-dir { color: var(--sub); }
+.msg-at { color: var(--meta); font-family: var(--mono); font-size: 11px; }
+.msg-text { flex-basis: 100%; color: var(--sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .is-needs-you .rsub b { color: var(--wait); } .is-working .rsub b { color: var(--slate); } .is-done .rsub b { color: var(--green); }
 .is-review .rsub b, .is-job .rsub b { color: var(--slate); } .is-paused .rsub b { color: var(--wait); } .is-finished .rsub b { color: var(--green); }
 .is-failed .rsub b { color: var(--bad); } .is-queued .rsub b { color: var(--wait); }
@@ -750,19 +755,24 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .project-pick { display: flex; gap: 8px; align-items: center; }
 .project-pick select { flex: 1; min-width: 0; }
 .project-only { padding: 6px 0; overflow-wrap: anywhere; }
-.lgrid2, .lgrid3, .lgrid4 { display: grid; gap: 12px; }
-.loptions > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; cursor: pointer; list-style: none; }
-.loptions > summary::-webkit-details-marker { display: none; }
-.loptions > summary::after { content: "▸"; font-size: 10px; color: var(--meta); }
-.loptions[open] > summary::after { content: "▾"; }
-.loptions[open] > summary { margin-bottom: 10px; }
-.loptions-picked { font-family: var(--mono); font-size: 12px; color: var(--meta); }
-.loptions[open] .loptions-picked { display: none; }
+.lgrid2, .lgrid3 { display: grid; gap: 12px; }
+/* The picked agent's model, effort and permissions, under its card: the pick's amber outline on amber-tint. */
+.lsettings { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--amber); border-radius: 8px; background: var(--amber-tint); }
+.lsettings-head { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.lsettings .field-label { font-size: 12px; color: var(--amber-ink); }
+.lsettings .lcatalog-note { margin: 0; }
 .lgrid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 /* Side by side, the fields share a label row and a control row, so a hint that wraps in one does not push its control below the other's. */
 .lgrid2 > .lfield { display: grid; grid-row: span 2; grid-template-rows: subgrid; row-gap: 4px; align-content: start; }
 .lgrid3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.lgrid4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+/* New session's agent: choice cards, four across on a desktop, two on a phone, each its name and what it runs on. */
+.lagents > legend { margin-bottom: 6px; }
+.lagents .choice-cards { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+.lagents .choice-card { padding: 10px 12px; gap: 2px 8px; align-content: start; }
+.lagents .choice-line { font-size: 12px; }
+.lagents .choice-line a { position: relative; z-index: 1; }
+.lagents .choice-meta { grid-column: 2; margin-top: 2px; font-family: var(--mono); font-size: 11.5px; color: var(--meta); overflow-wrap: anywhere; }
+.lmodel > .field { width: 100%; }
 .launch-actions, .set-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .btn-keys { display: inline-flex; margin-left: 8px; }
 .btn-keys kbd { border-color: currentColor; background: transparent; color: inherit; opacity: 0.75; }
@@ -782,7 +792,7 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
   .shell.is-launcher { flex-direction: column; flex-wrap: nowrap; height: auto; min-height: 100dvh; }
   .shell.is-launcher .rail { display: flex; flex: none; border-right: 0; border-bottom: 1px solid var(--line); }
   .launch { padding: 16px; }
-  .lgrid2, .lgrid3, .lgrid4 { grid-template-columns: 1fr; }
+  .lgrid2, .lgrid3 { grid-template-columns: 1fr; }
   .pull-meta { white-space: normal; overflow-wrap: anywhere; }
   /* On a phone the rail is the Shared page, as before: its list is already there. */
   .home { display: none; }
@@ -971,6 +981,7 @@ button.set-fold-head:hover { background: var(--slate-tint); }
 .choice-card.is-off { cursor: not-allowed; background: var(--stopped); color: var(--sub); }
 .choice-card.is-off .radio { border-color: var(--line); }
 @media (max-width: 560px) { .choice-cards { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 560px) { .lagents .choice-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* What a production server does to a session, under its choice: the Production tag, then the lines, on a prod edge. */
 .prod-callout { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--prod); border-left-width: 4px; border-radius: 6px; background: var(--ground); font-size: 12.5px; color: var(--ink); }
 .prod-callout-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 6px; font-weight: 600; font-size: 13px; }
@@ -1264,6 +1275,7 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px
 .prompt-wrap { position: relative; display: flex; flex-direction: column; }
 .prompt-wrap.is-dragover .field { border-color: var(--amber); background: var(--amber-tint); }
 .attach-row { display: flex; align-items: center; gap: 10px; }
+.attach-row .hint { font-size: 12px; color: var(--meta); }
 .attach-row .hint.is-error { color: var(--bad); }
 /* Dictate's line while it listens (launcher.js): a word, no motion; the words still settling in mono. */
 .dictate-line { margin: 6px 0 0; color: var(--sub); font-size: 12.5px; }

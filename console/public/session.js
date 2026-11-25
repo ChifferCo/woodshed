@@ -1667,7 +1667,8 @@
   }
 
   function railBody() {
-    const all = railListing();
+    // An earlier review or QA run on a pull request is left out of the cards and every chip's count alike.
+    const all = W.latestPullChecks(railListing());
     const onProject = railProject();
     const listed = onProject ? all.filter((s) => s.project === onProject) : all;
     const emptyText = all.length && onProject ? `No sessions on ${onProject} here. All shows the other projects'.`
@@ -1905,7 +1906,15 @@
       // Each a link: the session it came from, and those it started, which are the same person's own.
       ...W.startedLinks(s, data.sessions).map(([term, list]) => row(term, list.flatMap((x, i) => [
         i ? ', ' : null, x.id ? h('a', { href: sessionHref(x) }, x.title) : x.title,
-      ]).filter(Boolean))));
+      ]).filter(Boolean))),
+      // What it sent the others of yours and what they sent it, newest first, held ones included as sent: each in full in
+      // the receiving session's Chat once typed in, or, for a reply to an open wait, in that waiting command's output.
+      s.messages?.length > 0 && row('Messages', h('ul', { class: 'msg-lines' }, W.messageLines(s, data.sessions).map((m) => h('li', null,
+        h('span', { class: 'msg-dir' }, m.dir === 'out' ? (m.question ? 'Asked ' : 'To ') : (m.question ? 'Asked by ' : 'From ')),
+        m.other.id ? h('a', { href: sessionHref(m.other) }, m.other.title) : m.other.title,
+        h('span', { class: 'msg-at' }, ` · ${W.ago(m.at)}`),
+        m.unconfirmed && h('span', { class: 'msg-at', title: 'The console did not hear back that it went in' }, ' · may not have arrived'),
+        m.text && h('span', { class: 'msg-text' }, m.text))))));
   }
 
   // When it pauses and stops by itself, and whether those are its own, with the next one while it runs.

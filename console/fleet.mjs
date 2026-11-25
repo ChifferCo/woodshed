@@ -261,6 +261,10 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
   ].join('\n');
 }
 
+// What Details lists of the messages between a person's sessions (noteMessage): the newest, each cut to a line.
+const MESSAGES_KEPT = 20;
+const MESSAGE_PREVIEW_CHARS = 200;
+
 /**
  * @param {{config: object, store: {state: object, save: () => void}, launcher: object,
  *          github: object, statusd?: typeof callStatusd, now?: () => number,
@@ -303,6 +307,8 @@ export function createFleet({
   const issueTracking = createIssueTracking({ github });
   const issueTrackings = new Map();
   const prCheckedAt = new Map();
+  // When each pull request with ended review or QA runs was last read for whether it closed (pruneEndedRuns).
+  const pullRunsCheckedAt = new Map();
   // Private sessions whose statusd last refused or missed review feedback, so it is warned of once.
   const untypedSaid = new Set();
   const homeDeleteTriedAt = new Map();
@@ -752,6 +758,17 @@ export function createFleet({
     });
     await runStartQueued({ background });
     return session;
+  }
+
+  // The messages between two sessions of a person's (sessionStarts.mjs), on both, for the page's Details: when, which
+  // way, with which session, whether it asked something, and the start of what it said. The newest MESSAGES_KEPT.
+  // `unconfirmed`: the console did not hear back that it went in (fleet.send's `unknown`): it may not have arrived.
+  function noteMessage({ from, to, text, question = false, unconfirmed = false }) {
+    const at = nowIso();
+    const said = String(text).replace(/\s+/g, ' ').trim().slice(0, MESSAGE_PREVIEW_CHARS);
+    for (const [s, other, dir] of [[from, to, 'out'], [to, from, 'in']]) {
+      update(s, { messages: [{ at, dir, with: other.id, question: Boolean(question), text: said, ...(unconfirmed ? { unconfirmed: true } : {}) }, ...(s.messages ?? [])].slice(0, MESSAGES_KEPT) });
+    }
   }
 
   // A question a session asked another of its person's (sessionStarts.mjs, --question): it waits for an answer, which the
@@ -1290,6 +1307,7 @@ export function createFleet({
       for (const session of [...state.sessions]) await safely('QA run ended without a report', () => qaEndedUnreported(session));
       for (const session of [...state.sessions]) await safely('review ended without a report', () => reviewEndedUnreported(session));
       for (const session of [...state.sessions]) await safely('retention check', () => retain(session));
+      await safely('ended pull request runs', () => pruneEndedRuns());
       for (const session of [...state.sessions]) await safely('tainted session removal', () => removeTainted(session));
       for (const session of [...state.sessions]) await safely('taint notice', () => tellTainted(session));
       await safely('tainted homes', () => retryTaintedHomes());
@@ -1360,6 +1378,9 @@ export function createFleet({
       prCheckedAt.delete(session.id);
       marked.add(number);
     }
+    for (const number of numbers) {
+      if (pullRunsCheckedAt.delete(`${project.name}#${number}`)) marked.add(number);
+    }
     return [...marked];
   }
 
@@ -1405,6 +1426,61 @@ export function createFleet({
     const ms = isQa(session) && session.qa?.videos?.length ? Math.max(listed, QA_RECORDING_DAYS * 86_400_000) : listed;
     if (!Number.isFinite(from) || now() < from + ms) return;
     dropRecord(session, `deleted ${spanText(ms)} ago`);
+  }
+
+  // A review's or QA run's record is what the next run on its pull request reads: whether a commit was reviewed or
+  // tested, the comment it writes over, the approval held for QA, the review's last posted verdict (approvalDismissed)
+  // and the recordings a QA comment links. Each read takes the latest record that has it, and none is read once the pull request
+  // merged or closed. Every run of every commit stayed listed until the delete timer (dropIfDue), weeks later, which
+  // piled up hundreds of cards: the ones nothing reads go off the list as soon as they have ended.
+  async function pruneEndedRuns() {
+    const byPull = new Map();
+    for (const session of state.sessions) {
+      if (session.owner || !Number.isInteger(session.number) || !(isQa(session) || isReview(session))) continue;
+      const key = `${projectFor(config, session).name}#${session.number}`;
+      byPull.set(key, [...(byPull.get(key) ?? []), session]);
+    }
+    // A pull request whose runs all went off the list is not read again.
+    for (const key of pullRunsCheckedAt.keys()) if (!byPull.has(key)) pullRunsCheckedAt.delete(key);
+    for (const [key, runs] of byPull) {
+      // Not yet settled: still going, or its end not yet told (qaEndedUnreported, reviewEndedUnreported), or a Claude
+      // home still being deleted, which nothing retries once the record is gone.
+      const settled = (s) => !ACTIVE_STATUSES.has(s.status) && s.status !== 'stopping' && !s.homeDeletePending
+        && (isQa(s) ? Boolean(s.qa.conclusion || s.qa.endChecked) : Boolean(s.review.reported || s.review.endChecked));
+      const watched = (s) => isQa(s) && s.qa.videos?.length && now() < Date.parse(s.stoppedAt ?? s.createdAt) + QA_RECORDING_DAYS * 86_400_000;
+      const ended = runs.filter(settled);
+      if (!ended.length) continue;
+      const latest = (kind, has = () => true) => runs.filter((s) => (kind === 'qa' ? isQa(s) : isReview(s)) && has(s)).at(-1);
+      // Each run writes over the QA comment, so only the last run's recordings are linked from it. A run that could
+      // not edit it posted a comment of its own, which leaves the old one linking its run's recordings: the last
+      // settled run of each comment is kept while its recordings are.
+      const linked = latest('qa', settled);
+      const comments = new Map();
+      for (const s of runs) if (isQa(s) && settled(s) && s.qa.commentId) comments.set(s.qa.commentId, s);
+      const linking = new Set([linked, ...comments.values()].filter((s) => s && watched(s)));
+      if (ended.length === runs.length && await pullClosed(key, runs[0])) {
+        for (const s of ended) if (!linking.has(s)) dropRecord(s, 'its pull request merged or closed');
+        continue;
+      }
+      // The last settled run of each kind too, while a later one still runs: its result is the pull request's until then.
+      const read = new Set([
+        latest('qa'), linked, latest('qa', (s) => s.qa.commentId),
+        latest('review', settled),
+        latest('review'), latest('review', (s) => s.review.commentId),
+        latest('review', (s) => s.review.conclusion && s.review.posted),
+        ...runs.filter((s) => isReview(s) && s.review.held), ...linking,
+      ]);
+      for (const s of ended) if (!read.has(s)) dropRecord(s, 'a later run on its pull request replaced it');
+    }
+  }
+
+  // Read at most every PR_STATE_CHECK_MS for each pull request with ended runs, and at the next tick after a webhook
+  // said it changed (pullsChanged).
+  async function pullClosed(key, session) {
+    if (now() - (pullRunsCheckedAt.get(key) ?? -Infinity) < PR_STATE_CHECK_MS) return false;
+    pullRunsCheckedAt.set(key, now());
+    const pull = await safely('pull request of ended runs', () => githubOf(projectFor(config, session)).pull(session.number));
+    return pull?.state === 'closed';
   }
 
   function dropRecord(session, why) {
@@ -3192,7 +3268,7 @@ export function createFleet({
   }
 
   return {
-    noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
+    noteMessage, noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
     createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, publicQaVideo, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,

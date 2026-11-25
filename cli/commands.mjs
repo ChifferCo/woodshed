@@ -17,7 +17,8 @@
 //             computer (its files, its Herdr, its browser). 'terminal': a person types into it
 //   effect    'read', 'change', or 'destructive' (ends or removes something of the person's, or hands it to others):
 //             a program asks the person before it runs one
-//   waits     how it may last: 'start' (until a session runs), 'watch' (until stopped), 'line' (a tunnel's line)
+//   waits     how it may last: 'start' (until a session runs), 'watch' (until stopped), 'line' (a tunnel's line),
+//             'turn' (until a session's agent is done with its turn)
 //   why       for one that needs the computer or a terminal, why it cannot run anywhere else
 //
 // An option or argument may need the computer or a terminal while its command does not (`session new --herdr`): a
@@ -114,6 +115,25 @@ export const COMMANDS = [
       { name: 'effort', value: 'level', check: NAME, about: 'its effort' },
       { name: 'mode', value: 'permissions', about: 'its permission mode (auto by default)' },
     ],
+  },
+  {
+    path: ['session', 'send'], effect: 'change', waits: 'turn',
+    about: 'type a message in at one of your running sessions\' agent, as the Chat tab\'s Send does; held while it works',
+    // The id goes after `--` with the message, as the parser takes words there.
+    args: [{ ...id(), text: true }, { name: 'message', about: 'what to say', text: true }],
+    options: [{ name: 'wait', about: 'then wait until it has worked on it, and print what it said' }],
+  },
+  {
+    path: ['session', 'rename'], effect: 'change',
+    about: 'rename one of your sessions, as its title on the page does: the name every page shows',
+    args: [{ ...id(), text: true }, { name: 'name', about: 'its new name', text: true }],
+  },
+  { path: ['session', 'wait', '<id>'], effect: 'read', waits: 'turn', about: 'until one of your sessions is done with its turn, needs you, or stops', args: [id()] },
+  {
+    path: ['session', 'read', '<id>'], effect: 'read',
+    about: 'what one of your running sessions was asked and said, newest last; never one that has seen production data',
+    args: [id()],
+    options: [{ name: 'last', value: 'n', check: /^(100|[1-9][0-9]?)$/, about: 'how many of its latest messages, up to 100 (default 10)' }],
   },
   {
     path: ['session', 'agent', '<id>', 'stop', '<agent>'], effect: 'destructive', about: 'end one of them',
