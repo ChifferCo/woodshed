@@ -85,7 +85,8 @@ export const COMMANDS = [
     path: ['session', 'new'], effect: 'change', waits: 'start', about: 'start a private session, and wait until it runs, fails or needs you',
     args: [{ name: 'prompt', about: 'what the session\'s agent is asked to do', text: true, optional: true }],
     options: [
-      repoOption('the repo to work on (default: the one New session opens on for you)'),
+      // owner/name, or the project's name on a console that names projects (repo add --name).
+      { name: 'repo', value: 'owner/name', about: 'the repo to work on (default: the one New session opens on for you)', check: /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9._-]+)?$/ },
       { name: 'branch', value: 'branch', about: 'work on this branch, or a pull request or issue: 123, pr 123, or its URL' },
       { name: 'agent', value: 'agent', check: /^[a-z][a-z0-9-]{0,31}$/, about: 'the agent it runs: claude, codex, grok, opencode (default claude)' },
       { name: 'model', value: 'model', about: 'the agent\'s model (default the agent\'s own)' },

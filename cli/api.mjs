@@ -48,6 +48,8 @@ export async function runCommand(entry, args, { origin, token, fetch: fetchFn = 
   const repoOption = (entry.options ?? []).find((o) => o.name === 'repo');
   if (repoOption && (entry.options ?? []).some((o) => o.name === 'dir') && !args.repo) throw new Error(`${commandName(entry)} needs repo: there is no checkout here`);
   const tunnel = entry.waits === 'line';
+  // Stopped before it started: nothing is sent, a tunnel's line least of all, which could change the session.
+  if (signal?.aborted) return { code: null, events: [], stdout: '', stderr: '', stopped: true, truncated: false };
   const argv = argvOf(entry, args, ['--console', origin, ...(tunnel ? [] : ['--json'])]);
   const out = { code: null, events: [], stdout: '', stderr: '', stopped: false, truncated: false };
 
@@ -70,8 +72,8 @@ export async function runCommand(entry, args, { origin, token, fetch: fetchFn = 
   const stdout = new Writable({
     write(chunk, _enc, done) {
       const text = typeof chunk === 'string' ? chunk : decoder.write(chunk);
+      if (out.stdout.length + text.length > maxOutput) out.truncated = true;
       if (out.stdout.length < maxOutput) out.stdout += text.slice(0, maxOutput - out.stdout.length);
-      else out.truncated = true;
       if (!tunnel) {
         const parts = (partial + text).split('\n');
         partial = parts.pop();

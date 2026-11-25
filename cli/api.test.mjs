@@ -8,7 +8,7 @@ import path from 'node:path';
 import { createCliSignIn } from '../console/cliSignIn.mjs';
 import { createHandler } from '../console/server.mjs';
 import { EXIT, runCommand } from './api.mjs';
-import { commandName, COMMANDS } from './commands.mjs';
+import { argvOf, commandName, COMMANDS } from './commands.mjs';
 import { createCredentials } from './credentials.mjs';
 import { main } from './woodshed.mjs';
 
@@ -111,4 +111,24 @@ test('a command that would read the checkout it runs in needs its repo named: it
   }
   const status = await runCommand(byName('review status'), { repo: 'acme/app' }, c);
   assert.ok(!JSON.stringify(status).includes(process.cwd()), 'nothing of the folder the program runs in');
+});
+
+test('a run stopped before it starts sends nothing: a tunnel\'s line never reaches the session', async (t) => {
+  const c = await consoleFor(t);
+  // The console's address, counting what reaches it.
+  let reached = 0;
+  const server = http.createServer((req, res) => { reached += 1; res.writeHead(404).end(); });
+  server.on('upgrade', (req, socket) => { reached += 1; socket.destroy(); });
+  const port = await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+  t.after(() => server.close());
+  const abort = new AbortController();
+  abort.abort();
+  const out = await runCommand(byName('tunnel'), { id: 'aaaa0001', line: 'rm -rf ~/work' }, { origin: `http://localhost:${port}`, token: c.token, signal: abort.signal });
+  assert.deepEqual([out.stopped, out.code], [true, null]);
+  assert.equal(reached, 0);
+});
+
+test('session new takes a project\'s name for --repo, as the console does', () => {
+  assert.deepEqual(argvOf(byName('session new'), { repo: 'app2' }), ['session', 'new', '--repo=app2']);
+  assert.throws(() => argvOf(byName('session new'), { repo: '-x' }));
 });
