@@ -1911,6 +1911,10 @@ export function createFleet({
       }
       // A lockdown that won the race before the hand-off was taken: nothing read from it goes anywhere.
       if (isLocked(from)) throw shown('it has seen production data: nothing it holds goes to another session');
+      // A Stop pressed during the read is an ordinary stop, which removes the checkout even when its push is refused.
+      // Stopped or still stopping, the hand-off's own stop would find nothing left to push, and the new session would
+      // start from the branch's old remote commit: the case requireCheckpoint is there to prevent.
+      if (from.status !== 'running') throw shown('it was stopped meanwhile: nothing was handed off');
       // Stopped only once its work is pushed: a push refused (a branch moved on remotely) leaves it running, its work
       // in its checkout, and nothing handed off.
       try {
