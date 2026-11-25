@@ -55,8 +55,8 @@ import { validateChatRequest, buildChatPrompt } from './chat.mjs';
 import { aboutFinding, findAiPoint } from './aiReviews.mjs';
 import { checkNamesOf, prChecksOf } from './prChecks.mjs';
 import {
-  MAX_DEPTH as QA_MAX_DEPTH, juniorArgv, seniorArgv, buildTopQuestionsPrompt, buildFollowupsPrompt,
-  buildAnswersPrompt, extractStructured, topQuestions, followupQuestions, applyAnswers,
+  MAX_DEPTH as QA_MAX_DEPTH, seniorArgv, buildGeneratedQaPrompt,
+  buildAnswersPrompt, extractStructured, generatedItems, applyAnswers,
   snapshotTreeish, makeSnapshot, removeSnapshot, validateUserQuestion,
 } from './qa.mjs';
 import { enqueuePr, fetchMergeReadiness, mergeBlocker, mergePr } from './merge.mjs';
@@ -2349,8 +2349,7 @@ export function withoutLostAsks(qa, going) {
 
 /**
  * Answer one question the reader typed into the Q&A: under an answer (`parent`
- * its id), or at the top (`parent` null). The answerer that answers the
- * newcomer's questions answers it, on a fresh copy of the diff's tree, with the
+ * its id), or at the top (`parent` null). The model reads a fresh copy of the reviewed tree, with the
  * questions and answers above it in its prompt. The item is written at once,
  * marked `asking`, so the page shows it waiting where it was asked and a reload
  * keeps it; the answer lands on it when the run ends. A run that fails takes
@@ -2457,7 +2456,7 @@ async function answerUserQuestion({ ctx, session, review, item }) {
     // with the answers they got, the reader's own among them.
     const items = readQa(session)?.items || [item];
     const answered = await qaRun({
-      ctx, session, review, gen: null, live, kind: 'qa-ask',
+      ctx, session, live, files, kind: 'qa-ask',
       argv: seniorArgv({
         prompt: buildAnswersPrompt({
           meta: review.meta, files, diffOnly: ctx.reviewAgent?.agent === 'codex', overview: readArtifact(session)?.overview || '', items, open: [{ ...item, answer: null }],
@@ -2613,11 +2612,11 @@ export function failedQaRecord({ saved, review, err }) {
 const QA_START_RETRIES = 10;
 const QA_START_RETRY_MS = 15_000;
 
-/** One run of either voice: started (waiting out memory pressure), awaited, and read. */
-async function qaRun({ ctx, session, review, gen, argv, cwd = review.worktree, live = () => qaIsLive(session, gen), kind = 'qa' }) {
+/** One Q&A job: started (waiting out memory pressure), awaited, and read. */
+async function qaRun({ ctx, session, gen, argv, cwd, files, live = () => qaIsLive(session, gen), kind = 'qa' }) {
   for (let tries = 0; tries < QA_START_RETRIES; tries += 1) {
     if (!live()) return null;
-    const started = startReviewJob(ctx, { kind, session, argv, cwd });
+    const started = startReviewJob(ctx, { kind, session, argv, cwd, files });
     if (started.ok) {
       const job = await started.job.done;
       if (!live()) return null;
@@ -2630,10 +2629,8 @@ async function qaRun({ ctx, session, review, gen, argv, cwd = review.worktree, l
 }
 
 /**
- * The rounds: the newcomer asks, the answerer answers, the newcomer asks about
- * what it did not follow in those answers, down to QA_MAX_DEPTH levels. Written
- * to disk after every step, so the page shows the tree as it grows. A failure
- * after the first answers keeps what was answered and says it stopped early.
+ * Generate complete pairs in rounds, saving each level so the page can show the
+ * tree as it grows. A later failure preserves the pairs already written.
  */
 async function runQa({ ctx, session, review, gen }) {
   let snapshotDir = null;
@@ -2657,7 +2654,7 @@ async function runQaRounds({ ctx, session, review, gen, pin }) {
   // going gets the overview in its later rounds, once there is one.
   const overviewNow = () => readArtifact(session)?.overview || '';
   const qa = {
-    status: 'running', phase: 'asking', depth: 1, items: [], error: null, stoppedEarly: null,
+    status: 'running', phase: 'generating', depth: 1, items: [], error: null, stoppedEarly: null,
     startedAt: new Date().toISOString(), generatedAt: null, costUsd: 0, headSha: review.headSha || null,
     // Which diff it is about: the review's createdAt, which every re-review sets anew.
     forDiff: review.createdAt ?? null,
@@ -2694,58 +2691,37 @@ async function runQaRounds({ ctx, session, review, gen, pin }) {
   if (!snapshot.ok) return fail(snapshot.error);
   log('review.qa_pinned', { session, treeish: treeish.slice(0, 12) });
 
-  const asked = await qaRun({
-    ctx, session, review, gen,
-    argv: juniorArgv({ prompt: buildTopQuestionsPrompt({ meta: review.meta, files, overview: overviewNow() }), followups: false }),
-  });
-  if (!asked) return;
-  spent(asked);
-  if (!asked.ok) return fail(asked.error);
-  let open = topQuestions(asked.value);
-  if (!open.length) return fail('no questions were written about this change');
-  qa.items.push(...open);
-
+  let frontier = [];
   for (let depth = 1; depth <= QA_MAX_DEPTH; depth += 1) {
-    qa.phase = 'answering'; qa.depth = depth;
+    qa.depth = depth;
     save();
-    const answered = await qaRun({
-      ctx, session, review, gen,
-      argv: seniorArgv({ prompt: buildAnswersPrompt({ meta: review.meta, files, overview: overviewNow(), items: qa.items, open, diffOnly: ctx.reviewAgent?.agent === 'codex' }) }),
+    const generated = await qaRun({
+      ctx, session, gen, files,
+      argv: seniorArgv({
+        generated: true, followups: depth > 1,
+        prompt: buildGeneratedQaPrompt({
+          meta: review.meta, files, overview: overviewNow(), items: qa.items, frontier,
+          diffOnly: ctx.reviewAgent?.agent === 'codex',
+        }),
+      }),
       cwd: snapshot.dir,
     });
-    if (!answered) return;
-    spent(answered);
-    const landed = answered.ok ? applyAnswers(open, answered.value) : 0;
-    // A question with no answer goes: the tree only holds answered ones.
-    qa.items = qa.items.filter((i) => i.answer);
-    if (!landed) {
-      if (depth === 1) return fail(answered.ok ? 'the answers did not match the questions' : answered.error);
-      qa.stoppedEarly = answered.ok ? 'the follow-ups were not answered' : answered.error;
+    if (!generated) return;
+    spent(generated);
+    if (!generated.ok) {
+      if (depth === 1) return fail(generated.error);
+      qa.stoppedEarly = generated.error;
       break;
     }
-    log('review.qa_answered', { session, depth, asked: open.length, answered: landed, costUsd: answered.costUsd, ms: answered.ms });
-    if (depth === QA_MAX_DEPTH) break;
-
-    const frontier = open.filter((i) => i.answer);
-    qa.phase = 'asking'; qa.depth = depth + 1;
-    save();
-    const more = await qaRun({
-      ctx, session, review, gen,
-      argv: juniorArgv({
-        prompt: buildFollowupsPrompt({ meta: review.meta, files, overview: overviewNow(), items: qa.items, frontier }),
-        followups: true,
-      }),
+    frontier = generatedItems(generated.value, frontier);
+    if (!frontier.length) {
+      if (depth === 1) return fail('no complete questions and answers were written about this change');
+      break;
+    }
+    qa.items.push(...frontier);
+    log('review.qa_answered', {
+      session, depth, asked: frontier.length, answered: frontier.length, costUsd: generated.costUsd, ms: generated.ms,
     });
-    if (!more) return;
-    spent(more);
-    if (!more.ok) {
-      qa.stoppedEarly = more.error;
-      break;
-    }
-    open = followupQuestions(more.value, frontier);
-    log('review.qa_followups', { session, depth: depth + 1, asked: open.length });
-    if (!open.length) break;
-    qa.items.push(...open);
   }
 
   qa.status = 'ready'; qa.phase = null; qa.generatedAt = new Date().toISOString();

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 
 import { buildAnalysisPrompt } from './analyze.mjs';
 import {
-  JUNIOR_SYSTEM_PROMPT, juniorArgv, seniorArgv, buildTopQuestionsPrompt, buildFollowupsPrompt, buildAnswersPrompt,
-  topQuestions, followupQuestions, applyAnswers, pathTo, extractStructured,
+  seniorArgv, buildGeneratedQaPrompt, buildAnswersPrompt,
+  generatedItems, applyAnswers, pathTo, extractStructured,
 } from './qa.mjs';
 
 function flag(argv, name) {
@@ -12,16 +12,25 @@ function flag(argv, name) {
   return at === -1 ? undefined : argv[at + 1];
 }
 
-// The newcomer's questions are only a newcomer's while it cannot read the code: with tools it would read the
-// checkout first and ask what a model that has read it thinks a newcomer should. And the persona has to be the
-// whole system prompt, which is what was asked for, not a line appended to Claude Code's own.
-test('the newcomer runs with no tools and the persona as its whole system prompt', () => {
-  const argv = juniorArgv({ prompt: 'p', followups: false });
-  assert.equal(flag(argv, '--tools'), '');
-  assert.equal(flag(argv, '--system-prompt'), JUNIOR_SYSTEM_PROMPT);
-  assert.ok(!argv.includes('--append-system-prompt'));
-  // The containment every review run has: no MCP, no project settings, no transcript in the session's project.
-  for (const f of ['--strict-mcp-config', '--setting-sources', '--no-session-persistence']) assert.ok(argv.includes(f), f);
+test('generated questions and answers share the read tools and one output schema', () => {
+  for (const followups of [false, true]) {
+    const argv = seniorArgv({ prompt: 'p', generated: true, followups });
+    assert.equal(flag(argv, '--tools'), 'Read,Grep,Glob');
+    const pair = JSON.parse(flag(argv, '--json-schema')).properties.questions.items;
+    assert.deepEqual(pair.required, followups ? ['question', 'answer', 'about'] : ['question', 'answer']);
+    for (const flag of ['--strict-mcp-config', '--setting-sources', '--no-session-persistence']) assert.ok(argv.includes(flag));
+  }
+});
+
+test('generated Q&A gets the saved diff and uses the provider\'s code access', () => {
+  const files = [{ path: 'images.mjs', hunks: [{ header: '@@ -0,0 +1 @@', lines: [{ type: 'add', text: 'loadPreview();' }] }] }];
+  const context = { meta: {}, files, frontier: [] };
+  const claude = buildGeneratedQaPrompt(context);
+  const codex = buildGeneratedQaPrompt({ ...context, diffOnly: true });
+  assert.match(claude, /Read the relevant changed files/);
+  assert.match(claude, /"text":"loadPreview\(\);"/);
+  assert.match(codex, /Use the supplied diff as your code context/);
+  assert.doesNotMatch(codex, /working directory/);
 });
 
 test('the answerer reads the checkout and nothing else', () => {
@@ -31,26 +40,30 @@ test('the answerer reads the checkout and nothing else', () => {
   assert.ok(argv.includes('--no-session-persistence'));
 });
 
-test('a follow-up hangs only off an answer the newcomer was just given, at most two each', () => {
+test('a follow-up hangs only off an answer from the previous round, at most two each', () => {
   const frontier = [
     { id: 'q1', parent: null, depth: 1, question: 'a', answer: 'x' },
     { id: 'q2', parent: null, depth: 1, question: 'b', answer: 'y' },
   ];
-  const got = followupQuestions({
+  const got = generatedItems({
     questions: [
-      { about: 'q1', question: 'what is a proxy?' },
-      { about: 'q9', question: 'made-up parent' },
-      { about: 'q1', question: 'second' },
-      { about: 'q1', question: 'third, over the cap' },
-      { about: 'q2', question: '   ' },
-      { about: ' q2 ', question: 'what is egress?' },
+      { about: 'q1', answer: 'Answer.', question: 'what is a proxy?' },
+      { about: 'q9', answer: 'Answer.', question: 'made-up parent' },
+      { about: 'q1', answer: 'Answer.', question: 'second' },
+      { about: 'q1', answer: 'Answer.', question: 'third, over the cap' },
+      { about: 'q2', answer: 'Answer.', question: '   ' },
+      { about: 'q2', answer: '', question: 'incomplete' },
+      { about: ' q2 ', answer: 'Answer.', question: 'what is egress?' },
     ],
   }, frontier);
   assert.deepEqual(got.map((i) => [i.id, i.parent, i.depth]), [['q1.1', 'q1', 2], ['q1.2', 'q1', 2], ['q2.1', 'q2', 2]]);
 });
 
 test('answers land on their own questions only, once', () => {
-  const open = topQuestions({ questions: ['What is this?', '', 'Why?'] });
+  const open = [
+    { id: 'q1', question: 'What is this?', answer: null },
+    { id: 'q2', question: 'Why?', answer: null },
+  ];
   assert.deepEqual(open.map((i) => i.id), ['q1', 'q2']);
   const landed = applyAnswers(open, {
     answers: [{ id: 'q2', answer: 'Because.' }, { id: 'q7', answer: 'stray' }, { id: 'q2', answer: 'again' }],
@@ -72,8 +85,8 @@ test('a follow-up carries the questions and answers above it into both prompts',
   assert.match(answers, /earlier answer: It forwards MCP calls\./);
   assert.match(answers, /--- id: q1\.1\n\(earlier question: [^\n]*\n\(earlier answer: [^\n]*\nquestion: What is MCP\?/);
   items[1].answer = 'A protocol.';
-  const followups = buildFollowupsPrompt({ meta, files: [], overview: '', items, frontier: [items[1]] });
-  assert.match(followups, /\(earlier, you asked: What does the relay do\?\)\nyou asked: What is MCP\?\nanswer:\nA protocol\./);
+  const followups = buildGeneratedQaPrompt({ meta, files: [], overview: '', items, frontier: [items[1]] });
+  assert.match(followups, /question: What does the relay do\?\nanswer: It forwards MCP calls\.\nquestion: What is MCP\?\nanswer: A protocol\./);
 });
 
 // A worktree review has no pull request: its title ("Work in progress on <branch>") and body (a count of commits)
@@ -85,7 +98,7 @@ test('a worktree review\'s made-up title and body are not handed over as the aut
     body: 'This worktree is 2 commits and 1 uncommitted file ahead of main.',
   };
   const files = [{ path: 'a.mjs', additions: 1, deletions: 0, status: 'modified' }];
-  const top = buildTopQuestionsPrompt({ meta, files, overview: '' });
+  const top = buildGeneratedQaPrompt({ meta, files, overview: '', frontier: [] });
   const answers = buildAnswersPrompt({ meta, files, overview: '', items: [], open: [] });
   const analysis = buildAnalysisPrompt({ meta, files });
   for (const prompt of [top, answers, analysis]) {
@@ -99,9 +112,10 @@ test('a worktree review\'s made-up title and body are not handed over as the aut
   assert.match(buildAnalysisPrompt({ meta: { title: 'x', body: 'y' }, files }), /written by the PR author/);
 
   const pr = { state: 'OPEN', title: 'Add the relay', body: 'It forwards calls.', number: 7 };
-  const prTop = buildTopQuestionsPrompt({ meta: pr, files, overview: '' });
+  const prTop = buildGeneratedQaPrompt({ meta: pr, files, overview: '', frontier: [] });
   assert.match(prTop, /title: Add the relay\ndescription \(written by the author\):\nIt forwards calls\./);
-  assert.match(prTop, /Ask about the words in the title/);
+  assert.match(prTop, /Study the code context before writing both the questions and their answers/);
+  assert.match(prTop, /Read the relevant changed files/);
 });
 
 test('a run that failed or answered in no structure is a failure with its reason', () => {
