@@ -847,13 +847,13 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   function removeCard() {
     const live = me.running;
     return row({ id: 'my-remove', title: 'Remove My Woodshed', danger: true, pill: !me.setUp && !live ? h('span', { class: 'pill' }, 'Nothing to remove') : null, value: 'Stops your private sessions and deletes everything saved on this page' },
-      h('p', { class: 'sub' }, `Stops your ${live} private session${live === 1 ? '' : 's'} (each branch is pushed first), takes them off the list, and deletes your token, GitHub connection, databases, repo settings, tmux lines and Claude home. What is on GitHub stays, and so do shared sessions.`),
+      h('p', { class: 'sub' }, `Stops your ${live} running private session${live === 1 ? '' : 's'} (each branch is pushed first), takes every private session off the list, including stopped ones, and deletes your token, GitHub connection, databases, repo settings, tmux lines and Claude home. What is on GitHub stays, and so do shared sessions.`),
       h('div', { class: 'set-actions' }, h('button', {
         type: 'button', class: 'btn btn-danger',
         onclick: () => W.confirmChange({
           title: 'Remove My Woodshed?',
           before: `${live} running private session${live === 1 ? '' : 's'}${me.claudeToken.set ? ', a Claude token' : ''}`,
-          after: 'Nothing: the sessions stopped and gone from the list, the token and your files deleted',
+          after: 'Nothing: every private session off the list, including stopped ones, and the token and your files deleted',
           effect: 'This cannot be undone. Work in progress is pushed to each branch before its session stops.',
           word: me.login,
           goLabel: 'Remove My Woodshed',
