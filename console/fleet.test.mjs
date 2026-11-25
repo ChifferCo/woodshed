@@ -3466,6 +3466,31 @@ test('an ended QA run a later one replaced goes off the list, recordings or not,
   assert.equal(fleet.sessions().length, 0, 'with no recording, it goes too');
 });
 
+test('a QA run whose comment could not be edited posted its own: the old comment\'s recordings keep their run listed', async () => {
+  const { fleet, github } = qaSetup();
+  for (const sha of ['a', 'c']) {
+    const pull = { ...QA_PULL, head: { ...QA_PULL.head, sha: sha.repeat(40) } };
+    github.pull = async () => pull;
+    github.reviews = async () => reviewOn(pull.head.sha);
+    if (sha === 'a') await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+    else {
+      github.updateComment = async () => { throw new Error('HTTP 404: the comment was deleted'); };
+      await fleet.qaAfterReview({ number: 7 });
+    }
+    const run = fleet.sessions().at(-1);
+    run.qa.videos = [{ n: 1, bytes: 10 }];
+    await fleet.qaFinished(run, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: sha.repeat(40), costUsd: 1 });
+  }
+  const [a, c] = fleet.sessions();
+  assert.notEqual(a.qa.commentId, c.qa.commentId, 'c posted a comment of its own');
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['a', 'c'], 'a\'s comment still links its recording');
+  github.pull = async () => ({ ...QA_PULL, state: 'closed' });
+  fleet.pullsChanged([7]);
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['a', 'c'], 'and after the pull request closed, while they are kept');
+});
+
 const HELD_GATES = { ...REVIEW_GATES, qa: QA_GATES.qa };
 const HELD_PULL = { ...REVIEW_PULL, labels: [{ name: 'qa' }] };
 function heldSetup(options = {}) {
