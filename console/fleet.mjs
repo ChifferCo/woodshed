@@ -1920,6 +1920,37 @@ export function createFleet({
    * @param {object} session
    * @param {string} title
    */
+  /**
+   * Puts one of a person's private sessions under another of theirs on the rail, as a piece of its work, or with `under`
+   * null takes it out of its group (railGroups in public/common.js, which nests by `startedFrom`). The session that
+   * now has it lists it with woodshed-session list (sessionStarts.mjs), and its questions go there. Never under itself,
+   * one in its own group, a session not running, or someone else's.
+   * @param {object} session
+   * @param {object|null} under
+   */
+  function regroup(session, under) {
+    if (!session.owner) throw shown('only a My Woodshed session is in a group');
+    if (!under) {
+      if (!session.startedFrom || session.startedApart) return session;
+      console.log('fleet: session taken out of its group', { id: session.id, from: session.startedFrom });
+      update(session, { startedApart: true });
+      return session;
+    }
+    if (under.id === session.id) throw shown('a session cannot be put under itself');
+    if (under.owner !== session.owner) throw shown('only under another of your own sessions');
+    if (!ACTIVE_STATUSES.has(under.status)) throw shown(`"${under.title}" is not running: a group is shown only under a running session`);
+    // Not under a session in its own group, which would make a loop.
+    for (let p = under, seen = 0; p?.startedFrom && !p.startedApart && seen < 50; seen++) {
+      if (p.startedFrom === session.id) throw shown(`"${under.title}" is in this session's own group`);
+      p = find(p.startedFrom);
+    }
+    if (session.startedFrom === under.id && !session.startedApart) return session;
+    console.log('fleet: session put under another', { id: session.id, under: under.id, from: session.startedFrom ?? null });
+    delete session.startedApart;
+    update(session, { startedFrom: under.id });
+    return session;
+  }
+
   function rename(session, title) {
     const next = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, TITLE_CHARS);
     if (!next) throw shown('a name cannot be empty');
@@ -3251,7 +3282,7 @@ export function createFleet({
 
   return {
     noteMessage, noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
-    createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

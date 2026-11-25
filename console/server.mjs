@@ -79,6 +79,8 @@
 //   POST /api/sessions/<id>/stop
 //   POST /api/sessions/<id>/pin     {"on": true}   pinned to the top of your rail; yours alone
 //   POST /api/sessions/<id>/rename  {"title": "..."}   the name every page shows
+//   POST /api/sessions/<id>/group   {"under": "<id>"|null}   its owner's: put it under another of theirs on the rail,
+//                                   or take it out of its group (fleet.regroup)
 //   POST /api/sessions/<id>/extend  its pause or stop, whichever comes first, an hour later. These two are a private
 //                                session's owner's and a shared one's assignee's alone: 403 for anyone else
 //   POST /api/sessions/<id>/limits  {"idleHours": 2, "lifetimeHours": 12}   this session's own pause and stop; a key
@@ -414,7 +416,7 @@ const DATABASES_NOT_READY = 'your own databases are not ready yet: My settings s
 const STOP_RE = /^\/api\/sessions\/([0-9a-f]{8})\/stop$/;
 const ASSIGN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/assign$/;
 const SHARED_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(resume|delete|remove)$/;
-const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename)$/;
+const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename|group)$/;
 const LIMIT_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(extend|limits)$/;
 const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|interrupt|answer|prompt|applog|diff|transcript)$/;
 // The agents started beside a private session's own (session/agents.mjs): the list, a start, and each one's Chat routes.
@@ -2444,6 +2446,15 @@ export function createHandler({
     }
     try {
       if (action === 'rename') return reply(res, 200, publicSession(fleet.rename(session, body?.title)));
+      // The rail's group it is in, its owner's alone: under another of their sessions, or with `under` null out of it.
+      if (action === 'group') {
+        if (!session.owner || session.owner.toLowerCase() !== login.toLowerCase()) return reply(res, 403, { error: 'only its owner moves a session between groups' });
+        const underId = body?.under ?? null;
+        if (underId !== null && (typeof underId !== 'string' || !/^[0-9a-f]{8}$/.test(underId))) return reply(res, 400, { error: 'under must be a session id, or null' });
+        const under = underId === null ? null : findFor(underId, login);
+        if (underId !== null && !under) return reply(res, 404, { error: 'no such session' });
+        return reply(res, 200, publicSession(fleet.regroup(session, under)));
+      }
       if (!viewPrefs) return reply(res, 404, { error: 'this console keeps no rail preferences' });
       if (typeof body?.on !== 'boolean') return reply(res, 400, { error: 'on must be true or false' });
       return reply(res, 200, viewPrefs.setPinned(login, id, body.on));

@@ -1224,6 +1224,32 @@ test('a session started or resumed for a parent in its person\'s Herdr is told t
   assert.equal(envOf(child).WOODSHED_HERDR_PARENT, '1', 'woodshed session herdr --parent resumes it waiting');
 });
 
+test('a person moves their own session into another\'s group, or out of the one it is in, never into a loop', async () => {
+  const { fleet } = setup();
+  const main = await fleet.startPrivate({ owner: 'joel', prompt: 'Plan the billing page' });
+  const piece = await fleet.startPrivate({ owner: 'joel', prompt: 'Add CSV export', startedFrom: main.id });
+  const alone = await fleet.startPrivate({ owner: 'joel', prompt: 'Audit refunds' });
+  const theirs = await fleet.startPrivate({ owner: 'ana', prompt: 'Their work' });
+
+  fleet.regroup(piece, null);
+  assert.deepEqual([piece.startedFrom, piece.startedApart], [main.id, true], 'out of the group, still saying where it came from');
+  fleet.regroup(piece, main);
+  assert.deepEqual([piece.startedFrom, piece.startedApart], [main.id, undefined], 'back in it');
+  fleet.regroup(alone, main);
+  assert.equal(alone.startedFrom, main.id, 'one started on its own, put under the main chat');
+  fleet.regroup(alone, null);
+  fleet.regroup(alone, null);
+  assert.equal(alone.startedApart, true, 'taking it out twice does nothing more');
+
+  assert.throws(() => fleet.regroup(main, piece), /in this session's own group/);
+  assert.throws(() => fleet.regroup(main, main), /under itself/);
+  assert.throws(() => fleet.regroup(alone, theirs), /your own sessions/);
+  const shared = await fleet.createSession({ kind: 'task', number: null, title: 's', startedBy: 'joel', trigger: 'console', prompt: 'p' });
+  assert.throws(() => fleet.regroup(shared, main), /only a My Woodshed session/);
+  await fleet.stop(main, 'stopped from the console', { by: 'joel' });
+  assert.throws(() => fleet.regroup(alone, main), /is not running/);
+});
+
 test('each run of a person\'s own session gets a start token, kept only as its hash, and none once it stops', async () => {
   const { fleet, calls, statuses, store } = setup();
   const envOf = (session) => calls.started.filter((c) => c.env.SESSION_ID === session.id).at(-1).env;

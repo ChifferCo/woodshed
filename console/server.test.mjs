@@ -852,7 +852,7 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
     { path: '/auth/app?id=ID&next=/' },
     { method: 'POST', path: '/api/sessions/ID/stop' }, { method: 'POST', path: '/api/sessions/ID/app/start' }, { method: 'POST', path: '/api/sessions/ID/app/stop' },
     { method: 'POST', path: '/api/sessions/ID/resume' }, { method: 'POST', path: '/api/sessions/ID/delete' },
-    { method: 'POST', path: '/api/sessions/ID/pin' }, { method: 'POST', path: '/api/sessions/ID/rename' },
+    { method: 'POST', path: '/api/sessions/ID/pin' }, { method: 'POST', path: '/api/sessions/ID/rename' }, { method: 'POST', path: '/api/sessions/ID/group' },
     { method: 'POST', path: '/api/sessions/ID/extend' }, { method: 'POST', path: '/api/sessions/ID/limits' },
     { method: 'POST', path: '/api/sessions/ID/upload?name=a.png' }, { path: '/api/sessions/ID/image?path=shot.png' }, { method: 'POST', path: '/api/sessions/ID/scroll' },
     { method: 'POST', path: '/api/sessions/ID/send' }, { method: 'POST', path: '/api/sessions/ID/interrupt' }, { method: 'POST', path: '/api/sessions/ID/answer' }, { path: '/api/sessions/ID/prompt' },
@@ -944,6 +944,8 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.equal(session.title, 'New name');
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/rename', { title: '  ' }, as('mia-dev'))).status, 400);
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/rename', { title: 'x' })).status, 401, 'signed out');
+  // Its group on the rail is a private session's owner's alone: a shared session is in none.
+  assert.equal((await post(port, '/api/sessions/0a1b2c3d/group', { under: null }, as('mia-dev'))).status, 403);
 
   // Extend and a session's own limits are the session's too, for whoever can open it; the fleet's refusals are 400s.
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/extend', {}, as('mia-dev'))).status, 200);
