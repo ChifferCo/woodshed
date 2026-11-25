@@ -193,7 +193,7 @@
   function sheet(title, body) {
     const dialog = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': title, tabindex: '-1' },
       h('div', { class: 'sheet-head' }, h('h3', null, title), h('span', { class: 'esc' }, 'esc to close')),
-      h('div', { class: 'sheet-body' }, body));
+      h('div', { class: 'sheet-body', tabindex: '-1' }, body));
     const el = overlay(dialog, () => closeSheet(record));
     const record = { el, dialog, onOpen: null };
     return record;
@@ -204,7 +204,8 @@
     notifications().close();
     s.onOpen?.();
     s.el.hidden = false;
-    takeFocus(s.dialog);
+    // The body takes the focus, so Page Down and the arrows scroll a list taller than the window.
+    takeFocus(s.dialog.querySelector('.sheet-body') ?? s.dialog);
   }
 
   function closeSheet(s) {
@@ -292,6 +293,8 @@
     needsYou: () => page.nextNeedsYou(),
   };
   // The keys of the mode (keys.cjs, AFTER_PREFIX and the tab keys), and its Esc.
+  // The tab key that ended the mode, while it is still held down (onTapKeyUp lets it go).
+  let heldCode = null;
   const MOVING_IDS = new Set(['nextSession', 'prevSession', 'needsYou', 'tab', 'cancel']);
   const MODIFIERS = new Set(['Shift', 'Meta', 'Control', 'Alt', 'AltGraph', 'CapsLock']);
   // ---- the double tap: ⌘ (Ctrl off a Mac) pressed and let go twice, alone (keys.cjs, doubleTap) ----
@@ -302,6 +305,7 @@
     taps.down(e, Date.now());
   }
   function onTapKeyUp(e) {
+    if (heldCode && e.code === heldCode) heldCode = null;
     if (!taps.up(e, Date.now())) return;
     // Only where the page moves through sessions (session.js): elsewhere a double tap is nothing.
     if (!page.moveSession) return;
@@ -337,8 +341,9 @@
       closeAll();
       return;
     }
-    // A key held down in the mode moves once, and its repeats go nowhere: not into a field that has the focus still.
-    if (e.repeat && moving) {
+    // A key held down in the mode moves once, and its repeats go nowhere: not into a field that has the focus still,
+    // nor into the one a tab key just focused (the mode has ended by then: heldCode keeps them out until it is let go).
+    if (e.repeat && (moving || (heldCode && e.code === heldCode))) {
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -388,6 +393,7 @@
     }
     // A tab ends the mode: the tab takes the keys from there, to be typed in.
     if (id === 'tab') {
+      heldCode = e.code || null;
       stopMoving();
       page.showTab(K.tabOf(e));
     } else (ACTS[id] ?? go(K.byId[id].href))();
