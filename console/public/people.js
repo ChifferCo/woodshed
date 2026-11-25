@@ -43,7 +43,7 @@ window.Woodshed.settingsPage('/people', (app, life) => {
   }
 
   function who(login, line) {
-    const named = nameOf({ login }) === login ? null : nameOf({ login });
+    const named = ownName(login);
     return h('div', { class: 'who' },
       h('b', null, named || `@${login}`),
       h('div', { class: 'meta' }, [named && `@${login}`, line].filter(Boolean).join(' · ')));
@@ -297,10 +297,11 @@ window.Woodshed.settingsPage('/people', (app, life) => {
   }
 
   // The name the reply gives, read as its own string entry: a handle such as `constructor` falls back to itself.
-  const nameOf = (m) => {
-    const named = data.names && Object.hasOwn(data.names, m.login) ? data.names[m.login] : null;
-    return typeof named === 'string' && named ? named : m.login;
+  const ownName = (login) => {
+    const named = data.names && Object.hasOwn(data.names, login) ? data.names[login] : null;
+    return typeof named === 'string' && named ? named : null;
   };
+  const nameOf = (m) => ownName(m.login) ?? m.login;
 
   // Members by role, in the order the roles are offered (Owner first), each role's people by name: a body of its own
   // per role, headed by a row naming it.

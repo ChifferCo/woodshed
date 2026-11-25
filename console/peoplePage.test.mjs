@@ -280,3 +280,10 @@ test('with no personal tokens in the reply (no My settings), there is no column 
   const thead = walk(app).find((e) => e.tag === 'thead' && textOf(e).includes('Member'));
   assert.ok(!textOf(thead).includes('Personal tokens'));
 });
+
+test('a saved name equal to the handle still shows as the name, with the handle under it', async () => {
+  const { rowOf } = await loadPage({ members: [person('ana-owner', 'owner'), person('lee', 'member')], names: { lee: 'lee' }, addReply: () => null });
+  const cell = rowOf('lee').children[0];
+  assert.equal(textOf(walk(cell).find((e) => e.tag === 'b')), 'lee');
+  assert.equal(textOf(walk(cell).find((e) => e.className === 'meta')), '@lee');
+});
