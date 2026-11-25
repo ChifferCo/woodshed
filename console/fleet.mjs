@@ -1430,7 +1430,7 @@ export function createFleet({
 
   // A review's or QA run's record is what the next run on its pull request reads: whether a commit was reviewed or
   // tested, the comment it writes over, the approval held for QA, the review's last posted verdict (approvalDismissed)
-  // and a QA run's recordings. Each read takes the latest record that has it, and none is read once the pull request
+  // and the last QA run's recordings, which its comment links. Each read takes the latest record that has it, and none is read once the pull request
   // merged or closed. Every run of every commit stayed listed until the delete timer (dropIfDue), weeks later, which
   // piled up hundreds of cards: the ones nothing reads go off the list as soon as they have ended.
   async function pruneEndedRuns() {
@@ -1450,18 +1450,20 @@ export function createFleet({
       const watched = (s) => isQa(s) && s.qa.videos?.length && now() < Date.parse(s.stoppedAt ?? s.createdAt) + QA_RECORDING_DAYS * 86_400_000;
       const ended = runs.filter(settled);
       if (!ended.length) continue;
+      const latest = (kind, has = () => true) => runs.filter((s) => (kind === 'qa' ? isQa(s) : isReview(s)) && has(s)).at(-1);
+      // Each run writes over the one QA comment, so only the last run's recordings are linked from it.
+      const linked = latest('qa', settled);
       if (ended.length === runs.length && await pullClosed(key, runs[0])) {
-        for (const s of ended) if (!watched(s)) dropRecord(s, 'its pull request merged or closed');
+        for (const s of ended) if (!(s === linked && watched(s))) dropRecord(s, 'its pull request merged or closed');
         continue;
       }
-      const latest = (kind, has = () => true) => runs.filter((s) => (kind === 'qa' ? isQa(s) : isReview(s)) && has(s)).at(-1);
       // The last settled run of each kind too, while a later one still runs: its result is the pull request's until then.
       const read = new Set([
-        latest('qa'), latest('qa', settled), latest('qa', (s) => s.qa.commentId),
+        latest('qa'), linked, latest('qa', (s) => s.qa.commentId),
         latest('review', settled),
         latest('review'), latest('review', (s) => s.review.commentId),
         latest('review', (s) => s.review.conclusion && s.review.posted),
-        ...runs.filter((s) => (isReview(s) && s.review.held) || watched(s)),
+        ...runs.filter((s) => isReview(s) && s.review.held),
       ]);
       for (const s of ended) if (!read.has(s)) dropRecord(s, 'a later run on its pull request replaced it');
     }

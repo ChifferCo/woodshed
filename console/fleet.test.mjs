@@ -3442,25 +3442,28 @@ test('an ended QA run stays while the run that replaces it is still going: its r
   assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['c'], 'once c ended, a goes');
 });
 
-test('an ended QA run a later one replaced goes off the list, but not while its recordings are watched', async () => {
+test('an ended QA run a later one replaced goes off the list, recordings or not, and the last one\'s recordings outlast its pull request', async () => {
   const { fleet, github } = qaSetup();
-  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
-  const first = fleet.sessions()[0];
-  first.qa.videos = [{ n: 1, bytes: 10 }];
-  await fleet.qaFinished(first, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
-  for (const sha of ['c', 'd']) {
-    const newer = { ...QA_PULL, head: { ...QA_PULL.head, sha: sha.repeat(40) } };
-    github.pull = async () => newer;
-    github.reviews = async () => reviewOn(newer.head.sha);
-    await fleet.qaAfterReview({ number: 7 });
-    await fleet.qaFinished(fleet.sessions().at(-1), { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: sha.repeat(40), costUsd: 1 });
+  for (const sha of ['a', 'c', 'd']) {
+    const pull = { ...QA_PULL, head: { ...QA_PULL.head, sha: sha.repeat(40) } };
+    github.pull = async () => pull;
+    github.reviews = async () => reviewOn(pull.head.sha);
+    if (sha === 'a') await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+    else await fleet.qaAfterReview({ number: 7 });
+    const run = fleet.sessions().at(-1);
+    if (sha !== 'c') run.qa.videos = [{ n: 1, bytes: 10 }];
+    await fleet.qaFinished(run, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: sha.repeat(40), costUsd: 1 });
   }
   await fleet.tick();
-  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['a', 'd'], 'c is gone; a keeps its recording, d is the latest');
+  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['d'], 'a\'s recording is no longer linked: the comment is d\'s now');
   github.pull = async () => ({ ...QA_PULL, state: 'closed' });
   fleet.pullsChanged([7]);
   await fleet.tick();
-  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['a'], 'once closed, only the run with a recording stays, for its days');
+  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['d'], 'once closed, the run whose recording the comment links stays, for its days');
+  fleet.sessions()[0].qa.videos = [];
+  fleet.pullsChanged([7]);
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 0, 'with no recording, it goes too');
 });
 
 const HELD_GATES = { ...REVIEW_GATES, qa: QA_GATES.qa };
