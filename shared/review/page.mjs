@@ -680,7 +680,7 @@ ${DARK_PALETTE}
        happens where the title is rather than in a box somewhere else. */
     .retitle-form { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; }
     .retitle-form input {
-      flex: 1; min-width: 0; font-family: "Red Hat Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-weight: 700;
+      flex: 1; min-width: 0; font-family: "Red Hat Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
       font-size: 1.5rem; line-height: 1.25; font-weight: 700;
       padding: 0.15rem 0.5rem; color: var(--ink); background: var(--panel);
       border: 1px solid var(--rule-strong); border-radius: 5px;
