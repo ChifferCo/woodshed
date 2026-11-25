@@ -163,6 +163,28 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     return store.state.people;
   }
 
+  // Once, the first start after the default grew to every reviewer. A person who already had a Grok Build or OpenCode
+  // sign-in keeps the previous default (Claude Code and Codex) until they set reviews back to the default. That switch
+  // was already on, and it used to mean "when you pick this agent", so joining the default by itself would send their
+  // pull requests to that provider with no new choice. Someone who saves a sign-in after this has no mark, and the
+  // wider default includes it.
+  function keepPreviousReviewDefault() {
+    if (store.state.reviewDefaultKept) return;
+    let kept = 0;
+    for (const record of Object.values(store.state.people ?? {})) {
+      if (!record || typeof record !== 'object' || record.reviewDefault) continue;
+      const saved = record.agentAuthAt;
+      const had = saved && agents.OWN_SIGN_IN_AGENTS.some((id) => agents.agent(id).reviews && saved[id]);
+      if (!had) continue;
+      record.reviewDefault = 'legacy';
+      kept += 1;
+    }
+    store.state.reviewDefaultKept = true;
+    store.save();
+    console.log('userSettings: previous review default kept', { people: kept });
+  }
+  keepPreviousReviewDefault();
+
   function recordFor(login) {
     return people()[loginKey(login)] ?? null;
   }
@@ -250,6 +272,8 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
       ownAgentForReviews: Object.fromEntries(agents.OWN_SIGN_IN_AGENTS.filter((id) => agents.agent(id).reviews)
         .map((id) => [id, usesOwnAgentForReviews(login, id)])),
       reviewAgents: reviewChoice(record?.reviewAgents),
+      // False while a Grok Build or OpenCode sign-in saved before the wider default is still kept out of it.
+      expandedReviewDefault: usesExpandedReviewDefault(login),
       terminal: terminal(login),
       limits: { ...record?.limits },
       github: { connected: Boolean(github?.connectedAt), connectedAt: github?.connectedAt ?? null, name: github?.name ?? null, email: github?.email ?? null },
@@ -498,8 +522,9 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   /**
    * The switch on the Grok Build and OpenCode cards: whether reviews of this person's pull requests may run that agent on
    * their own sign-in. On once a sign-in is saved, unless they turned it off, as Codex's is. With no reviewer choice
-   * saved, the default includes it (reviewAgents.mjs); a saved choice that leaves it out does not, unless none of that
-   * choice can run, in which case the default runs. The sign-in never
+   * saved, the default includes it (reviewAgents.mjs), except a sign-in already saved when that default shipped
+   * (usesExpandedReviewDefault). A saved choice that leaves it out does not, unless none of that choice can run, in
+   * which case the same default runs. The sign-in never
    * goes into the review session: the console's proxy adds it to the agent's calls (reviewAgentProxy.mjs).
    * @throws {Error}  shown on the page, when it is turned on with no sign-in saved
    */
@@ -527,13 +552,28 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     if (choice !== null && !saved) {
       throw Object.assign(new Error(`reviews must be one of ${Object.keys(agents.REVIEW_PRESETS).join(', ')}, or reviewers joined with + (${agents.REVIEW_AGENT_IDS.join(', ')}), such as claude+grok`), { shown: true, status: 400 });
     }
-    touch(login, { reviewAgents: saved });
-    console.log('userSettings: reviews of my pull requests', { login, choice: saved ?? 'every reviewer that can run' });
+    // Null is the default, and setting it is how someone kept on the previous one accepts the wider default. A saved
+    // choice does not: picking Claude Code and Codex, or Grok Build alone, leaves the previous default for the day
+    // that choice can no longer run.
+    const accepted = saved === null && recordFor(login)?.reviewDefault === 'legacy';
+    touch(login, { reviewAgents: saved, ...(saved === null ? { reviewDefault: 'all' } : {}) });
+    console.log('userSettings: reviews of my pull requests', { login, choice: saved ?? 'every reviewer that can run', ...(accepted ? { accepted: true } : {}) });
   }
 
   /** @returns {string|null}  the person's saved choice, or null for the default */
   function reviewAgents(login) {
     return reviewChoice(recordFor(login)?.reviewAgents);
+  }
+
+  /**
+   * Whether a review with no choice saved runs every reviewer that can, Grok Build and OpenCode included. False only
+   * for a sign-in of one of those already saved when that default shipped, until they set reviews back to the default.
+   * @param {string|null} login
+   * @returns {boolean}
+   */
+  function usesExpandedReviewDefault(login) {
+    if (!login) return true;
+    return recordFor(login)?.reviewDefault !== 'legacy';
   }
 
   /**
@@ -590,7 +630,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, agentAuthTurn, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setOwnAgentForReviews, usesOwnAgentForReviews, setReviewAgents, reviewAgents, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, agentAuthTurn, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setOwnAgentForReviews, usesOwnAgentForReviews, setReviewAgents, reviewAgents, usesExpandedReviewDefault, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }

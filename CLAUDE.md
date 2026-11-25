@@ -964,7 +964,9 @@ URL on top of each env file's Repo settings values
   left out: …` names what was missing (the switch for reviews off on that card, no sign-in saved, a Grok login whose
   `expires_at` passed, OpenCode sign-ins with no Anthropic or OpenAI API key: a login is never used). That line is for a
   saved choice that named the agent. With no choice saved, a sign-in that cannot run is simply not in the default: the
-  Reviews card says why, and there is no such line. There is no team key
+  Reviews card says why, and there is no such line. A Grok Build or OpenCode sign-in already saved when the default grew
+  to every reviewer stays out of it until that person sets reviews back to the default (`userSettings: previous review
+  default kept` at the console's first start after, then `reviews of my pull requests` with `accepted: true`). There is no team key
   to fall back on. One that started logs `reviewAgentProxy: first call on the author's <Product> sign-in` with `via` at its
   first model call, or `reviewAgentProxy: refused` with why (the session's pane says it too, `Grok Build: @<login>…`), and
   `upstream not reached` when xAI, Anthropic or OpenAI did not answer. `reviewAgentProxy: refused, a body a review's

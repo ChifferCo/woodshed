@@ -66,7 +66,8 @@ approve the CLI sign-in and install any GitHub Apps in their browser.
   made or installed (an admin's step), and otherwise says the tag (`tag` in `--json`, `[woodshed-review]` unless the
   repo's project file names another): tell the person that putting it in a commit's message on a pull request gets it
   reviewed, and that sessions add it for them. `--reviews` is their own reviewer choice; `default` runs every reviewer
-  the console can, Grok Build and OpenCode included once their sign-ins are on for reviews.
+  the console can, Grok Build and OpenCode included once their sign-ins are on for reviews. A sign-in saved before that
+  default stays out of it until they set reviews to `default`.
 - **Reviews of their open pull requests (`pr-reviews`), the main step.** Setup lists their open pull requests on the
   repo and starts the console's review on them, then gives each review's link (`reviews` in the entry). With `--json`
   and no `--yes`, it exits 2 listing them: ask the person which, then rerun with `--review-prs all`, `none`, or numbers

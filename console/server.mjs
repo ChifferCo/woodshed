@@ -25,10 +25,12 @@
 //   POST /api/my/agent-auth/<agent>  {"value": ...}   my own Grok Build or OpenCode sign-in (shared/agents.cjs)
 //   POST /api/my/agent-auth/<agent>/remove
 //   POST /api/my/agent-auth/<agent>/reviews  {"on": true|false}   reviews of my pull requests may run Grok Build or
-//                                     OpenCode on this sign-in (reviewAgents.mjs): the default includes it while on
+//                                     OpenCode on this sign-in (reviewAgents.mjs): the default includes it while on,
+//                                     except a sign-in already saved when that default shipped
 //   GET  /api/my/reviews              who reviews my pull requests, and the choices this console can run for me
 //   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|"claude+grok"|…|null}   null is every
-//                                     reviewer that can run; any reviewers joined with + (shared/agents.cjs, reviewersOf)
+//                                     reviewer that can run, and accepts that default for someone still on the
+//                                     previous one; any reviewers joined with + (shared/agents.cjs, reviewersOf)
 //   POST /api/my/terminal             {"terminal": "tmux"|"herdr"}   what my private sessions run their agent in
 //   POST /api/my/claude-token/remove
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
@@ -2519,8 +2521,8 @@ export function createHandler({
   /** My settings' Reviews card: who reviews my pull requests, and what this console can run for me (reviewAgents.mjs). */
   async function myReviewsView(login) {
     if (!reviewAgents) return { available: Object.fromEntries(agentsRegistry.REVIEW_AGENT_IDS.map((id) => [id, false])), best: 'none', choice: null };
-    const { available, own, ownWhy, best } = await reviewAgents.options(login);
-    return { available, own, ownWhy, best, choice: userSettings?.reviewAgents(login) ?? null };
+    const { available, own, ownWhy, best, expanded } = await reviewAgents.options(login);
+    return { available, own, ownWhy, best, expanded, choice: userSettings?.reviewAgents(login) ?? null };
   }
 
   // `woodshed review start`: the console's review of one of the person's own open pull requests, now (fleet.mjs,

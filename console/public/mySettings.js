@@ -152,23 +152,28 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   }
 
   // Whether reviews of your pull requests may run this agent on your sign-in. On once a sign-in is saved, unless turned
-  // off; the default then includes it (console/reviewAgents.mjs). A saved choice that leaves it out does not, unless
-  // none of that choice can run, in which case the default runs. The console adds the sign-in to the agent's calls
-  // (console/reviewAgentProxy.mjs), never into the review session.
+  // off; the default then includes it (console/reviewAgents.mjs). A sign-in already saved when that default shipped
+  // stays out until Reviews of my pull requests is set back to the default. A saved choice that leaves it out does
+  // not, unless none of that choice can run, in which case the same default runs. The console adds the sign-in to the
+  // agent's calls (console/reviewAgentProxy.mjs), never into the review session.
   function agentReviewsSwitch(id) {
     const a = A.agent(id);
     if (!a.reviews) return null;
     const saved = Boolean(me.agentAuth?.[id]?.set);
     const on = Boolean(saved && me.ownAgentForReviews?.[id]);
+    const widened = me.expandedReviewDefault !== false;
     const what = id === 'opencode' ? 'your Anthropic or OpenAI API key, of those saved here' : 'your sign-in';
+    const onNote = widened
+      ? `On: ${a.name} reviews the pull requests you open on ${what}, with the other reviewers that can, unless your own choice under Reviews of my pull requests leaves it out. If none of that choice can run, the default runs, and ${a.name} is included.`
+      : `On: ${a.name} reviews a pull request you open when your reviewer choice names it. It is not in the default yet: include every reviewer under Reviews of my pull requests. Until then, a choice that can no longer run falls back to Claude Code and Codex.`;
     return h('div', { class: `toggle-row${on ? '' : ' is-off'}` },
       h('button', {
         type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': `${id}-reviews-label`, disabled: !saved || !me.available || busy.has(id),
-        onclick: () => agentChange(id, `/api/my/agent-auth/${id}/reviews`, { on: !on }, on ? `Off: ${a.name} does not review your pull requests.` : `On: ${a.name} reviews your pull requests, unless your own reviewer choice leaves it out. If none of that choice can run, the default includes it.`),
+        onclick: () => agentChange(id, `/api/my/agent-auth/${id}/reviews`, { on: !on }, on ? `Off: ${a.name} does not review your pull requests.` : widened ? `On: ${a.name} reviews your pull requests, unless your own reviewer choice leaves it out. If none of that choice can run, the default includes it.` : `On: ${a.name} reviews your pull requests when your choice names it. Include every reviewer to put it in the default.`),
       }),
       h('span', { class: 'toggle-label', id: `${id}-reviews-label` }, 'Also use it for reviews of my pull requests'),
       h('p', { class: 'sub' }, on
-        ? `On: ${a.name} reviews the pull requests you open on ${what}, with the other reviewers that can, unless your own choice under Reviews of my pull requests leaves it out. If none of that choice can run, the default runs, and ${a.name} is included. The console adds it to ${a.name}\u2019s calls; it never goes into the review session.${a.signIn.rotates && id === 'grok' ? ' A login that has expired is not used: a Grok session of yours refreshes it.' : ''}`
+        ? `${onNote} The console adds it to ${a.name}\u2019s calls; it never goes into the review session.${a.signIn.rotates && id === 'grok' ? ' A login that has expired is not used: a Grok session of yours refreshes it.' : ''}`
         : `Off: ${a.name} never reviews your pull requests. There is no team key for it.`),
       !saved && h('p', { class: 'why-off' }, 'Save a sign-in above to turn this on.'));
   }
@@ -770,7 +775,9 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   // Who reviews the pull requests you open (console/reviewAgents.mjs), as a grid: each agent that reviews on its own row
   // (shared/agents.cjs), Off and On across the top (designSystem/components/OnOffGrid). Several on is all of them, all
   // off is no code review. On is offered only while the team's key or your own sign-in can run it: Grok Build and
-  // OpenCode have no team key. With nothing saved, every reviewer that can run does. A pick saves at once.
+  // OpenCode have no team key. With nothing saved, every reviewer that can run does, except a Grok Build or OpenCode
+  // sign-in already saved when that default shipped: those stay Claude Code and Codex until Include every reviewer.
+  // A pick saves at once.
   let reviews = null;
   const reviewStatus = h('p', { class: 'form-note', role: 'status' });
   let reviewsLoaded = false;
@@ -782,7 +789,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
 
   function reviewsCard() {
     if (!reviews) return null;
-    const { available, best, choice, ownWhy = {} } = reviews;
+    const { available, best, choice, ownWhy = {}, expanded = true } = reviews;
+    const widened = expanded !== false;
     const on = new Set(A.reviewersOf(choice ?? best) ?? []);
     const needs = {
       claude: 'Needs a Claude token (Sign-ins), or the team\u2019s Anthropic key.',
@@ -805,17 +813,25 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     // A saved choice that cannot run at all falls back to the default, which can include an agent the choice left out.
     const noneLeft = Boolean(choice) && chosen.length > 0 && chosen.every((id) => !available[id]);
     const cantRun = Boolean(choice) && chosen.some((id) => !available[id]);
-    // The fallback is no review when this console can run nobody. Saying "the default reviews" would be false.
-    const nothingElse = noneLeft && best === 'none';
+    // Who the fallback actually runs now. For someone still on the previous default that is Claude Code and Codex
+    // only, so `best` of none can mean those two cannot run while Grok Build or OpenCode still can.
+    const fallbackIds = A.reviewersOf(best) ?? [];
+    const fallbackNames = A.REVIEW_AGENT_IDS.filter((id) => fallbackIds.includes(id)).map((id) => A.agent(id).product);
+    const fallbackListed = fallbackNames.length > 1 ? `${fallbackNames.slice(0, -1).join(', ')} and ${fallbackNames.at(-1)}` : fallbackNames[0];
+    const keptOutCan = !widened && A.REVIEW_AGENT_IDS.some((id) => !['claude', 'codex'].includes(id) && available[id]);
+    // The fallback is no review when this console can run nobody the default includes. Saying "the default reviews"
+    // would be false, and so would "nothing else can" while a reviewer the previous default leaves out still can.
+    const nothingElse = noneLeft && best === 'none' && !keptOutCan;
     const names = A.REVIEW_AGENT_IDS.filter((id) => on.has(id)).map((id) => A.agent(id).product);
     const listed = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
     // The grid stays the saved choice, so a click edits that choice. The summary says who will review when none of
     // the choice can: the default, or no review when nothing else can. A choice that can only partly run keeps its
     // own names here; the note under the grid says the review gets what of it can.
-    const who = nothingElse ? 'No code review of'
-      : noneLeft ? 'None of your choice can run, so the default reviews'
+    const who = (nothingElse || (noneLeft && best === 'none')) ? 'No code review of'
+      : noneLeft ? (widened ? 'None of your choice can run, so the default reviews' : `None of your choice can run, so ${fallbackNames.length === 1 ? `${fallbackListed} reviews` : `${fallbackListed} review`}`)
       : !names.length ? 'No code review of' : names.length === 2 ? `${listed} both review` : names.length > 2 ? `${listed} all review` : `${listed} reviews`;
-    return row({ id: 'my-reviews', title: 'Reviews of my pull requests', pill: h('span', { class: choice ? 'pill is-ok' : 'pill' }, choice ? 'Your own' : 'Default'), value: `${who} the pull requests you open` },
+    const keptNote = 'This is the default from before Grok Build and OpenCode joined it. Include every reviewer that can run, and each one whose sign-in or team key can take part. A choice that can no longer run stays on Claude Code and Codex until you do.';
+    return row({ id: 'my-reviews', title: 'Reviews of my pull requests', pill: h('span', { class: choice ? 'pill is-ok' : 'pill' }, choice ? 'Your own' : widened ? 'Default' : 'As before'), value: `${who} the pull requests you open` },
       h('p', { class: 'sub' }, 'Who reviews a pull request you open, in repos that review with Woodshed sessions. With several on, the strictest verdict wins, so it is approved only when all of them approve. With all off, there is no code review, and the Slack post and QA go on without one. Grok Build and OpenCode review only on your own sign-in, which the console adds to their calls: it never enters the review.'),
       h('table', { class: 'onoff-grid' },
         h('thead', null, h('tr', null, h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Reviewer')), h('th', { scope: 'col' }, 'Off'), h('th', { scope: 'col' }, 'On'))),
@@ -825,13 +841,20 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
           h('td', null, radio(agent, label, true)))))),
       h('p', { class: 'form-note' }, choice
         ? (nothingElse ? 'None of what you chose can run now, and nothing else can, so there is no code review.'
-          : noneLeft ? 'None of what you chose can run now, so your reviews get the default: every reviewer that can.'
+          : noneLeft && !widened && best === 'none' ? 'None of what you chose can run now. Claude Code and Codex cannot either, so there is no code review until you include every reviewer that can run.'
+          : noneLeft ? (widened
+            ? 'None of what you chose can run now, so your reviews get the default: every reviewer that can.'
+            : `None of what you chose can run now, so your reviews get ${fallbackListed}, as before. Include every reviewer that can run to use the new default.`)
           : cantRun ? 'What you chose cannot all run now, so your reviews get what of it can.' : 'Your own choice.')
-        : 'Default: every reviewer that can run, from your sign-ins and the team\u2019s keys. Grok Build and OpenCode are included when their sign-in is on for reviews.',
+        : (widened
+          ? 'Default: every reviewer that can run, from your sign-ins and the team\u2019s keys. Grok Build and OpenCode are included when their sign-in is on for reviews.'
+          : keptNote),
       // The link sits in this paragraph. A space of its own keeps it off the period; a trailing space on only some of
       // the sentences left "can.Back to the default" on the ones without it.
-      choice ? ' ' : null,
-      choice && h('button', { type: 'button', class: 'btn-link', disabled: busy.has('reviews'), onclick: () => saveReviews(null, 'Back to the default.') }, 'Back to the default')),
+      (choice || !widened) ? ' ' : null,
+      widened
+        ? choice && h('button', { type: 'button', class: 'btn-link', disabled: busy.has('reviews'), onclick: () => saveReviews(null, 'Back to the default.') }, 'Back to the default')
+        : h('button', { type: 'button', class: 'btn-link', disabled: busy.has('reviews'), onclick: () => saveReviews(null, 'Saved. Every reviewer that can run reviews the pull requests you open.') }, 'Include every reviewer that can run')),
       reviewStatus);
   }
 

@@ -1970,7 +1970,7 @@ test('My settings\' Reviews card: each person picks who reviews their pull reque
   const get = async () => (await fetch(`http://127.0.0.1:${port}/api/my/reviews`, { headers: as })).json();
 
   const off = { grok: false, opencode: false };
-  assert.deepEqual(await get(), { available: { claude: true, codex: false, ...off }, own: { claude: false, codex: false, ...off }, ownWhy: { grok: null, opencode: null }, best: 'claude', choice: null },
+  assert.deepEqual(await get(), { available: { claude: true, codex: false, ...off }, own: { claude: false, codex: false, ...off }, ownWhy: { grok: null, opencode: null }, best: 'claude', expanded: true, choice: null },
     'the team Anthropic key alone: Claude Code is the most there is');
   const none = await post(port, '/api/my/reviews', { choice: 'none', login: 'joel' }, as);
   assert.equal(none.status, 200);

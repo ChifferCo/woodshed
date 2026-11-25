@@ -162,6 +162,35 @@ test('the switches for reviews on your own Grok Build and OpenCode sign-ins work
   assert.equal(settings.usesOwnAgentForReviews('joel', 'grok'), false, 'no sign-in, no effect');
 });
 
+test('a Grok Build or OpenCode sign-in already saved keeps the previous review default until reviews is set back to it', (t) => {
+  t.mock.method(console, 'log', () => {});
+  const store = {
+    state: {
+      people: {
+        joel: { agentAuthAt: { grok: '2026-01-01T00:00:00.000Z' } },
+        mia: { claudeTokenAt: '2026-01-01T00:00:00.000Z' },
+      },
+    },
+    save() {},
+  };
+  const settings = createUserSettings({ store, secrets: fakeSecrets() });
+  assert.equal(store.state.reviewDefaultKept, true);
+  assert.equal(store.state.people.joel.reviewDefault, 'legacy');
+  assert.equal(store.state.people.mia.reviewDefault, undefined, 'no Grok Build or OpenCode sign-in: nothing to keep');
+  assert.equal(settings.usesExpandedReviewDefault('joel'), false);
+  assert.equal(settings.usesExpandedReviewDefault('mia'), true);
+  assert.equal(settings.usesExpandedReviewDefault('new'), true, 'someone with no record gets the wider default');
+  assert.equal(settings.view('joel').expandedReviewDefault, false);
+  settings.setReviewAgents('joel', 'both');
+  assert.equal(settings.usesExpandedReviewDefault('joel'), false, 'a saved choice does not accept the wider default');
+  settings.setReviewAgents('joel', null);
+  assert.equal(settings.usesExpandedReviewDefault('joel'), true);
+  assert.equal(store.state.people.joel.reviewDefault, 'all');
+  store.state.people.neo = { agentAuthAt: { opencode: '2026-02-01T00:00:00.000Z' } };
+  createUserSettings({ store, secrets: fakeSecrets() });
+  assert.equal(store.state.people.neo.reviewDefault, undefined, 'a sign-in saved after the first start joins the wider default');
+});
+
 test('a review choice is a preset or reviewers joined with +, saved in the registry\'s order', (t) => {
   t.mock.method(console, 'log', () => {});
   const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: fakeSecrets() });

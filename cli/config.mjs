@@ -22,7 +22,7 @@ export const CONFIG_KEYS = Object.freeze({
   },
   reviews: {
     values: ['none', 'claude', 'codex', 'both', 'default'],
-    about: 'who reviews your pull requests; default is every reviewer that can run here, Grok Build and OpenCode included when their sign-in is on for reviews, and reviewers joined with + (claude+grok) are your own choice',
+    about: 'who reviews your pull requests; default is every reviewer that can run here, Grok Build and OpenCode included when their sign-in is on for reviews, and reviewers joined with + (claude+grok) are your own choice. A sign-in saved before that default stays out until this is set to default',
     path: '/api/my/reviews',
     body: (value) => ({ choice: value === 'default' ? null : value }),
     after: 'It applies to the next review.',
@@ -36,14 +36,14 @@ export const CONFIG_KEYS = Object.freeze({
   },
   'grok-reviews': {
     values: ['on', 'off'],
-    about: 'reviews of your pull requests may run Grok Build on your own sign-in (saved on My settings); the default includes it while this is on, and a saved choice that leaves it out does not unless none of that choice can run',
+    about: 'reviews of your pull requests may run Grok Build on your own sign-in (saved on My settings); the default includes it while this is on, except a sign-in saved before that default, which stays out until reviews is set to default. A saved choice that leaves it out does not unless none of that choice can run',
     path: '/api/my/agent-auth/grok/reviews',
     body: (value) => ({ on: value === 'on' }),
     after: 'It applies to the next review.',
   },
   'opencode-reviews': {
     values: ['on', 'off'],
-    about: 'reviews of your pull requests may run OpenCode on your own API key (saved on My settings); the default includes it while this is on, and a saved choice that leaves it out does not unless none of that choice can run',
+    about: 'reviews of your pull requests may run OpenCode on your own API key (saved on My settings); the default includes it while this is on, except a sign-in saved before that default, which stays out until reviews is set to default. A saved choice that leaves it out does not unless none of that choice can run',
     path: '/api/my/agent-auth/opencode/reviews',
     body: (value) => ({ on: value === 'on' }),
     after: 'It applies to the next review.',
