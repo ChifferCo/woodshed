@@ -68,3 +68,10 @@ test('a credential in a tool error, a message or the output never reaches the su
   assert.doesNotMatch(clean, /abcdef1234567890|ghp_AbCdEfGh|abc\.def\.ghi/);
   assert.match(clean, /Tool errors: 1/);
 });
+
+test('redact takes out a credential in JSON, and the variables the installation names as install secrets', () => {
+  const env = { BUNDLE_GEMS__EXAMPLE__COM: 'gem-user:gempass-9876', WOODSHED_INSTALL_SECRETS: 'BUNDLE_GEMS__EXAMPLE__COM' };
+  const clean = redact('{"user":"u","password":"opaqueValue123","nested":{"api_key": "k-opaque-456"}} and gem-user:gempass-9876', env);
+  assert.doesNotMatch(clean, /opaqueValue123|k-opaque-456|gempass/);
+  assert.match(clean, /"user":"u"/, 'what is not a credential stays');
+});

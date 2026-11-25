@@ -30,7 +30,8 @@ const PATTERNS = [
   /\b(?:gh[pousr]_|github_pat_|glpat-|xox[abprs]-|sk-ant-|sk-|npm_|AKIA|ASIA|AIza)[A-Za-z0-9_\-]{8,}/g,
   /\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]*/g,
   /\b(Bearer|Basic|token)\s+[A-Za-z0-9._~+/=\-]{8,}/gi,
-  /([?&;]|\b)((?:access_?|auth_?|api_?|private_?|client_?)?(?:token|secret|password|passwd|key|signature|sig|credential)s?|authorization|_authToken)(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s&;,"']+)/gi,
+  // `name=value`, `name: value` and JSON's `"name": "value"`, the value quoted or not.
+  /([?&;]|\b)((?:access_?|auth_?|api_?|private_?|client_?)?(?:token|secret|password|passwd|key|signature|sig|credential)s?|authorization|_authToken)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'[^']*'|[^\s&;,"'}\]]+)/gi,
   /\b([a-z][a-z0-9+.\-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/gi,
 ];
 
@@ -41,7 +42,9 @@ const PATTERNS = [
  */
 export function redact(text, env = process.env) {
   let out = String(text ?? '');
-  const values = Object.entries(env).filter(([k, v]) => SECRET_NAME_RE.test(k) && typeof v === 'string' && v.length >= 8).map(([, v]) => v)
+  // Also the variables the installation names as its install secrets (WOODSHED_INSTALL_SECRETS), whatever they are called.
+  const named = new Set(String(env.WOODSHED_INSTALL_SECRETS ?? '').split(/[\s,]+/).filter(Boolean));
+  const values = Object.entries(env).filter(([k, v]) => (SECRET_NAME_RE.test(k) || named.has(k)) && typeof v === 'string' && v.length >= 8).map(([, v]) => v)
     .sort((a, b) => b.length - a.length);
   for (const v of values) out = out.split(v).join('[redacted]');
   out = out.replace(PATTERNS[0], '[redacted]').replace(PATTERNS[1], '[redacted]').replace(PATTERNS[2], '[redacted]')

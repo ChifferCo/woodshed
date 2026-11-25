@@ -145,7 +145,7 @@ sendLog() {
     [ -f "$DIR/report.md" ] || { echo; echo 'No report.md was written.'; }
   } 2>&1 | node "$RUN_LOG" --redact > "$DIR/logs/run.log"
   code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
-    | curl -sS --max-time 60 -o /tmp/qa-log-reply.json -w '%{http_code}' -X POST -K - -H 'content-type: text/plain' \
+    | curl -sS --max-time 10 -o /tmp/qa-log-reply.json -w '%{http_code}' -X POST -K - -H 'content-type: text/plain' \
       --data-binary "@$DIR/logs/run.log" "$WOODSHED_CONSOLE_URL/qa-log") || code=000
   echo "Run log sent to the console (status: $code)"
 }
@@ -153,7 +153,7 @@ sendLog() {
 sendReport() {
   local notCovered=$1 verdict body code ended=''
   # No report because a pass ran out of turns or was cut off: the verdict says so, not only "no QA report".
-  if [ ! -s "$DIR/report.md" ] && [ -f "$DIR/logs/test.jsonl" ]; then ended=$(node "$RUN_LOG" --why test "$DIR/logs/test.jsonl"); fi
+  if [ -f "$DIR/logs/test.jsonl" ]; then ended=$(node "$RUN_LOG" --why test "$DIR/logs/test.jsonl"); fi
   [ -n "$ended" ] || { [ -f "$DIR/logs/plan.jsonl" ] && [ ! -s "$DIR/plan/plan.md" ] && ended=$(node "$RUN_LOG" --why plan "$DIR/logs/plan.jsonl"); }
   verdict=$(node "$QA" verdict "$DIR" --not-covered "$notCovered" --ended "$ended")
   say "Verdict: $(jq -r '"\(.conclusion), \(.passed) of \(.total) passed, \(.failed) failed, \(.unverified) unverified"' <<< "$verdict")"
