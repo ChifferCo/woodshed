@@ -1242,6 +1242,10 @@ test('a person moves their own session into another\'s group, or out of the one 
   assert.equal(alone.startedApart, true, 'taking it out twice does nothing more');
 
   assert.throws(() => fleet.regroup(main, piece), /in this session's own group/);
+  // However deep the chain.
+  let last = piece;
+  for (let i = 0; i < 60; i++) last = await fleet.startPrivate({ owner: 'joel', prompt: `Step ${i}`, startedFrom: last.id });
+  assert.throws(() => fleet.regroup(main, last), /in this session's own group/, 'sixty sessions down');
   assert.throws(() => fleet.regroup(main, main), /under itself/);
   assert.throws(() => fleet.regroup(alone, theirs), /your own sessions/);
   const shared = await fleet.createSession({ kind: 'task', number: null, title: 's', startedBy: 'joel', trigger: 'console', prompt: 'p' });

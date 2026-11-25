@@ -1940,9 +1940,11 @@ export function createFleet({
     if (under.owner !== session.owner) throw shown('only under another of your own sessions');
     if (!ACTIVE_STATUSES.has(under.status)) throw shown(`"${under.title}" is not running: a group is shown only under a running session`);
     // Not under a session in its own group, which would make a loop.
-    for (let p = under, seen = 0; p?.startedFrom && !p.startedApart && seen < 50; seen++) {
+    // The whole chain, however long, each session once: one already seen is a loop the rail nests none of.
+    const seen = new Set();
+    for (let p = under; p?.startedFrom && !p.startedApart && !seen.has(p.id); p = find(p.startedFrom)) {
       if (p.startedFrom === session.id) throw shown(`"${under.title}" is in this session's own group`);
-      p = find(p.startedFrom);
+      seen.add(p.id);
     }
     if (session.startedFrom === under.id && !session.startedApart) return session;
     console.log('fleet: session put under another', { id: session.id, under: under.id, from: session.startedFrom ?? null });
