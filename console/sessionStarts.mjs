@@ -328,14 +328,21 @@ export function createSessionStarts({
       : `[Message from ${named}, ${from.startedFrom === to.id ? 'which this session started' : 'another session of your person\'s'}. Answer it with: woodshed-session send ${from.id} "<answer>"]`;
     // `to` is waiting on `from` (send --wait, wait): this is its answer, handed to that wait, not typed in behind it.
     // Typed in, it would be held until that wait's turn ends, and that wait would never end.
+    // A message to a session that asked a question answers it (fleet.send, or below for one handed to its wait); one sent
+    // as a question (`question: true`, woodshed-session reply --question) leaves its sender waiting for an answer, which
+    // the rail says.
+    const asks = body.question === true;
     const waiting = waits.get(waitKey(to.id, from.id));
     const at = new Date(now()).toISOString();
     if (waiting && waiting.answer({ text: said, at, typed: `${head}\n\n${said}` })) {
-      console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome: 'answered a wait' });
+      fleet.clearQuestion?.(to);
+      if (asks) fleet.noteQuestion?.(from, { to: to.id });
+      console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome: 'answered a wait', question: asks });
       return reply(res, 200, { sentAt: at, sent: true, answeredWait: true, session: summary(to) });
     }
     const outcome = await fleet.send(to, `${head}\n\n${said}`);
-    console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome });
+    if (asks && outcome !== 'in-box') fleet.noteQuestion?.(from, { to: to.id });
+    console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome, question: asks });
     if (outcome === 'in-box') return reply(res, 409, { error: 'it went into the session\'s box but was not sent: a prompt came up as it was typed, which the person answers in its TUI tab' });
     return reply(res, 200, { sentAt: new Date(now()).toISOString(), ...(outcome === 'queued' ? { held: true } : { sent: true }), ...(outcome === 'unknown' ? { unknown: true } : {}), session: summary(to) });
   }

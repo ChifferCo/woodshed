@@ -4273,6 +4273,55 @@ test('the review report credits Codex when Claude Code wrote no verdict', async 
   assert.equal(reviewVerdict([posted], review), posted);
 });
 
+test('a session that asked a question waits for its answer until it is sent a message or works again', async () => {
+  const { fleet, statuses, answers } = setup();
+  const child = await fleet.startPrivate({ owner: 'joel', prompt: 'Write NOTES.md' });
+  statuses[child.id] = { state: 'working' };
+  await fleet.tick();
+  // Asked mid-turn, as reply --question is: still working until its turn on the question ends.
+  fleet.noteQuestion(child, { to: 'aaaa0001' });
+  assert.ok(child.askedAt);
+  await fleet.tick();
+  assert.ok(child.askedAt, 'the turn it asked in is not its answer');
+  statuses[child.id] = { state: 'done' };
+  await fleet.tick();
+  assert.equal(child.askedSettled, true);
+  statuses[child.id] = { state: 'working' };
+  await fleet.tick();
+  assert.equal(child.askedAt, null, 'working again: answered in its own Chat or TUI');
+
+  fleet.noteQuestion(child, { to: 'aaaa0001' });
+  statuses[child.id] = { state: 'done' };
+  await fleet.tick();
+  await fleet.send(child, 'Customers.');
+  assert.equal(child.askedAt, null, 'a message typed into it answers it');
+
+  // A message left in its box unsent (a prompt came up as it was typed) is no answer yet.
+  fleet.noteQuestion(child, { to: 'aaaa0001' });
+  statuses[child.id] = { state: 'done' };
+  await fleet.tick();
+  answers['/send'] = { then: (_, reject) => reject(Object.assign(new Error('statusd /send answered 409'), { status: 409, body: { typed: true } })) };
+  assert.equal(await fleet.send(child, 'Customers.'), 'in-box');
+  assert.ok(child.askedAt, 'still asking: the answer is in its box, not sent');
+  delete answers['/send'];
+
+  // Answered in its own TUI with a turn too quick for a status read to see it working: its newer last message says so.
+  fleet.noteQuestion(child, { to: 'aaaa0001' });
+  statuses[child.id] = { state: 'done', lastMessage: { role: 'assistant', text: 'Developers or customers?', at: '2026-10-21T10:05:00.000Z' } };
+  await fleet.tick();
+  assert.ok(child.askedAt);
+  await fleet.tick();
+  assert.ok(child.askedAt, 'nothing new: still asking');
+  statuses[child.id] = { state: 'done', lastMessage: { role: 'assistant', text: 'Writing it for customers.', at: '2026-10-21T10:06:00.000Z' } };
+  await fleet.tick();
+  assert.equal(child.askedAt, null, 'a turn since');
+
+  // Stopped with a question open: its Resume starts with none.
+  fleet.noteQuestion(child, { to: 'aaaa0001' });
+  await fleet.stop(child, 'stopped from the console', { by: 'joel' });
+  assert.deepEqual([child.status, child.askedAt], ['stopped', null]);
+});
+
 function fakeAttachments() {
   const written = {};
   return {
