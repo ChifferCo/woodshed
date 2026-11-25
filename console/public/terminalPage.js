@@ -134,7 +134,14 @@
         opened = true;
         hideOverlay();
       }
-      term.focus();
+      // Not while the page moves through the sessions by key (session.js, movingByKey): the next J would be typed here.
+      let moving = false;
+      try {
+        moving = Boolean(window.parent?.Woodshed?.movingByKey?.());
+      } catch {
+        // A parent of another origin moves nothing by key.
+      }
+      if (!moving) term.focus();
     });
     ws.addEventListener('message', (e) => received(e.data));
     ws.addEventListener('close', (e) => {

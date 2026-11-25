@@ -1787,9 +1787,13 @@
   // The keys that move through the sessions (keys.cjs): J and K go down and up the rail as it is drawn, so a folded
   // zone is skipped as the eye skips it, and G N goes to the next session after this one that needs you, in the same
   // order, then any of the rail's folded zones hide. Each cycles round at the end.
+  // A session is where its own card is; a copy (one asking its person, in Needs you) counts only when its own card is
+  // not drawn, as when its group is folded.
   function railOrder() {
-    const cards = slots.railBody ? [...slots.railBody.querySelectorAll('.rcard[data-session]:not(.is-copy)')] : [];
-    return cards.map((c) => data?.sessions.find((s) => s.id === c.dataset.session)).filter(Boolean);
+    const cards = slots.railBody ? [...slots.railBody.querySelectorAll('.rcard[data-session]')] : [];
+    const own = new Set(cards.filter((c) => !c.classList.contains('is-copy')).map((c) => c.dataset.session));
+    const ids = [...new Set(cards.filter((c) => !c.classList.contains('is-copy') || !own.has(c.dataset.session)).map((c) => c.dataset.session))];
+    return ids.map((sid) => data?.sessions.find((s) => s.id === sid)).filter(Boolean);
   }
   function after(list, step) {
     if (!list.length) return null;
