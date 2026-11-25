@@ -23,6 +23,9 @@
   // Which page: /, /all or a session's. They are one page, so moving between them changes these, not the document
   // (navigate, below). /?new=1 is New session as a screen of its own on a phone, where / is the list alone.
   let id = null;
+  // J, K and G N's moving mode (moveSession, below), and whether the navigate running now is one of theirs.
+  let movingByKey = false;
+  let keyMove = false;
   let onMy = false;
   let onShared = false;
   let onNew = false;
@@ -363,6 +366,9 @@
   // and nothing flashes while a new document loads. The address changes as a link's would, and Back returns.
   const SHELL_PATH_RE = /^\/(all|s\/[0-9a-f]{8})?$/;
   function navigate(href) {
+    // Any move but J, K or G N's own ends their moving mode (moveTo), so a session opened from the palette or a card
+    // focuses its Chat field as before.
+    if (!keyMove) movingByKey = false;
     const url = new URL(href, window.location.href);
     if (url.origin !== window.location.origin || !SHELL_PATH_RE.test(url.pathname)) {
       window.location.href = url.href;
@@ -394,7 +400,7 @@
     // For what follows the page's address without drawing it (notificationBell.js).
     window.dispatchEvent(new Event('woodshed:route'));
   }
-  window.addEventListener('popstate', moved);
+  window.addEventListener('popstate', () => { movingByKey = false; moved(); });
   // Going away altogether (My settings, another page of the console, a reload, closing the browser tab) puts the tab
   // aside for the next shell page, which keeps it unless that was a reload (sessionTabs.cjs, takeLeaving). After a
   // sign-out or an account change nothing is put aside (W.signingOut).
@@ -1780,7 +1786,7 @@
 
   // The keys that move through the sessions (keys.cjs): J and K go down and up the rail as it is drawn, so a folded
   // zone is skipped as the eye skips it, and G N goes to the next session after this one that needs you, in the same
-  // order, then any the rail does not show. Each cycles round at the end.
+  // order, then any of the rail's folded zones hide. Each cycles round at the end.
   function railOrder() {
     const cards = slots.railBody ? [...slots.railBody.querySelectorAll('.rcard[data-session]:not(.is-copy)')] : [];
     return cards.map((c) => data?.sessions.find((s) => s.id === c.dataset.session)).filter(Boolean);
@@ -1793,7 +1799,6 @@
   }
   // As in Herdr, moving is a mode of its own: the session a key opened takes no focus (Chat's field, its terminal), so
   // the next J moves on rather than typing a j. A tab key, or a click anywhere, ends it.
-  let movingByKey = false;
   W.movingByKey = () => movingByKey;
   document.addEventListener('pointerdown', () => { movingByKey = false; }, true);
   function moveTo(s) {
@@ -1801,15 +1806,24 @@
     // The field or terminal the focus was in stays on the page for the next session: it must let go of it.
     document.activeElement?.blur?.();
     window.focus();
-    navigate(sessionHref(s));
+    keyMove = true;
+    try {
+      navigate(sessionHref(s));
+    } finally {
+      keyMove = false;
+    }
   }
   function moveSession(step) {
     const next = after(railOrder(), step);
     if (next && next.id !== id) moveTo(next);
   }
+  // The sessions this rail lists (Mine or Everyone, on the project picked), so G N never opens one the other rail has:
+  // those drawn first, in their order, then the ones in folded zones.
   function nextNeedsYou() {
     const drawn = railOrder();
-    const order = [...drawn, ...(data?.sessions ?? []).filter((s) => !drawn.includes(s))];
+    const onProject = railProject();
+    const listed = data ? railListing().filter((s) => !onProject || s.project === onProject) : [];
+    const order = [...drawn, ...listed.filter((s) => !drawn.includes(s))];
     // The one shown stays in the list, so the next is the one after it, and it alone is "nothing else".
     const waiting = order.filter((s) => W.needsYou(s) || s.id === id);
     const next = after(waiting, 1);
