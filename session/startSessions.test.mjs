@@ -240,3 +240,10 @@ test('reply --question sends it as a question', async () => {
   assert.equal(await run({ ...args, argv: ['reply', '--question', 'Developers', 'or', 'customers?'] }), 0);
   assert.deepEqual(out.calls[1].body, { text: 'Developers or customers?', question: true });
 });
+
+test('a question ends the turn: --question with --wait is refused, and nothing is sent', async () => {
+  const { out, args } = io({ files: { '/tmp/token': TOKEN }, answers: [[200, { sessions: [], startedFrom: { id: 'aaaa0001' } }]] });
+  assert.equal(await run({ ...args, argv: ['reply', '--question', '--wait', 'Developers', 'or', 'customers?'] }), 1);
+  assert.match(out.stderr, /--question asks and ends the turn/);
+  assert.equal(out.calls.filter((c) => c.method === 'POST').length, 0);
+});

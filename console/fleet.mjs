@@ -344,7 +344,7 @@ export function createFleet({
     if (session.startTokenHash && !ACTIVE_STATUSES.has(session.status)) session.startTokenHash = null;
     // Nor does it wait on a question it asked (noteQuestion): a Resume starts it with none open.
     if (session.askedAt && !ACTIVE_STATUSES.has(session.status)) {
-      Object.assign(session, { askedAt: null, askedOf: null, askedSettled: null });
+      Object.assign(session, { askedAt: null, askedOf: null, askedSettled: null, askedLastAt: null });
       console.log('fleet: question answered', { id: session.id, why: 'stopped' });
     }
     store.save();
@@ -758,19 +758,25 @@ export function createFleet({
   // rail says (public/common.js displayStatus). It ends with any message typed into it, or once it works again after its
   // turn on the question ended: the person may answer in its own Chat or TUI.
   function noteQuestion(session, { to }) {
-    update(session, { askedAt: nowIso(), askedOf: to, askedSettled: false });
+    update(session, { askedAt: nowIso(), askedOf: to, askedSettled: false, askedLastAt: null });
     console.log('fleet: session asked a question', { id: session.id, of: to });
   }
   function answered(session, why) {
     if (!session.askedAt) return;
-    update(session, { askedAt: null, askedOf: null, askedSettled: null });
+    update(session, { askedAt: null, askedOf: null, askedSettled: null, askedLastAt: null });
     console.log('fleet: question answered', { id: session.id, why });
   }
+  // The last thing it said when its turn on the question ended (`askedLastAt`): a newer one is a turn since, one whose
+  // working the reads every few seconds may have missed (an answer typed in its TUI and done with quickly).
   function settleQuestion(session) {
     if (!session.askedAt) return;
+    const lastAt = session.lastMessage?.at ?? null;
     if (session.state === 'working') {
       if (session.askedSettled) answered(session, 'working again');
-    } else if (['done', 'needs-you', 'idle'].includes(session.state) && !session.askedSettled) update(session, { askedSettled: true });
+    } else if (['done', 'needs-you', 'idle'].includes(session.state)) {
+      if (!session.askedSettled) update(session, { askedSettled: true, askedLastAt: lastAt });
+      else if (lastAt && lastAt !== session.askedLastAt) answered(session, 'a turn since');
+    }
   }
 
   function hold(session, text, id = null) {

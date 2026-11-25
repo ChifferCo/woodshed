@@ -4305,6 +4305,17 @@ test('a session that asked a question waits for its answer until it is sent a me
   assert.ok(child.askedAt, 'still asking: the answer is in its box, not sent');
   delete answers['/send'];
 
+  // Answered in its own TUI with a turn too quick for a status read to see it working: its newer last message says so.
+  fleet.noteQuestion(child, { to: 'aaaa0001' });
+  statuses[child.id] = { state: 'done', lastMessage: { role: 'assistant', text: 'Developers or customers?', at: '2026-10-21T10:05:00.000Z' } };
+  await fleet.tick();
+  assert.ok(child.askedAt);
+  await fleet.tick();
+  assert.ok(child.askedAt, 'nothing new: still asking');
+  statuses[child.id] = { state: 'done', lastMessage: { role: 'assistant', text: 'Writing it for customers.', at: '2026-10-21T10:06:00.000Z' } };
+  await fleet.tick();
+  assert.equal(child.askedAt, null, 'a turn since');
+
   // Stopped with a question open: its Resume starts with none.
   fleet.noteQuestion(child, { to: 'aaaa0001' });
   await fleet.stop(child, 'stopped from the console', { by: 'joel' });

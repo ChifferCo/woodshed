@@ -332,6 +332,9 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
         if (!startedFrom) throw new Refused('no session started this one: reply answers the session that started it');
         to = startedFrom.id;
       }
+      // A question waits for its answer with the turn ended, which shows this session as asking; waiting in the turn
+      // would not, and the answer comes typed in either way.
+      if (flags.question && flags.wait) throw new Refused('--question asks and ends the turn: leave out --wait, and the answer comes typed in here');
       const said = await words2text(words, 'give the message: in quotes, --prompt-file <file>, or - to read it from stdin');
       const sent = await call('POST', `/sessions/${to}/messages`, { text: said, ...(flags.question ? { question: true } : {}) });
       if (flags.json && !flags.wait) return say(JSON.stringify(sent)), 0;
