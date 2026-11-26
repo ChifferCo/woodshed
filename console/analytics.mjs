@@ -197,7 +197,8 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
       // counted again), else the distinct bots that reviewed on GitHub.
       const ran = reviewModels.get(`${lower(repo)}#${pull.number}`);
       const models = ran?.size ? [...ran] : pull.botReviewers ?? [];
-      const humanReviewers = pull.humanReviewers ?? [];
+      // Not the session's person: on a pull request the App opened, their own review of their own change is no second pair of eyes.
+      const humanReviewers = (pull.humanReviewers ?? []).filter((l) => lower(l) !== lower(login));
       const add = (p) => {
         p.opened++;
         if (pull.state === 'merged') {

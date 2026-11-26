@@ -194,7 +194,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     const agents = Object.entries(counted).sort((a, b) => b[1] - a[1]);
     const total = picked ? mine.length : s.work;
     const privateCount = picked ? mine.filter((r) => r.private).length : s.private;
-    const buckets = bucketCounts(data.trend, mine, (r) => r.createdAt, () => 'a');
+    const buckets = data.step === 'day' ? dayCounts(mine, (r) => r.createdAt, () => 'a') : bucketCounts(data.trend, mine, (r) => r.createdAt, () => 'a');
     return group({ id: 'analytics-totals', label: 'Sessions', note: 'Work sessions started in the window: My Woodshed, and shared ones from a label, a comment or the console.' },
       figures([
         { label: 'Sessions started', icon: 'sessions', tone: 'violet', value: n(total), sub: `${n(privateCount)} My Woodshed · ${n(total - privateCount)} shared` },
@@ -225,7 +225,10 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     const all = stats(list);
     const mergedShare = all.merged ? w.merged / all.merged : null;
     const openedChart = dayCounts(list, (p) => p.createdAt, (p) => (p.via === 'woodshed' ? 'a' : 'b'));
-    const mergedChart = bucketCounts(data.trend, list.filter((p) => p.mergedAt), (p) => p.mergedAt, (p) => (p.via === 'woodshed' ? 'a' : 'b'));
+    const merged = list.filter((p) => p.mergedAt);
+    const mergedKey = (p) => (p.via === 'woodshed' ? 'a' : 'b');
+    // A short window is by local date, as the opened chart is; a longer one by the weeks the console cut.
+    const mergedChart = data.step === 'day' ? dayCounts(merged, (p) => p.mergedAt, mergedKey) : bucketCounts(data.trend, merged, (p) => p.mergedAt, mergedKey);
     const series = [
       { key: 'a', cls: 'is-woodshed', word: 'through Woodshed', label: 'Through Woodshed' },
       { key: 'b', cls: 'is-other', word: 'without', label: 'Without' },
@@ -333,11 +336,13 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
 
   // Shows the first `count` rows, with Show more (one more page) and Show all under them.
   function more(key, total) {
-    if (total <= shown[key]) return total > STEP ? h('p', { class: 'foot analytics-more' }, `All ${n(total)} shown.`) : null;
+    // A redraw replaces the button that was pressed, so focus goes to its replacement, or to the status line once all show.
+    const redraw = () => { render(); (document.getElementById?.(`analytics-more-${key}`) ?? document.getElementById?.(`analytics-status-${key}`))?.focus?.(); };
+    if (total <= shown[key]) return total > STEP ? h('p', { class: 'foot analytics-more', id: `analytics-status-${key}`, tabindex: '-1' }, `All ${n(total)} shown.`) : null;
     return h('div', { class: 'analytics-more-bar' },
       h('span', { class: 'foot' }, `Showing ${n(shown[key])} of ${n(total)}.`),
-      h('button', { type: 'button', class: 'analytics-btn', onclick: () => { shown[key] += STEP; render(); } }, icon('plus'), `Show ${Math.min(STEP, total - shown[key])} more`),
-      h('button', { type: 'button', class: 'analytics-btn', onclick: () => { shown[key] = total; render(); } }, icon('chevron'), `Show all ${n(total)}`));
+      h('button', { type: 'button', class: 'analytics-btn', id: `analytics-more-${key}`, onclick: () => { shown[key] += STEP; redraw(); } }, icon('plus'), `Show ${Math.min(STEP, total - shown[key])} more`),
+      h('button', { type: 'button', class: 'analytics-btn', onclick: () => { shown[key] = total; redraw(); } }, icon('chevron'), `Show all ${n(total)}`));
   }
 
   function agentTag(id) {

@@ -480,3 +480,10 @@ test('a review that reported no verdict is not done, one with a verdict or from 
   assert.equal(usageRecord({ ...s, review: { ...s.review, conclusion: 'APPROVE' } }).reviewDone, true);
   assert.equal(usageRecord({ ...s, review: { agents: ['claude'], reported: true } }).reviewDone, true);
 });
+
+test('a Woodshed session\'s person who reviewed their own App-opened pull request is not a human reviewer', () => {
+  const records = [record({ id: 'abab0001', login: 'ana', prUrls: [url(1)] })];
+  const pulls = [{ project: 'app', repo: REPO, pulls: [pull({ number: 1, url: url(1), author: 'woodshed-app', humanReviewers: ['ana', 'bo'] })] }];
+  const { pulls: { recent } } = analyticsReport({ records, pulls, days: 30, now: NOW });
+  assert.deepEqual(recent[0].humanReviewers, ['bo']);
+});
