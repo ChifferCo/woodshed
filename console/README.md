@@ -717,6 +717,10 @@ session again, with its page, branch and options, and runs
 newest transcript's name. When the restored home doesn't hold that
 conversation, the session starts its original prompt again: a session that
 never reached claude, or one stopped before sessions kept their own homes.
+A launcher that keeps the session's machine between runs (`keptMachine`, "Embedding the console") resumes it on the image
+that machine was made from, which may no longer start a branch that took a newer project file: when it says so, the page
+offers **Resume on the latest image** too, which asks first, then leaves that machine, with its databases and whatever
+else the session kept there, for a new one; the branch and the conversation go along as on any Resume.
 **Remove**, on a stopped private session's page, takes it off the list and
 deletes the home it kept; its branch stays on GitHub. **Forget it** on My
 settings and Remove My Woodshed delete your kept home and every one of your
@@ -2480,6 +2484,12 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   `linked`, `unmatched`, `manual` or `skipped`; Slack's bot needs `users:read.email`.
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
+- A launcher's `keptMachine(sessionId)`, for one that keeps a stopped session's machine between its runs: `null` for
+  none, else `{outdated}`, true when that machine was made from an older image of the session's repo than a new session
+  gets. The stopped private session's page then offers **Resume on the latest image** beside Resume, and the console
+  passes that start `{latestImage: true}` as `start`'s third argument: the launcher leaves an outdated machine, its data
+  with it, and makes a new one (`fleet: resuming a private session` with `latestImage`). One that threw answers none
+  (`fleet: kept machine not read`).
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
   `toMessage` makes the message from GitHub's own payload): the GitHub poll then runs only as a fallback.
 

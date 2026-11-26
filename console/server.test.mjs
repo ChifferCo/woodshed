@@ -1200,6 +1200,37 @@ test('New session offers only the agents set up to run, and a Codex start needs 
   assert.deepEqual(await agents(), { claude: false, codex: true, ...none }, 'no Claude token, no Claude');
 });
 
+test('a stopped private session\'s kept machine is read for its owner, and Resume on the latest image reaches the fleet', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const resumed = [];
+  const stopped = { id: '0a1b2c3d', owner: 'mia-dev', status: 'stopped', options: {} };
+  const fleet = {
+    sessions: () => [], find: (id) => (id === stopped.id ? stopped : null),
+    resumePrivate: async (args) => { resumed.push(args); return stopped; },
+    keptMachine: async ({ owner, id }) => {
+      if (owner !== stopped.owner || id !== stopped.id) throw Object.assign(new Error('no session you can open with that id'), { shown: true });
+      return { kept: true, outdated: true };
+    },
+  };
+  const userSettings = {
+    refresh: async () => {},
+    view: () => ({ claudeToken: { set: true, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: true, available: true, agentAuth: {} }),
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const server = http.createServer(createHandler({ config, fleet, auth, userSettings }));
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = (login) => ({ cookie: `woodshed_session=${login}` });
+
+  assert.deepEqual(JSON.parse(await getBody(port, `/api/my/sessions/${stopped.id}/machine`, as('mia-dev'))), { kept: true, outdated: true });
+  assert.deepEqual(JSON.parse(await getBody(port, `/api/my/sessions/${stopped.id}/machine`, as('joel'))), { error: 'no session you can open with that id' }, 'someone else\'s answers as none');
+  assert.equal((await post(port, `/api/my/sessions/${stopped.id}/resume`, { latestImage: true }, as('mia-dev'))).status, 201);
+  assert.equal((await post(port, `/api/my/sessions/${stopped.id}/resume`, {}, as('mia-dev'))).status, 201);
+  assert.equal((await post(port, `/api/my/sessions/${stopped.id}/resume`, { latestImage: 'yes' }, as('mia-dev'))).status, 201);
+  assert.deepEqual(resumed.map((r) => r.latestImage), [true, false, false], 'only a true asks for it');
+});
+
 test('Grok Build and OpenCode are offered and start only on their owner\'s own sign-in', async (t) => {
   t.mock.method(console, 'log', () => {});
   const started = [];

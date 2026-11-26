@@ -27,7 +27,7 @@ it: no Secrets page, no saved Claude homes, no databases of its own, or GitHub's
 | --- | --- | --- |
 | `name` | `aws` or `local` | Its start log, and which kind a fixed secret store is on the Secrets page |
 | `words` | What the pages say about where a session runs: the start checklist's first steps (`null` leaves one out), the wait when there is no room, the note under the session limits, where homes and databases are kept, and the webhook receiver. `console/providerWords.mjs` lists each and has the defaults, which name no provider | Every page, through `pageShell`'s `woodshed-provider` meta tag |
-| `launcher` | `start`, `stop`, `isAlive` and the rest, for session containers, and optionally `progress` (below) | `console/fleet.mjs` |
+| `launcher` | `start`, `stop`, `isAlive` and the rest, for session containers, and optionally `progress` and `keptMachine` (below) | `console/fleet.mjs` |
 | `secrets` | `list`, `read`, `write`, `save`, `remove`, over the names in `console/secrets.mjs` | The Secrets page, sign-in, the GitHub App key |
 | `homes` | `put`, `get`, `copy`, `remove` and the rest, for saved Claude homes | `console/sessionApi.mjs` |
 | `dbAdmin` | `start(command)`, `stop(id)`, `outcomes(ids)`, runs of `session/dbAdmin.mjs` | `console/databases.mjs` |
@@ -69,6 +69,17 @@ such as a machine being set up for the sessions, it may also have `progress(sess
 The fleet calls it every couple of seconds while a session waits for its retry, and once as the start goes back in the
 queue; an error keeps the steps it had and is logged once (`fleet: wait progress not read`). Neither provider here has
 one: their waits are AWS's quota, which says nothing of its progress.
+
+### A machine kept between a session's runs
+
+A launcher that keeps a stopped session's machine (its disk, its databases) for the next Resume, rather than making a
+new one each start, may have `keptMachine(sessionId)`: `null` when it keeps none for that session, else `{outdated}`,
+true when the machine was made from an older image of the session's repo than a new session gets. Resume starts the
+session on that older image, as before; the stopped private session's page then also offers **Resume on the latest
+image**, whose start passes `{latestImage: true}` as `start`'s third argument. The launcher then leaves an outdated
+machine, what it held with it, and makes a new one; a machine that is not outdated is kept as on any Resume, so the
+option is safe on a start tried again. Neither provider here has one: an ECS task and a local container are made
+anew at every start.
 
 To add one: a folder with an `index.mjs` returning that object, an entry in `console.mjs`'s `PROVIDERS`, its own
 settings in `NEEDS` so the other providers refuse them, and a README in the shape of these two: what it gives, how to

@@ -633,7 +633,9 @@ export function createFleet({
     try {
       // Copied while the container starts: the session waits for them at the session API before it writes its env.
       if (((!session.owner && !isAsk(session) && !isReview(session)) || session.ownDatabases) && databases?.available) await databases.createForSession(session.id);
-      started = await launcher.start(session.id, { ...sessionEnv(session), ...startTokenFor(session) });
+      // A Resume on the latest image asks the launcher to leave a machine it kept for the session, made from an older
+      // image, and start it on a new one (keptMachine). A launcher that keeps none has nothing to leave.
+      started = await launcher.start(session.id, { ...sessionEnv(session), ...startTokenFor(session) }, ...(session.latestImage ? [{ latestImage: true }] : []));
     } catch (err) {
       const error = startError(err);
       // No room is AWS being full for now, not the session failing: it waits in the queue until a task stops.
@@ -2132,7 +2134,7 @@ export function createFleet({
    * @param {{owner: string, id: string, background?: boolean, herdrParent?: boolean}} args  herdrParent: for this run, as
    *   startPrivate's
    */
-  async function resumePrivate({ owner, id, background = false, herdrParent = false }) {
+  async function resumePrivate({ owner, id, background = false, herdrParent = false, latestImage = false }) {
     const session = find(id);
     if (!session || session.owner !== owner) throw shown('no session you can open with that id');
     if (ACTIVE_STATUSES.has(session.status)) throw shown('that session is still running');
@@ -2143,6 +2145,8 @@ export function createFleet({
       endpoint: null, startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: agents.agentOfSession(session) === 'claude' ? session.claudeSession ?? null : null,
       lastActiveAt: null, checkedAt: null, app: null, appServers: null, appName: null, apps: null, resumedAt: nowIso(), resumedBy: owner, queuedAt: nowIso(),
       herdrParent: herdrParent ? true : null,
+      // For this run alone: the next Resume keeps the machine again, unless it is asked too.
+      latestImage: latestImage ? true : null,
       // A Resume starts its own agent alone: what the agents of the last run were allowed (a Codex one's sign-in) is
       // not this run's, and the last run's list is not either.
       extraAgents: null, agents: null,
@@ -2153,9 +2157,29 @@ export function createFleet({
     });
     // Or, when its stop was not read yet, the watch starts a new run for this one.
     announcer.renew(session.id);
-    console.log('fleet: resuming a private session', { id, owner, claudeSession: Boolean(session.resumeClaude), background, tainted: Boolean(session.taintedAt), herdrParent: Boolean(herdrParent) });
+    console.log('fleet: resuming a private session', { id, owner, claudeSession: Boolean(session.resumeClaude), background, tainted: Boolean(session.taintedAt), herdrParent: Boolean(herdrParent), latestImage: Boolean(latestImage) });
     await runStartQueued({ background });
     return session;
+  }
+
+  /**
+   * The machine a launcher keeps for a stopped private session between its runs, as its owner's Resume would find it:
+   * `outdated` when it was made from an older image of its repo than a new session gets, which its next start would run
+   * on all the same. Only a launcher that keeps one says (`keptMachine`); every other answers none.
+   * @returns {Promise<{kept: boolean, outdated: boolean}>}
+   */
+  async function keptMachine({ owner, id }) {
+    const session = find(id);
+    if (!session || session.owner !== owner) throw shown('no session you can open with that id');
+    const none = { kept: false, outdated: false };
+    if (ACTIVE_STATUSES.has(session.status) || typeof launcher.keptMachine !== 'function') return none;
+    try {
+      const kept = await launcher.keptMachine(session.id);
+      return kept ? { kept: true, outdated: kept.outdated === true } : none;
+    } catch (err) {
+      console.warn('fleet: kept machine not read', { id, message: firstLine(err) });
+      return none;
+    }
   }
 
   // Remove and Delete work on a running session too: it is stopped first, pushing its work as any stop does. One
@@ -3322,7 +3346,7 @@ export function createFleet({
 
   return {
     noteMessage, noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
-    createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, keptMachine, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaLog, reviewLog, qaVideo, qaPoster, publicQaVideo, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

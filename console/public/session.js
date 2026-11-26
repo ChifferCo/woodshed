@@ -517,9 +517,9 @@
   }
 
   // Resume on a stopped private session: it opens on its page as it starts again. @returns {Promise<boolean>}
-  async function resumePrivate(s) {
+  async function resumePrivate(s, { latestImage = false } = {}) {
     try {
-      const next = await W.postJson(`/api/my/sessions/${s.id}/resume`, {});
+      const next = await W.postJson(`/api/my/sessions/${s.id}/resume`, latestImage ? { latestImage: true } : {});
       navigate(`/s/${next.id}?tab=chat`);
       return true;
     } catch (err) {
@@ -637,6 +637,39 @@
       },
     }, 'Resume');
     return button;
+  }
+
+  // The machine its launcher keeps for a stopped private session, read once for each stop: one made from an older image
+  // of its repo than a new session gets resumes on that image, which may no longer start the branch. Resume on the latest
+  // image leaves it, with what it held, for a new one; the branch and the conversation go along as on any Resume.
+  const keptMachines = new Map();
+  function keptMachineRow(s) {
+    const key = `${s.id}@${s.stoppedAt ?? ''}`;
+    const slot = h('div');
+    const fill = (kept) => {
+      if (!kept?.outdated) return;
+      const button = h('button', {
+        type: 'button', class: 'btn btn-plain', title: 'Start it on a new machine from its repo\u2019s latest image',
+        onclick: async (e) => {
+          e.preventDefault();
+          if (!window.confirm(`Resume \u201c${s.title}\u201d on the latest image? The machine it ran on is removed, with its databases and anything else it kept there. The branch and ${W.agentOf(s)}\u2019s conversation go along.`)) return;
+          button.disabled = true;
+          if (!(await resumePrivate(s, { latestImage: true }))) button.disabled = false;
+        },
+      }, 'Resume on the latest image');
+      slot.replaceChildren(
+        h('p', { class: 'hint' }, 'Its machine was made from an older image of its repo, which Resume starts again. If that no longer starts the branch, resume it on the latest image.'),
+        h('div', { class: 'row' }, button));
+    };
+    // The read itself is kept, so a panel drawn again before it answers fills from the same answer.
+    if (!keptMachines.has(key)) {
+      keptMachines.set(key, W.getJson(`/api/my/sessions/${s.id}/machine`).catch(() => {
+        keptMachines.delete(key);
+        return null;
+      }));
+    }
+    keptMachines.get(key).then(fill);
+    return slot;
   }
 
   // Pins are the console's, per person; a change shows at once and the next refresh confirms it.
@@ -2474,7 +2507,8 @@
         ? [h('p', null, W.agentOf(s) !== 'claude'
           ? `Work in progress is committed and pushed to the branch before a stop. Resume starts ${W.agentOf(s)} again on the same branch, in a new conversation: ${W.agentTitle(s)} keeps none between runs.`
           : 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
-          h('div', { class: 'row' }, W.canResumePrivate(s) && resumeButton(s, false), removeButton(s))]
+          h('div', { class: 'row' }, W.canResumePrivate(s) && resumeButton(s, false), removeButton(s)),
+          W.canResumePrivate(s) && keptMachineRow(s)]
         : s.kind === 'ask' ? h('p', null, 'Its conversation is deleted. Mention the bot in a Slack thread to ask again.')
           : s.trigger === 'qa' ? h('p', null, s.qa?.conclusion
             ? `A QA session pushes nothing: its report is the QA comment and check on ${W.ref(s)}. Add the QA label to the pull request again to run QA again.`
