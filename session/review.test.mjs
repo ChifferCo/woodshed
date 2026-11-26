@@ -154,6 +154,7 @@ async function runReview(t, { committed = {}, origin = 'https://github.com/Acme/
     SESSION_ID: '0a1b2c3d', SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`, REVIEW_SCRIPT: REVIEW_MJS,
     REVIEW_RUNNING: path.join(dir, 'running'), REVIEW_AUTHOR: 'rev[bot]', GIT_ALLOW_PROTOCOL: 'file',
   };
+  for (const k of ["REVIEW_AGENTS", "REVIEW_CODEX_AUTH", "REVIEW_CODEX_ACCOUNT", "REVIEW_CODEX_MINUTES", "REVIEW_OPENCODE_PROVIDER"]) delete env[k];
   delete env.GITHUB_REPOSITORY;
   delete env.WOODSHED_CODEX_AUTH;
   delete env.CODEX_HOME;
