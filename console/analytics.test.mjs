@@ -71,6 +71,19 @@ test('a session that ended on main, or a pull request older than the session, is
   assert.deepEqual(r.pulls.recent.map((p) => [p.number, p.via, p.login]).sort(), [[1, 'other', 'cy'], [2, 'other', 'dee'], [3, 'woodshed', 'bo']]);
 });
 
+test('two sessions on one branch: a pull request is the newest one\'s that had started when it was opened', () => {
+  const records = [
+    record({ id: 'aaaa0001', login: 'ana', branch: 'woodshed/feature', createdAt: ago(6) }),
+    record({ id: 'aaaa0002', login: 'bo', branch: 'woodshed/feature', createdAt: ago(2) }),
+  ];
+  const pulls = [
+    pull({ number: 1, url: url(1), author: 'x', branch: 'woodshed/feature', headRepo: REPO, createdAt: ago(4) }),
+    pull({ number: 2, url: url(2), author: 'x', branch: 'woodshed/feature', headRepo: REPO, createdAt: ago(1) }),
+  ];
+  const r = analyticsReport({ records, pulls: [{ project: 'app', repo: REPO, pulls }], days: 30, now: NOW });
+  assert.deepEqual(r.pulls.recent.map((p) => [p.number, p.via, p.login]).sort(), [[1, 'woodshed', 'ana'], [2, 'woodshed', 'bo']]);
+});
+
 test('a tainted session is counted, but its branch, pull requests and title are not kept', () => {
   const r = usageRecord({ id: 'dddd0001', createdAt: ago(1), owner: 'ana', taintedAt: ago(1), branch: 'woodshed/x', prUrl: url(3), title: 'x', kind: 'task' }, { name: 'app', repo: REPO });
   assert.deepEqual([r.login, r.branch, r.prUrls, r.title], ['ana', null, [], null]);

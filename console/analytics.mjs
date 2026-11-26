@@ -130,7 +130,12 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
     if (r.kind === 'review' && r.tier && r.number) reviewTier.set(`${lower(r.repo)}#${r.number}`, r.tier);
     if (r.kind !== 'work') continue;
     for (const url of r.prUrls ?? []) byUrl.set(lower(url), r);
-    if (r.branch && r.repo && !SHARED_BRANCHES.has(lower(r.branch))) byBranch.set(`${lower(r.repo)}:${r.branch}`, r);
+    // Every session on the branch, oldest first (records are sorted above): a pull request is the newest one's that had
+    // started when it was opened.
+    if (r.branch && r.repo && !SHARED_BRANCHES.has(lower(r.branch))) {
+      const key = `${lower(r.repo)}:${r.branch}`;
+      byBranch.set(key, [...(byBranch.get(key) ?? []), r]);
+    }
   }
 
   const counts = { work: 0, private: 0, shared: 0, review: 0, qa: 0, ask: 0 };
@@ -159,8 +164,8 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
       // A branch is a session's only on the repo it pushed to: a fork's pull request may reuse the name.
       // And only one opened once the session had started: an older one on a common name (`patch-1`) is not its.
       const ownBranch = !pull.headRepo || lower(pull.headRepo) === lower(repo);
-      const byName = ownBranch ? byBranch.get(`${lower(repo)}:${pull.branch}`) : null;
-      const named = byName && Date.parse(pull.createdAt) >= Date.parse(byName.createdAt) ? byName : null;
+      const onBranch = ownBranch ? byBranch.get(`${lower(repo)}:${pull.branch}`) ?? [] : [];
+      const named = onBranch.findLast((r) => Date.parse(pull.createdAt) >= Date.parse(r.createdAt)) ?? null;
       const session = byUrl.get(lower(pull.url)) ?? named ?? null;
       // A bot's own pull request (Dependabot, Renovate) is nobody's work to count, unless a session opened it.
       if (!session && pull.bot) continue;
