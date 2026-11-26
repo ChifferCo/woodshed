@@ -642,7 +642,9 @@
   // The machine its launcher keeps for a stopped private session, read once for each stop: one made from an older image
   // of its repo than a new session gets resumes on that image, which may no longer start the branch. Resume on the latest
   // image leaves it, with what it held, for a new one; the branch and the conversation go along as on any Resume.
+  // A settled answer is read again after a minute, so a newer image pushed while the page stays open shows.
   const keptMachines = new Map();
+  const KEPT_MACHINE_MS = 60_000;
   function keptMachineRow(s) {
     const key = `${s.id}@${s.stoppedAt ?? ''}`;
     const slot = h('div');
@@ -652,7 +654,12 @@
         type: 'button', class: 'btn btn-plain', title: 'Start it on a new machine from its repo\u2019s latest image',
         onclick: async (e) => {
           e.preventDefault();
-          if (!window.confirm(`Resume \u201c${s.title}\u201d on the latest image? The machine it ran on is removed, with its databases and anything else it kept there. The branch and ${W.agentOf(s)}\u2019s conversation go along.`)) return;
+          // What goes along is what a Resume keeps anywhere but the machine: the branch, and claude's saved conversation.
+          // The other agents start a new conversation on any Resume, and what they kept on the machine goes with it.
+          const along = W.agentOf(s) === 'claude'
+            ? 'The branch goes along, and claude\u2019s conversation when your Claude home saved it.'
+            : `The branch goes along. ${W.agentTitle(s)} starts a new conversation, as on any Resume, and what it kept on that machine goes too.`;
+          if (!window.confirm(`Resume \u201c${s.title}\u201d on the latest image? The machine it ran on is removed, with its databases and anything else it kept there. ${along}`)) return;
           button.disabled = true;
           if (!(await resumePrivate(s, { latestImage: true }))) button.disabled = false;
         },
@@ -662,13 +669,16 @@
         h('div', { class: 'row' }, button));
     };
     // The read itself is kept, so a panel drawn again before it answers fills from the same answer.
-    if (!keptMachines.has(key)) {
-      keptMachines.set(key, W.getJson(`/api/my/sessions/${s.id}/machine`).catch(() => {
-        keptMachines.delete(key);
-        return null;
-      }));
+    const cached = keptMachines.get(key);
+    if (!cached || (cached.settledAt && Date.now() - cached.settledAt > KEPT_MACHINE_MS)) {
+      const entry = { settledAt: null };
+      entry.read = W.getJson(`/api/my/sessions/${s.id}/machine`).catch(() => null).then((kept) => {
+        entry.settledAt = Date.now();
+        return kept;
+      });
+      keptMachines.set(key, entry);
     }
-    keptMachines.get(key).then(fill);
+    keptMachines.get(key).read.then(fill);
     return slot;
   }
 

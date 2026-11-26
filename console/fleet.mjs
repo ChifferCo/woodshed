@@ -657,6 +657,8 @@ export function createFleet({
       return;
     }
     const { ref, ...endpoint } = started;
+    // Asked of this start alone: a start the launcher has made never leaves the machine again.
+    if (session.latestImage) update(session, { latestImage: null });
     // The container may already have reported a step of its own: the docker launcher starts it before answering.
     update(session, { ref, endpoint, startSteps: { machine: nowIso(), ...session.startSteps } });
     console.log('fleet: machine ready', { id: session.id, seconds: secondsSince(session.startedAt) });

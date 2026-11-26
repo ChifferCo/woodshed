@@ -1310,10 +1310,17 @@ test('Resume on the latest image asks the launcher for a new machine, that run a
 
   await fleet.resumePrivate({ owner: 'joel', id: first.id, latestImage: true });
   assert.deepEqual(calls.startOptions.at(-1), [{ latestImage: true }], 'the launcher is told to leave an outdated machine');
+  assert.equal(first.latestImage, null, 'asked of that start alone, once the launcher made it');
+  const latestEnv = calls.started.at(-1).env;
   await fleet.tick();
   await fleet.stop(first, 'stopped from the console', { by: 'joel' });
   await fleet.resumePrivate({ owner: 'joel', id: first.id });
   assert.deepEqual(calls.startOptions.at(-1), [], 'a plain Resume keeps the machine again');
+  // The session itself starts as on any Resume: the option is the launcher's, and nothing of it reaches the container.
+  const plainEnv = calls.started.at(-1).env;
+  const tokens = ['SESSION_TOKEN', 'TERMINAL_TOKEN', 'WOODSHED_START_TOKEN'];
+  const without = (env) => Object.fromEntries(Object.entries(env).filter(([key]) => !tokens.includes(key)));
+  assert.deepEqual(without(latestEnv), without(plainEnv));
 
   launcher.keptMachine = async () => { throw new Error('the pool did not answer'); };
   await fleet.tick();
