@@ -1,4 +1,4 @@
-The run log is a fold under an ended QA session's facts (`.run-log-box`, session.js `qaRunLog`): what the run did and how
+The run log is a fold under an ended QA or review session's facts (`.run-log-box`, session.js `qaRunLog`): what the run did and how
 each claude pass ended, for a run that sent no verdict.
 
 - Closed: a `Run log` summary in 14px, `ink`, with the browser's disclosure arrow. Nothing is fetched until it opens.

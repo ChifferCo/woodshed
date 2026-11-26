@@ -21,7 +21,7 @@ const ENDINGS = {
   error_max_budget_usd: 'ran out of its budget',
 };
 
-// The console keeps the log, and whoever may open the session reads it. The run's tools print what they like (a failed
+// The console keeps the log, and an admin or whoever started the run reads it. The run's tools print what they like (a failed
 // install shows the registry token it used), so the whole log is scrubbed before it is sent: the values of this
 // environment's own secrets, then what credentials look like.
 const SECRET_NAME_RE = /(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|AUTH)/i;
