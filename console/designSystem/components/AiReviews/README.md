@@ -25,7 +25,8 @@ is `amber`.
   `verdictword` (approves, requests changes, comments) in its tone, then mono tags in `meta` on a `line-soft` border:
   `dismissed` when a maintainer dismissed it, `latest commit` (or `older commit <sha>` in `amber-ink`), how many
   findings, the time, and **Open on GitHub**. The newest is open, older ones folded. It takes the focus, says
-  `aria-expanded`, and Enter or Space folds it, as a click does.
+  `aria-expanded`, and Enter or Space folds it, as a click does. On narrow screens the header wraps onto more
+  lines, keeping the caret beside the reviewer’s first line and each badge, time and link together. **Open on GitHub** aligns to the right on its line.
 - Each reviewer's part follows, its name and verdict over its markdown at 13.5px; parts are split by a dashed
   `line-soft` rule. A follow-up box about the review as a whole ends them.
 - The findings: "2 findings" in `meta`, then a card each on `ground` with a `line-soft` border, radius 5: the
