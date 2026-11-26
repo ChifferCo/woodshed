@@ -235,3 +235,34 @@ test('behind a hosting proxy an owner sees only the repos GitHub says they write
   const nobody = await as('dee-owner');
   assert.deepEqual([nobody.body.projects, nobody.body.sessions.work, nobody.body.pulls.recent.length], [[], 0, 0]);
 });
+
+test('with GitHub sign-in, an admin who loses write access to the default repo stops seeing it within a minute, on the same cookie', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const { createMembers } = await import('./members.mjs');
+  const store = { state: { members: { mia: { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true } } }, save() {} };
+  const members = createMembers({ store });
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+    projects: [{ name: 'app', repo: 'o/app', default: true }, { name: 'web', repo: 'o/web' }],
+  };
+  // The cookie stays good throughout: sign-in's own recheck is hourly.
+  const auth = { enabled: () => true, available: () => true, sessionFor: async () => ({ login: 'mia' }), visitorFor: async () => null };
+  const writes = new Set(['o/app', 'o/web']);
+  let clock = NOW;
+  const githubFor = (project) => ({
+    async canWrite() { return writes.has(project.repo); },
+    async recentPulls() { return { pulls: [pull({ number: 1, url: `https://github.com/${project.repo}/pull/1`, author: 'cy' })], total: 1, truncated: false }; },
+  });
+  const analytics = createAnalytics({ config, sessions: () => [], state: () => ({}), githubFor, now: () => clock });
+  const projectAccess = createProjectAccess({ config, githubFor, signIn: () => true, now: () => clock });
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, analytics, projectAccess });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => { server.listen(0, '127.0.0.1', resolve); });
+  t.after(() => server.close());
+  const projects = async () => (await (await fetch(`http://127.0.0.1:${server.address().port}/api/analytics`, { headers: { cookie: 'woodshed_session=mia' } })).json()).projects;
+  assert.deepEqual(await projects(), ['app', 'web']);
+  writes.delete('o/app');
+  clock += 61_000;
+  const after = await projects();
+  assert.deepEqual(after, ['web'], 'the default repo is asked too, not taken as proved by the sign-in');
+});

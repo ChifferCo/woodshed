@@ -5,6 +5,8 @@
 import { allProjects, defaultProject, projectNamed } from './projects.mjs';
 
 const FRESH_MS = 10 * 60_000;
+// The Analytics page shows another repo's private pull requests: a lost write access counts within a minute.
+const VISIBLE_FRESH_MS = 60_000;
 
 const firstLine = (err) => String(err?.message ?? err).split('\n')[0];
 
@@ -32,11 +34,11 @@ export function createProjectAccess({ config, githubFor, viewPrefs = null, signI
     return askWrite(login, project, github);
   }
 
-  // GitHub's answer for whether the person writes to the project's repo, kept FRESH_MS. A failure is a no.
-  async function askWrite(login, project, github) {
+  // GitHub's answer for whether the person writes to the project's repo, kept `freshMs`. A failure is a no.
+  async function askWrite(login, project, github, freshMs = FRESH_MS) {
     const key = `${login}\n${project.name}\n${project.repo}`;
     const kept = checked.get(key);
-    if (kept && now() - kept.at < FRESH_MS) return kept.ok;
+    if (kept && now() - kept.at < freshMs) return kept.ok;
     try {
       const ok = await github.canWrite(login);
       checked.set(key, { at: now(), ok });
@@ -57,19 +59,19 @@ export function createProjectAccess({ config, githubFor, viewPrefs = null, signI
   }
 
   /**
-   * The projects whose repo the person may read about on the Analytics page (analytics.mjs). Where GitHub sign-in is
-   * on, or nobody signs in, those they may start on. Behind a hosting proxy the host's role says nothing of a repo, and
-   * no sign-in proved the default one: GitHub is asked of each, the default included, and one it cannot answer for is
-   * left out.
+   * The projects whose repo the person may read about on the Analytics page (analytics.mjs). Wherever people are told
+   * apart (GitHub sign-in, or a hosting proxy, whose role says nothing of a repo) GitHub is asked of each repo, the
+   * default one included: sign-in proved it only when it was last checked, and access can go since. An answer is kept a
+   * minute, and a repo GitHub cannot answer for is left out. With nobody signing in, every one.
    * @returns {Promise<object[]>}
    */
   async function visible(login) {
-    if (!hosted()) return startable(login);
     const projects = allProjects(config);
+    if (!hosted() && !signIn()) return projects;
     const allowed = await Promise.all(projects.map((project) => {
       const github = githubFor(project);
       if (!login || !github?.canWrite) return false;
-      return askWrite(login, project, github);
+      return askWrite(login, project, github, VISIBLE_FRESH_MS);
     }));
     return projects.filter((_, i) => allowed[i]);
   }
