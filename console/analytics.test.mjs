@@ -467,3 +467,9 @@ test('a review that has not reported adds no models', () => {
   const { pulls: { recent } } = analyticsReport({ records, pulls: [{ project: 'app', repo: REPO, pulls: [pull({ number: 1, url: url(1), botReviewers: [] })] }], days: 30, now: NOW });
   assert.deepEqual(recent[0].models, []);
 });
+
+test('a review\'s models are the agents its report named, not those scheduled', () => {
+  const s = { id: 'eeee0001', repo: REPO, kind: 'review', createdAt: ago(1), review: { agents: ['claude', 'codex'], reportedAgents: ['claude'], reported: true }, number: 1, status: 'stopped' };
+  assert.deepEqual(usageRecord(s).reviewAgents, ['claude']);
+  assert.deepEqual(usageRecord({ ...s, review: { agents: ['claude', 'codex'], reported: true } }).reviewAgents, ['claude', 'codex']);
+});

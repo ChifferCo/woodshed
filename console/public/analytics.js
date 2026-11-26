@@ -435,8 +435,10 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     const picked = who();
     const select = h('select', { 'aria-label': 'Person', onchange: (e) => pick('person', e.target.value || null, null) },
       h('option', { value: '' }, 'Everyone'),
-      data.people.map((p) => h('option', { value: p.login, selected: sameLogin(p.login, picked) }, W.personText?.(p.login) ?? p.login)));
-    if (picked) select.value = data.people.find((p) => sameLogin(p.login, picked))?.login ?? picked;
+      // A person picked who has nothing in this window stays in the menu, so it does not read as Everyone.
+      [...data.people.map((p) => p.login), ...(picked && !data.people.some((p) => sameLogin(p.login, picked)) ? [picked] : [])]
+        .map((login) => h('option', { value: login, selected: sameLogin(login, picked) }, W.personText?.(login) ?? login)));
+    if (picked) select.value = [...data.people.map((p) => p.login), picked].find((l) => sameLogin(l, picked));
     return h('label', { class: 'person-pick' }, icon('human', 'slate'), h('span', null, 'Person'), select);
   }
 

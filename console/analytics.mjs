@@ -62,7 +62,8 @@ export function usageRecord(session, project = null) {
     // The models a review session ran (none named: the default, Claude), once it reported.
     // Done once it reported: a queued or failed review ran nothing to count.
     reviewDone: isReview(session) ? Boolean(session.review?.reported) : null,
-    reviewAgents: isReview(session) ? (session.review?.agents?.length ? session.review.agents : ['claude']) : null,
+    // The agents its report named, else those scheduled: one that timed out reported nothing.
+    reviewAgents: isReview(session) ? (session.review?.reportedAgents?.length ? session.review.reportedAgents : session.review?.agents?.length ? session.review.agents : ['claude']) : null,
   };
 }
 
