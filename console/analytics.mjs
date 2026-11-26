@@ -60,8 +60,8 @@ export function usageRecord(session, project = null) {
     branch: tainted ? null : session.branch ?? null, prUrls: tainted ? [] : prUrlsOf(session), number: session.number ?? null,
     tier: session.review?.tier ?? null, status: session.status ?? null,
     // The models a review session ran (none named: the default, Claude), once it reported.
-    // Done once it reported: a queued or failed review ran nothing to count.
-    reviewDone: isReview(session) ? Boolean(session.review?.reported) : null,
+    // Done once it reported a verdict (a run that wrote none ran nothing to count): a queued or failed review ran nothing to count.
+    reviewDone: isReview(session) ? Boolean(session.review?.reported) && session.review?.conclusion !== null : null,
     // The agents its report named, else those scheduled: one that timed out reported nothing.
     reviewAgents: isReview(session) ? (session.review?.reportedAgents?.length ? session.review.reportedAgents : session.review?.agents?.length ? session.review.agents : ['claude']) : null,
   };

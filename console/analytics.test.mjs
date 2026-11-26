@@ -473,3 +473,10 @@ test('a review\'s models are the agents its report named, not those scheduled', 
   assert.deepEqual(usageRecord(s).reviewAgents, ['claude']);
   assert.deepEqual(usageRecord({ ...s, review: { agents: ['claude', 'codex'], reported: true } }).reviewAgents, ['claude', 'codex']);
 });
+
+test('a review that reported no verdict is not done, one with a verdict or from before verdicts were kept is', () => {
+  const s = { id: 'ffff0001', repo: REPO, kind: 'review', createdAt: ago(1), review: { agents: ['claude'], reported: true, conclusion: null }, number: 1, status: 'stopped' };
+  assert.equal(usageRecord(s).reviewDone, false);
+  assert.equal(usageRecord({ ...s, review: { ...s.review, conclusion: 'APPROVE' } }).reviewDone, true);
+  assert.equal(usageRecord({ ...s, review: { agents: ['claude'], reported: true } }).reviewDone, true);
+});
