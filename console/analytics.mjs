@@ -59,7 +59,9 @@ export function usageRecord(session, project = null) {
     createdAt: session.createdAt ?? null, title: session.owner || tainted ? null : String(session.title ?? '').slice(0, 200) || null,
     branch: tainted ? null : session.branch ?? null, prUrls: tainted ? [] : prUrlsOf(session), number: session.number ?? null,
     tier: session.review?.tier ?? null, status: session.status ?? null,
-    // The models a review session ran (none named: the default, Claude).
+    // The models a review session ran (none named: the default, Claude), once it reported.
+    // Done once it reported: a queued or failed review ran nothing to count.
+    reviewDone: isReview(session) ? Boolean(session.review?.reported) : null,
     reviewAgents: isReview(session) ? (session.review?.agents?.length ? session.review.agents : ['claude']) : null,
   };
 }
@@ -142,7 +144,8 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
       const key = `${lower(r.repo)}#${r.number}`;
       if (r.tier) reviewTier.set(key, r.tier);
       const models = reviewModels.get(key) ?? new Set();
-      for (const a of r.reviewAgents ?? ['claude']) models.add(a);
+      // A record kept before `reviewDone` counts when its review gave a tier.
+      if (r.reviewDone ?? Boolean(r.tier)) for (const a of r.reviewAgents ?? ['claude']) models.add(a);
       reviewModels.set(key, models);
     }
     if (r.kind !== 'work') continue;
@@ -192,7 +195,7 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
       // Models: the agents of Woodshed's own reviews when there were any (they post as a bot too, so the bots are not
       // counted again), else the distinct bots that reviewed on GitHub.
       const ran = reviewModels.get(`${lower(repo)}#${pull.number}`);
-      const models = ran ? [...ran] : pull.botReviewers ?? [];
+      const models = ran?.size ? [...ran] : pull.botReviewers ?? [];
       const humanReviewers = pull.humanReviewers ?? [];
       const add = (p) => {
         p.opened++;

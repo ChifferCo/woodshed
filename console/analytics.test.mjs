@@ -461,3 +461,9 @@ test('the daily chart has one bucket for each local date and counts each series 
     if (was === undefined) delete process.env.TZ; else process.env.TZ = was;
   }
 });
+
+test('a review that has not reported adds no models', () => {
+  const records = [record({ id: 'dddd0001', kind: 'review', repo: REPO, number: 1, reviewAgents: ['claude', 'codex'], reviewDone: false, createdAt: ago(2) })];
+  const { pulls: { recent } } = analyticsReport({ records, pulls: [{ project: 'app', repo: REPO, pulls: [pull({ number: 1, url: url(1), botReviewers: [] })] }], days: 30, now: NOW });
+  assert.deepEqual(recent[0].models, []);
+});
