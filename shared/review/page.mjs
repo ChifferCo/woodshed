@@ -625,6 +625,8 @@ ${DARK_PALETTE}
        parts and its findings, each with the follow-ups asked about it. */
     .aiintro { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 0 0 0.9rem; max-width: var(--prose-measure); }
     .aibox .saidhead { flex-wrap: wrap; row-gap: 0.2rem; }
+    .aiheading { display: flex; align-items: baseline; gap: 0.45rem; min-width: 0; overflow-wrap: anywhere; }
+    .aiheading .caret { flex: none; }
     .aibox .saidhead :is(.verdictword, .aitag, .when, a) { white-space: nowrap; }
     .aibox .saidhead > a { margin-left: auto; }
     .aitag {
@@ -4054,7 +4056,9 @@ ${DARK_PALETTE}
       var verdict = AI_WORD[review.conclusion] || AI_WORD.COMMENT;
       var box = el('div', 'saidbox aibox' + (verdict.tone ? ' ' + verdict.tone : '') + (open ? '' : ' folded'));
       var head = el('div', 'saidhead');
-      head.appendChild(el('span', 'who', review.agents.length ? review.agents.join(' and ') : review.heading));
+      var heading = el('span', 'aiheading');
+      heading.appendChild(el('span', 'who', review.agents.length ? review.agents.join(' and ') : review.heading));
+      head.appendChild(heading);
       head.appendChild(el('span', 'verdictword ' + verdict.tone, verdict.word));
       // A maintainer dismissed it on GitHub: what it said stays, and so does that.
       if (review.state === 'dismissed') head.appendChild(el('span', 'aitag', 'dismissed'));
@@ -4067,7 +4071,7 @@ ${DARK_PALETTE}
       head.appendChild(el('span', 'aitag', n + (n === 1 ? ' finding' : ' findings')));
       if (review.at) head.appendChild(el('span', 'when', fmtWhen(review.at)));
       if (review.url) head.appendChild(openOnGitHub(review.url, 'Open on GitHub'));
-      foldable(head, review.id, open);
+      foldable(head, review.id, open, heading);
       box.appendChild(head);
       if (!open) return box;
 
@@ -4208,9 +4212,9 @@ ${DARK_PALETTE}
     // keep doing their own job.
     // A disclosure for the keyboard too: it takes the focus, says whether it is
     // open, and Enter or Space folds it, keeping the focus on it after the render.
-    function foldable(head, id, open) {
+    function foldable(head, id, open, caretParent = head) {
       head.classList.add('toggles');
-      head.insertBefore(el('span', 'caret', open ? '\\u25be' : '\\u25b8'), head.firstChild);
+      caretParent.prepend(el('span', 'caret', open ? '\\u25be' : '\\u25b8'));
       head.tabIndex = 0;
       head.setAttribute('role', 'button');
       head.setAttribute('aria-expanded', open ? 'true' : 'false');
