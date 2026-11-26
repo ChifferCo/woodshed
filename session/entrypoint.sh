@@ -115,7 +115,9 @@ readProjectFrom() {
   out=$(project get from 2>"$errors") || status=$?
   if [ "$status" != 0 ]; then
     cat "$errors" >&2
-    why=$(sed -n 's/^project: //p' "$errors" | head -n 1 | cut -c1-300)
+    # One sed that stops at the first line, with no pipe after it: under pipefail, a `head` closing the pipe early on
+    # a long message would end the assignment, and the start, before the ERROR below.
+    why=$(sed -n '/^project: /{s/^project: //;s/^\(.\{300\}\).*/\1/;p;q;}' "$errors")
     rm -f "$errors"
     die "the project file could not be read${why:+: $why}"
   fi

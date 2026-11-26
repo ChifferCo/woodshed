@@ -631,13 +631,24 @@ test('a project file that does not parse stops the start with the reader\'s reas
     'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
     'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
     fn('usesVariable'), fn('readProjectFrom'), fn('writeEnvFiles'), 'writeEnvFiles', 'echo "went on"',
-  ].join('\n')], { encoding: 'utf8', env: { PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir } });
+  ].join('\n')], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir }) });
   assert.equal(run.status, 1);
   assert.doesNotMatch(run.stdout, /went on/);
   assert.match(run.stdout, /ERROR: the project file could not be read: \.woodshed\/project\.yaml: .*surprise/);
   // The console's status is the last ERROR line (console/fleet.mjs, failureReason): it is this one.
   assert.match(run.stdout.trim().split('\n').findLast((line) => line.includes('ERROR: ')), /surprise/);
   assert.match(run.stderr, /^project: /m, 'the reader\'s whole message is still logged');
+});
+
+test('a reader\'s message too long for one read still ends the start with its ERROR, under pipefail', () => {
+  // A stand-in reader writing many `project:` lines, as a quoted key with escaped newlines makes the real one do.
+  const run = spawnSync('bash', ['-c', [
+    'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
+    'project() { for i in $(seq 1 200000); do echo "project: line $i"; done >&2; return 1; }',
+    fn('readProjectFrom'), 'readProjectFrom from', 'echo "went on"',
+  ].join('\n')], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: isolatedEnv({ PATH: process.env.PATH }) });
+  assert.equal(run.status, 1, 'not 141, a pipe closed early');
+  assert.match(run.stdout, /ERROR: the project file could not be read: line 1\n/);
 });
 
 test('a session starts only the services its project\'s env uses, and warns of a line whose variable is unset', (t) => {
