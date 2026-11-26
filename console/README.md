@@ -3228,9 +3228,12 @@ work without it, not for ranking people:
 
 A pull request is through Woodshed when a session reported it, or worked on its branch, and it is then that session's
 person's, whoever GitHub says opened it (a shared session's opens as the App). One opened by a bot with no session is
-left out. Merge risk is the tier the review gave it: the project file's `pullRequests.mergeRisk.check` on its head
-commit, else the review's `merge risk: <tier>` label, else the tier a review session reported (kept on it as
-`review.tier`). Lines changed are shown quietly, last, as a rough size and never as a measure of anyone's output.
+left out. Merge risk is the tier the review gave it: the review's `merge risk: <tier>` label, which a review in a
+session puts on, read with the search; for the newest 100 with no label, the project file's
+`pullRequests.mergeRisk.check` on the head commit, asked 25 at a time (a review that runs as a workflow posts only the
+check, and asking every pull request's checks in the search made GitHub answer 502 on a busy repo); else the tier a
+review session reported (kept on it as `review.tier`). A label is a person's to change, so nothing gates on it: the
+page only reports it. Lines changed are shown quietly, last, as a rough size and never as a measure of anyone's output.
 
 A My Woodshed session is counted, and its pull request listed (GitHub shows it to the repo's writers anyway), but its
 title and prompt never are: on the page it is "Private session". Sessions come from the console's list and from

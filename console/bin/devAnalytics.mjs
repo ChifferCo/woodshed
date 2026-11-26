@@ -53,7 +53,8 @@ export function devAnalytics(now) {
       closedAt: merged ? new Date(at + mergeHours * 3_600_000).toISOString() : closed ? new Date(at + 3 * DAY).toISOString() : null,
       state: merged ? 'MERGED' : closed ? 'CLOSED' : 'OPEN', isDraft: false, additions: size, deletions: Math.round(size * rand() * 0.6),
       headRefName: branch, author: bot ? { login: 'renovate', __typename: 'Bot' } : { login: woodshed && rand() < 0.5 ? 'woodshed-dev' : login, __typename: woodshed ? 'Bot' : 'User' },
-      commits: { nodes: [{ commit: { checkSuites: { nodes: [{ checkRuns: { nodes: tier ? [{ title: `${tier}: made up for the dev console` }] : [] } }] } } }] },
+      // The review's label, as a review in a session puts on (github.mjs reads the tier from it).
+      labels: { nodes: tier ? [{ name: `merge risk: ${tier.toLowerCase()}` }] : [] },
     });
     return pulls.at(-1);
   };

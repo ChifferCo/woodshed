@@ -23,6 +23,8 @@ const READ_MS = 5 * 60_000;
 const KEEP_MS = 180 * DAY_MS;
 const KEEP_MAX = 5000;
 const LIST_MAX = 500;
+// The newest pull requests with no merge risk label whose check is asked (github.mjs, checkTiers).
+const CHECK_MAX = 100;
 const TIERS = ['Low', 'Medium', 'High'];
 // A session that ended on one of these was not working on a branch of its own: no pull request is its by the name.
 const SHARED_BRANCHES = new Set(['main', 'master', 'develop', 'development', 'trunk', 'staging', 'production']);
@@ -88,6 +90,12 @@ export function forgetUsage(state, login) {
   const before = state.usageKept?.length ?? 0;
   state.usageKept = (state.usageKept ?? []).filter((r) => !(r.private && lower(r.login) === lower(login)));
   return before - state.usageKept.length;
+}
+
+// gh's own error (`gh: HTTP 502`), which comes after the command it ran: the first line alone names the command.
+function ghSaid(err) {
+  const said = `${err?.stderr ?? ''}\n${err?.message ?? err}`.split('\n').map((l) => l.trim()).filter(Boolean);
+  return said.find((l) => /^gh: |HTTP \d{3}/.test(l)) ?? said.at(-1) ?? null;
 }
 
 const median = (values) => {
@@ -234,7 +242,8 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
 
 /**
  * @param {{config: object, sessions: () => object[], state: () => object, githubFor: (project: object) => object|null,
- *   gatesOf?: (name: string) => Promise<object|null>, members?: () => string[], now?: () => number}} deps
+ *   gatesOf?: (name: string) => Promise<object|null>, members?: () => string[], now?: () => number}} deps  `gatesOf`: the
+ *   project file's pull request gates, whose `mergeRisk.check` tiers a pull request the review's label does not
  */
 export function createAnalytics({ config, sessions, state, githubFor, gatesOf = async () => null, members = () => [], now = Date.now }) {
   // Each project's search, by project and day it starts from: {at, value} once read, or the read in flight.
@@ -249,8 +258,21 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
     const reading = (async () => {
       const gh = githubFor(project);
       if (!gh?.recentPulls) throw new Error('this console has no GitHub access for it');
+      // Both reads name the repo the viewer was let see: the default project's client follows the default repo, which an
+      // admin may change between them, and a number on another repo is another pull request.
+      const found = await gh.recentPulls({ since, repo: project.repo });
+      // A review that runs as a workflow posts its check and no label: those are asked apart, the newest first. A failure
+      // there keeps what the labels said.
       const check = (await gatesOf(project.name).catch(() => null))?.mergeRisk?.check ?? null;
-      return gh.recentPulls({ since, check });
+      const untiered = found.pulls.filter((p) => !p.tier).slice(0, CHECK_MAX).map((p) => p.number);
+      if (!check || !untiered.length || !gh.checkTiers) return found;
+      try {
+        const tiers = await gh.checkTiers(untiered, check, { repo: project.repo });
+        return { ...found, pulls: found.pulls.map((p) => (tiers.has(p.number) ? { ...p, tier: tiers.get(p.number) } : p)) };
+      } catch (err) {
+        console.warn('analytics: merge risk checks not read, the labels only', { project: project.name, asked: untiered.length, message: ghSaid(err) });
+        return found;
+      }
     })();
     reads.set(key, { ...held, reading });
     try {
@@ -284,7 +306,7 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
         truncated ||= found.truncated;
         return { project: project.name, repo: project.repo, pulls: found.pulls };
       } catch (err) {
-        console.warn('analytics: pull requests not read', { project: project.name, message: String(err?.message ?? err).split('\n')[0] });
+        console.warn('analytics: pull requests not read', { project: project.name, message: ghSaid(err) });
         failed.push({ project: project.name, repo: project.repo });
         return null;
       }
