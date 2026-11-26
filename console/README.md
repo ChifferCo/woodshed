@@ -370,6 +370,27 @@ page has a tab for each:
 review and the agent suite (see Slack below). The page shows when a waiting
 session pauses.
 
+### How the rail keeps up
+
+The console reads each session's state from its statusd (`GET /status`) and pushes what changed to every open page
+(`GET /api/sessions/live`, server-sent events, `liveSessions.mjs`): the whole list as the stream opens, then each
+session's changed fields within 100 ms of the console knowing them. A session the console just sent something to (a
+message, an answer, an interrupt) is read 400 ms later and every 2 s for 30 s after (`fleet.soon`, `checkLive`), and
+so is every session working, which is when Done or Needs you comes; the rest are read at the 10 s tick, all at once,
+eight at a time. A status read costs a session about a tenth of a second of CPU (git and `gh`'s cached lookups),
+which is why sessions not likely to change are not read every 2 s. So a card says Working within about a second of a
+message from the page, and Done or Needs you within about 2 s of the agent saying so. A message typed in the TUI tab
+is seen at the next tick, up to 10 s.
+
+The page keeps the stream only while its tab shows: over HTTP/1 a browser allows six connections to the console for
+all its tabs. It polls `GET /api/sessions` every 30 s while the stream is open, and every 5 s as before when it is
+not (refused by a console from before it, cut by a proxy, or reconnecting: the browser opens it again a second after
+it drops). A stream ends after 5 minutes and the browser opens it again, signed in afresh, so someone signed out or
+taken off People stops getting the list then at the latest. The console's stop ends every stream. A proxy in front
+must pass `text/event-stream` through unbuffered (the console sends `X-Accel-Buffering: no` for nginx); one that holds
+it back leaves the page on the poll, a little later than the stream but never wrong. The browser's notifications
+(`browserNotifications.js`) still read the list every 20 s from one tab of their own, which may be hidden.
+
 Every stop of a shared session that ran keeps it (`kept` in `state.json`): its
 databases (`woodshed__<id>`) stay, and statusd saves its Claude home to the
 homes bucket at `_sessions/<id>/claude-home.tar.gz`, a name no GitHub login can

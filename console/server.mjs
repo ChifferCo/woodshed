@@ -273,6 +273,7 @@ import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from '
 import { readMyPulls } from './myPulls.mjs';
 import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
+import { createLiveSessions } from './liveSessions.mjs';
 import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
 import { createMcpTester } from './mcpTest.mjs';
 import { ROLES, roleById, roleDiffers, roleOf } from './peopleRoles.mjs';
@@ -1502,6 +1503,10 @@ export function createHandler({
 
   // Every shared session for someone with sessions from GitHub, and the asker's own private ones. The counts are the
   // fleet's, which say nothing of whose.
+  // Each open page's list, pushed as it changes (liveSessions.mjs). An embedding's fleet with no onChange pushes only
+  // what the sweep finds.
+  const liveSessions = createLiveSessions({ bodyFor: sessionsBody, onChange: fleet.onChange ? (fn) => fleet.onChange(fn) : null });
+
   function sessionsBody(login) {
     const all = fleet.sessions();
     const sessions = all.filter((s) => canOpen(s, login, access));
@@ -2348,6 +2353,7 @@ export function createHandler({
     if (body.text.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in one message` });
     const messageId = typeof body.id === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(body.id) ? body.id : randomUUID();
     console.log('console: message typed in from the page', { id: session.id, agent: agentId, chars: body.text.length });
+    fleet.soon?.(session);
     return toStatusd(req, res, session, { method: 'POST', path: `${base}/send`, body: { text: body.text, id: messageId } });
   }
 
@@ -2373,6 +2379,8 @@ export function createHandler({
     }
     if (action === 'interrupt') {
       console.log('console: agent interrupted from the page', { id: session.id });
+      // Its card changes from what this does: read again in a moment, and often for a while.
+      fleet.soon?.(session);
       return toStatusd(req, res, session, { method: 'POST', path: '/interrupt', body: {} });
     }
     if (action === 'answer') {
@@ -2383,6 +2391,8 @@ export function createHandler({
         id: session.id, kind: sent.kind,
         ...(sent.kind === 'question' ? { questions: sent.questions.length, picks: sent.questions.map((q) => q.pick + 1) } : { decision: sent.decision }),
       });
+      // Its card changes from what this does: read again in a moment, and often for a while.
+      fleet.soon?.(session);
       return toStatusd(req, res, session, { method: 'POST', path: '/answer', body: sent });
     }
     if (action === 'send') {
@@ -3193,6 +3203,7 @@ export function createHandler({
     if (pathname === '/api/people') return peopleReply(res);
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
     if (pathname === '/api/sessions') return reply(res, 200, sessionsBody(user.login));
+    if (pathname === '/api/sessions/live') return liveSessions.handle(req, res, user.login);
     if (pathname === '/api/my') {
       // The first look waits for the store, so the page never shows a sign-in missing that is there. Later ones ask it in
       // the background: the page polls, and sees a change on a later poll.
@@ -3291,6 +3302,7 @@ export function createHandler({
   handle.startMine = startMine;
   handle.resumeMine = resumeMine;
   handle.agentAction = agentAction;
+  handle.liveSessions = liveSessions;
   return handle;
 }
 

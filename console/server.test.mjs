@@ -3120,3 +3120,51 @@ test('a Codex agent beside claude is started with its owner\'s sign-in, and allo
   assert.equal((await start('codex')).status, 409, 'a tainted session starts none');
   assert.equal(asked.length, 3);
 });
+
+test('the live session list needs a sign-in, shows only what that person may open, and pushes a change', async (t) => {
+  const shared = { id: '0a1b2c3d', status: 'running', state: 'done', title: 'Shared', endpoint: { host: '127.0.0.1', termPort: 1, statusPort: 2 } };
+  const theirs = { id: '9f8e7d6c', status: 'running', state: 'done', title: 'Someone else\'s', owner: 'someone' };
+  const listeners = [];
+  const fleet = { sessions: () => [shared, theirs], find: (id) => [shared, theirs].find((s) => s.id === id) ?? null, onChange: (fn) => listeners.push(fn) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => (String(cookie).includes('woodshed_session=good') ? { login: 'octo' } : null) };
+  const handle = createHandler({ config, fleet, auth });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => { handle.liveSessions.closeAll(); server.close(); });
+
+  assert.equal((await getWith(port, '/api/sessions/live')).status, 401);
+  const events = [];
+  let got;
+  const res = await new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/api/sessions/live', headers: { host: `localhost:${port}`, cookie: 'woodshed_session=good' } }, resolve);
+    req.on('error', reject);
+    req.end();
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers['content-type'], 'text/event-stream; charset=utf-8');
+  let buffer = '';
+  res.setEncoding('utf8');
+  res.on('data', (chunk) => {
+    buffer += chunk;
+    let at;
+    while ((at = buffer.indexOf('\n\n')) !== -1) {
+      const block = buffer.slice(0, at);
+      buffer = buffer.slice(at + 2);
+      const event = /^event: (\w+)\ndata: (.*)$/s.exec(block);
+      if (event) events.push({ event: event[1], data: JSON.parse(event[2]) });
+      got?.();
+    }
+  });
+  const next = (n) => new Promise((resolve) => { got = () => events.length >= n && resolve(); got(); });
+  await next(1);
+  assert.equal(events[0].event, 'full');
+  assert.deepEqual(events[0].data.sessions.map((s) => s.id), ['0a1b2c3d'], 'another person\'s private session is not in it');
+
+  shared.state = 'working';
+  for (const fn of listeners) fn(shared.id);
+  await next(2);
+  assert.equal(events[1].event, 'patch');
+  assert.deepEqual(events[1].data.sessions.map((s) => [s.id, s.state]), [['0a1b2c3d', 'working']]);
+  res.destroy();
+});

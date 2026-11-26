@@ -103,6 +103,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     return { ok: true, committed: false, head: 'abc' };
   }
   const store = { state: { sessions: [], github: null }, save() {} };
+  const laters = [];
   const config = {
     repo: 'o/r', label: 'woodshed', publicUrl: 'https://console.test', maxRunning,
     limits: { idleMs: 2 * HOUR, lifetimeMs: 8 * HOUR, startTimeoutMs: 15 * 60_000 },
@@ -113,6 +114,8 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, qaRecordings, now: () => clock, startableRepos,
+    // A read the fleet asks for in a moment (soon) runs when a test says, never by itself.
+    later: (fn, ms) => { laters.push({ fn, ms }); },
     pings, pullRequests: async () => gates, ...(reviewGates !== undefined ? { reviewGates: typeof reviewGates === 'function' ? reviewGates : async () => reviewGates } : {}), projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, reviewAgents, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
@@ -138,7 +141,14 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
       return statusd(session, method, path, opts);
     },
   });
-  return { fleet, calls, github, alive, pulls, statuses, answers, store, fail, launcher, advance: (ms) => { clock += ms; } };
+  // Runs what the fleet asked to run later, and waits for it.
+  async function runLater() {
+    const due = laters.splice(0);
+    for (const { fn } of due) fn();
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    return due.map(({ ms }) => ms);
+  }
+  return { fleet, calls, github, alive, pulls, statuses, answers, store, fail, launcher, runLater, advance: (ms) => { clock += ms; } };
 }
 
 // A project that is not ready (databaseGate.mjs) starts no session that would get databases, and the reason, with its
@@ -4759,4 +4769,89 @@ test('a message between two sessions is kept on both, newest first, the last 20,
   assert.equal(child.messages.length, 20);
   assert.match(child.messages[0].text, /^x24 /);
   assert.equal(child.messages[0].text.length, 200);
+});
+
+// The rail says Working, Done or Needs you within a second or two (checkLive, soon): sessions likely to change are read
+// often, the rest at the tick, since a status read costs a session CPU.
+async function runningSessions(count, state = 'done') {
+  const ctx = setup();
+  for (let i = 0; i < count; i += 1) await ctx.fleet.handleTrigger({ number: 60 + i, login: 'joel', trigger: 'label', title: `t${i}`, kind: 'issue' });
+  const sessions = ctx.fleet.sessions();
+  for (const s of sessions) ctx.statuses[s.id] = { state };
+  await ctx.fleet.tick();
+  for (const s of sessions) assert.equal(s.status, 'running');
+  const reads = (s) => ctx.calls.statusd.filter((c) => c.path === '/status' && c.id === s.id).length;
+  return { ...ctx, sessions, reads };
+}
+
+test('a message sent to a session reads it again in a moment, and the live check reads it and working ones for 30 s', async () => {
+  const { fleet, sessions: [sent, working, idle], statuses, reads, runLater, advance } = await runningSessions(3);
+  statuses[working.id] = { state: 'working' };
+  await fleet.tick();
+  assert.equal(working.state, 'working');
+
+  assert.equal(await fleet.send(sent, 'go on'), 'sent');
+  statuses[sent.id] = { state: 'working' };
+  const before = reads(sent);
+  assert.deepEqual(await runLater(), [400], 'read again 400 ms after the send');
+  assert.equal(reads(sent), before + 1);
+  assert.equal(sent.state, 'working', 'its card says so before the tick');
+
+  const counts = () => [reads(sent), reads(working), reads(idle)];
+  const was = counts();
+  await fleet.checkLive();
+  assert.deepEqual(counts(), [was[0] + 1, was[1] + 1, was[2]], 'the idle session waits for the tick');
+
+  // Done, and the 30 s past: read once more while its card says Working, then left to the tick.
+  statuses[sent.id] = { state: 'done' };
+  advance(31_000);
+  await fleet.checkLive();
+  assert.equal(sent.state, 'done');
+  const after = reads(sent);
+  await fleet.checkLive();
+  assert.equal(reads(sent), after);
+});
+
+test('the tick reads every session at once, so one that is slow to answer holds up none of the others', async () => {
+  const { fleet, sessions: [slow, ...rest], statuses, reads } = await runningSessions(3);
+  let answer;
+  statuses[slow.id] = new Promise((resolve) => { answer = resolve; });
+  const before = rest.map(reads);
+  const ticking = fleet.tick();
+  await settle();
+  assert.deepEqual(rest.map(reads), before.map((n) => n + 1), 'asked while the first has not answered');
+  answer({ state: 'working' });
+  await ticking;
+  assert.equal(slow.state, 'working');
+});
+
+test('an answer asked for before a newer one was applied is not applied after it', async () => {
+  const { fleet, sessions: [first, second], statuses, advance } = await runningSessions(2, 'working');
+  let answer;
+  statuses[first.id] = new Promise((resolve) => { answer = resolve; });
+  statuses[second.id] = { state: 'done' };
+  // The tick reads the second ahead of its turn, which waits behind the first's slow read.
+  const ticking = fleet.tick();
+  await settle();
+  advance(1_000);
+  statuses[second.id] = { state: 'working' };
+  await fleet.checkLive();
+  assert.equal(second.state, 'working');
+  answer({ state: 'working' });
+  await ticking;
+  assert.equal(second.state, 'working', 'the tick\'s older read would have put Done back');
+});
+
+test('every change to a session is told to whoever listens, until it stops', async () => {
+  const { fleet, sessions: [session], statuses } = await runningSessions(1);
+  const told = [];
+  const stop = fleet.onChange((id) => told.push(id));
+  statuses[session.id] = { state: 'working' };
+  await fleet.tick();
+  assert.ok(told.includes(session.id));
+  stop();
+  told.length = 0;
+  statuses[session.id] = { state: 'done' };
+  await fleet.tick();
+  assert.deepEqual(told, []);
 });
