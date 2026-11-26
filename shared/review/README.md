@@ -336,7 +336,8 @@ and uses that same credential for the contents read.
 
 - **Unresolved conversations** is available in the Review toolbar and in the merge sheet. It reads all pages of
   GitHub review threads, including outdated ones, and shows the first comment with a link to the conversation.
-  **Resolve all** acts on the displayed threads GitHub lets the signed-in person resolve. It refreshes the list and
+  **Resolve all** verifies the current personal GitHub credential and uses it for every page and mutation batch.
+  It acts on the displayed threads that credential can resolve, then refreshes the list and
   any open merge checklist after the attempt.
 - **A merge is refused unless the pull request is still what this page
   showed.** Which write it is comes from GitHub, per pull request:

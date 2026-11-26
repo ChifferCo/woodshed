@@ -52,14 +52,19 @@ async function fetchPrImage({ slug, src, log }, env) {
 
 // Snapshot the credential once. The session's gh wrapper honors GH_TOKEN, so
 // validation and the contents request use the same token even during a refresh.
-export async function personalPrImageReader() {
+export async function personalGithubEnv() {
   const token = await run('gh', ['auth', 'token', '--hostname', 'github.com'], { timeoutMs: GH_TIMEOUT_MS });
   const value = token.stdout.trim();
   if (token.status !== 0 || !value || /\s/.test(value)) return null;
   const env = { ...process.env, GH_HOST: 'github.com', GH_TOKEN: value };
   const user = await run('gh', ['api', 'user', '--jq', '.login'], { env, timeoutMs: GH_TIMEOUT_MS });
   if (user.status !== 0 || !/^[A-Za-z0-9-]{1,39}$/.test(user.stdout.trim())) return null;
-  return (image) => fetchPrImage(image, env);
+  return env;
+}
+
+export async function personalPrImageReader() {
+  const env = await personalGithubEnv();
+  return env ? (image) => fetchPrImage(image, env) : null;
 }
 // The three things a review can say, and nothing else reaches argv. A map
 // rather than a check-then-interpolate, so an unknown action cannot become a
@@ -906,14 +911,14 @@ const UNRESOLVED_QUERY = `query($owner:String!,$repo:String!,$pr:Int!,$cursor:St
   }
 }`;
 
-export async function fetchUnresolvedThreads({ pr, slug }) {
+export async function fetchUnresolvedThreads({ pr, slug }, env) {
   const [owner, repo] = slug.split('/');
   const threads = [];
   let cursor = null;
   do {
     const result = await run('gh', graphqlArgv({
       query: UNRESOLVED_QUERY, strings: { owner, repo, cursor }, numbers: { pr },
-    }), { timeoutMs: GH_TIMEOUT_MS });
+    }), { env, timeoutMs: GH_TIMEOUT_MS });
     const read = readGraphql(result);
     if (!read.ok) return read;
     const pull = read.data?.repository?.pullRequest;
@@ -937,7 +942,7 @@ export async function fetchUnresolvedThreads({ pr, slug }) {
 
 // Send only IDs the caller matched against the current pull request. Aliases
 // keep the number of GitHub round trips small even for a long review.
-export async function resolveReviewThreads(ids) {
+export async function resolveReviewThreads(ids, env) {
   for (let start = 0; start < ids.length; start += 50) {
     const strings = Object.fromEntries(ids.slice(start, start + 50).map((id, index) => ['id' + index, id]));
     const keys = Object.keys(strings);
@@ -945,7 +950,7 @@ export async function resolveReviewThreads(ids) {
     const fields = keys.map((key) => `${key}:resolveReviewThread(input:{threadId:$${key}}){thread{isResolved}}`).join(' ');
     const result = await run('gh', graphqlArgv({
       query: `mutation(${variables}){${fields}}`, strings,
-    }), { timeoutMs: GH_TIMEOUT_MS });
+    }), { env, timeoutMs: GH_TIMEOUT_MS });
     const read = readGraphql(result);
     if (!read.ok) return read;
     if (keys.some((key) => read.data?.[key]?.thread?.isResolved !== true)) {

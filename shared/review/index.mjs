@@ -27,7 +27,7 @@ import { run } from './exec.mjs';
 import {
   originSlug, fetchPrMeta, submitPrReview, fetchViewedFiles, setFileViewed, ghAccount,
   setPrTitle, fetchReviewState, fetchPrChecks, addPendingComment, deletePendingComment, discardPendingReview,
-  submitPendingReview, postLineComment, deletePostedComment, deleteIssueComment, hideComment, fetchUnresolvedThreads, resolveReviewThreads,
+  submitPendingReview, postLineComment, deletePostedComment, deleteIssueComment, hideComment, fetchUnresolvedThreads, resolveReviewThreads, personalGithubEnv,
 } from './github.mjs';
 import { parseTarget, prBranchFor, reviewBranchFor, describeTarget } from './target.mjs';
 import {
@@ -1362,20 +1362,27 @@ async function handleRetitle(payload, res, ctx, session) {
 }
 
 async function handleConversations(payload, res, ctx, session) {
-  const got = await prContextFor(ctx, session);
-  if (!got.ok) return ctx.json(res, got.status, { ok: false, error: got.error });
-  const read = await fetchUnresolvedThreads({ pr: got.live.number, slug: got.slug });
-  if (!read.ok) return ctx.json(res, read.status, { ok: false, error: read.error });
-  if (payload === undefined) return ctx.json(res, 200, read);
-
-  if (!Array.isArray(payload?.ids) || !payload.ids.length || payload.ids.some((id) => typeof id !== 'string')) {
+  const writing = payload !== undefined;
+  if (writing && (!Array.isArray(payload?.ids) || !payload.ids.length || payload.ids.some((id) => typeof id !== 'string'))) {
     return ctx.json(res, 400, { ok: false, error: 'choose conversations to resolve' });
   }
+  // The installed gh wrapper can fall back to the App after disconnect. Pin a
+  // freshly verified personal credential for every page and mutation batch.
+  const env = writing ? await personalGithubEnv() : undefined;
+  if (writing && !env) {
+    return ctx.json(res, 403, { ok: false, error: 'resolving conversations requires a connected personal GitHub account' });
+  }
+  const got = await prContextFor(ctx, session);
+  if (!got.ok) return ctx.json(res, got.status, { ok: false, error: got.error });
+  const read = await fetchUnresolvedThreads({ pr: got.live.number, slug: got.slug }, env);
+  if (!read.ok) return ctx.json(res, read.status, { ok: false, error: read.error });
+  if (!writing) return ctx.json(res, 200, read);
+
   // Only resolve conversations that were displayed and are still unresolved
   // on this pull request. Comments added since the sheet opened stay open.
   const requested = new Set(payload.ids);
   const ids = read.threads.filter((thread) => thread.canResolve && requested.has(thread.id)).map((thread) => thread.id);
-  const result = await resolveReviewThreads(ids);
+  const result = await resolveReviewThreads(ids, env);
   ctx.log(result.ok ? 'review.conversations_resolved' : 'review.conversation_resolution_failed', {
     reqId: ctx.reqId, session, pr: got.live.number, requested: ids.length,
   });

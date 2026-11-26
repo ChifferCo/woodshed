@@ -2,7 +2,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Readable } from 'node:stream';
+import http from 'node:http';
+import { createReviewHost } from '../session/reviewShed/host.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { isolatedEnv } from './isolatedEnv.mjs';
@@ -13,6 +14,7 @@ test('bulk resolution rechecks both pages of the reviewed PR and resolves only e
   const env = isolatedEnv();
   env.PATH = `${root}:${env.PATH}`;
   env.WOODSHED_REVIEWS = path.join(root, 'reviews');
+  delete env.GH_TOKEN;
   const repo = path.join(root, 'repo');
   execFileSync('git', ['init', '-q', repo], { env });
   execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', 'https://github.com/example/project.git'], { env });
@@ -40,6 +42,16 @@ assert.equal(process.env.HC_SESSION, 'test');
 const statePath = ${JSON.stringify(statePath)};
 const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
 const [api, graphql, ...args] = process.argv.slice(2);
+const credential = process.env.GH_TOKEN || (state.disconnected ? 'installation' : 'personal');
+if (api === 'auth' && graphql === 'token') {
+  console.log(credential);
+  process.exit(0);
+}
+if (api === 'api' && graphql === 'user') {
+  if (credential !== 'personal') process.exit(1);
+  console.log('octocat');
+  process.exit(0);
+}
 assert.deepEqual([api, graphql], ['api', 'graphql']);
 const fields = {};
 for (let i = 0; i < args.length; i += 2) {
@@ -52,6 +64,12 @@ if (fields.query.includes('reviewThreads')) {
   assert.deepEqual([fields.owner, fields.repo, fields.pr], ['example', 'project', '42']);
   assert.ok(fields.cursor === undefined || fields.cursor === 'next-page');
   const second = fields.cursor === 'next-page';
+  if (state.disconnectOnRead) {
+    state.disconnectOnRead = false;
+    state.disconnected = true;
+    fs.writeFileSync(statePath, JSON.stringify(state));
+  }
+  if (second && state.disconnected && !state.mutations.length) assert.equal(process.env.GH_TOKEN, 'personal');
   data = { repository: { pullRequest: { state: 'OPEN', reviewThreads: {
     nodes: state.pages[second ? 1 : 0],
     pageInfo: { hasNextPage: !second, endCursor: second ? null : 'next-page' },
@@ -71,6 +89,7 @@ if (fields.query.includes('reviewThreads')) {
     data[alias] = { thread: { isResolved: true } };
   }
   state.mutations.push(ids);
+  state.writeCredential = credential;
   fs.writeFileSync(statePath, JSON.stringify(state));
 }
 console.log(JSON.stringify({ data }));
@@ -86,18 +105,27 @@ console.log(JSON.stringify({ data }));
   const session = 'claude-1234abcd';
   writeSessionReview({ session, review: { kind: 'pr', pr: 42 } });
 
-  async function call(method, payload) {
-    const req = Readable.from(payload === undefined ? [] : [JSON.stringify(payload)]);
-    req.method = method;
-    req.url = `/reviews/${session}/conversations`;
-    const res = {};
-    assert.equal(await handleReviewRequest(req, res, {
-      repoRoot: repo, reqId: 'test', log() {},
-      json: (res, status, body) => Object.assign(res, { status, body }),
-    }), true);
-    return res;
+  const { ghAccount } = await import('../shared/review/github.mjs');
+  const host = createReviewHost({
+    repoDir: repo, sessionId: '1234abcd', sessionKind: 'private', checkoutBranch: async () => '',
+    load: async () => ({
+      ghAccount, handleReviewRequest, ensureWorktreeReview: async () => ({ ok: true }),
+      startReviewAnalysisIfNone: () => false, startReviewQaIfNone: () => false,
+    }),
+  });
+  const server = http.createServer((req, res) => host.handle(req, res).catch(() => { res.writeHead(500); res.end(); }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}/shed-review/reviews/${session}`;
+  async function call(method, payload, suffix = '/conversations') {
+    const response = await fetch(base + suffix, {
+      method, body: payload === undefined ? undefined : JSON.stringify(payload),
+    });
+    return { status: response.status, body: await response.json() };
   }
 
+  assert.equal((await call('GET', undefined, '')).status, 200);
+  assert.equal(await ghAccount(), 'octocat');
   const listed = await call('GET');
   assert.equal(listed.status, 200);
   assert.deepEqual(listed.body.threads.map(({ id, canResolve }) => [id, canResolve]),
@@ -110,11 +138,15 @@ console.log(JSON.stringify({ data }));
   assert.deepEqual(read().mutations, []);
 
   const fresh = read();
+  fresh.disconnectOnRead = true;
   fresh.pages[1].push(thread('new-since-listing'));
   save(fresh);
   const ids = [...listed.body.threads.map((thread) => thread.id), 'unknown', 'already-resolved', 'pending'];
   assert.deepEqual(await call('POST', { ids }), { status: 200, body: { ok: true } });
   assert.deepEqual(read().mutations, [['first', 'outdated']]);
+  assert.equal(read().writeCredential, 'personal', 'mutation retained the verified credential when the default switched');
+  assert.equal((await call('POST', { ids: ['new-since-listing'] })).status, 403);
+  assert.deepEqual(read().mutations, [['first', 'outdated']], 'a new POST after disconnect sends no mutation');
 
   const remaining = await call('GET');
   assert.equal(remaining.status, 200);

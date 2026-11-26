@@ -40,7 +40,11 @@ const otherView = (o) => ({ id: 'PR_dev' + o.number, number: o.number, title: o.
   additions: o.additions, deletions: o.deletions, changedFiles: o.changedFiles, files: [], reviewDecision: 'REVIEW_REQUIRED',
   mergeStateStatus: 'CLEAN', statusCheckRollup: rollup() });
 
-if (args[0] === 'api' && args[1] === 'user') out(s.login);
+if (args[0] === 'auth' && args[1] === 'token') out(s.disconnected ? 'dev-installation' : 'dev-personal');
+if (args[0] === 'api' && args[1] === 'user') {
+  if (s.disconnected && process.env.GH_TOKEN !== 'dev-personal') fail('HTTP 403: user API requires a personal token');
+  out(s.login);
+}
 if (args[0] === 'pr' && args[1] === 'list') {
   const branch = args[args.indexOf('--head') + 1];
   const o = (s.others || []).find((x) => x.branch === branch);
