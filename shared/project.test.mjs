@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { appNamed, checkoutDir, EMPTY_PROJECT, envFileKey, envFileKeys, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, secretEnvName, unsetPlaceholders, usesOldOverridesName, usesVariable, writeEnvFiles } from './project.mjs';
+import { appNamed, checkoutDir, EMPTY_PROJECT, envFileKey, envFileKeys, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, repoFileReason, parseProject, PROJECT_FIELDS, renderLine, repoOf, secretEnvName, unsetPlaceholders, usesOldOverridesName, usesVariable, writeEnvFiles } from './project.mjs';
 import { fixtureApp, fixtureCheckout, fixtureProject, fixtureProjectFiles } from './projectFixture.mjs';
 
 const SCRIPT = path.join(import.meta.dirname, 'project.mjs');
@@ -639,4 +639,23 @@ test('project.mjs never statically imports databases/index.mjs, which imports it
   const databases = path.join(import.meta.dirname, 'databases', 'index.mjs');
   assert.ok(staticallyReaches(databases, SCRIPT), 'the walk reads databases/index.mjs\'s import of project.mjs');
   assert.equal(staticallyReaches(SCRIPT, databases), false, 'project.mjs reaches databases/index.mjs through its static imports');
+});
+
+test('repoFileReason gives the repo\'s own file\'s reason in one line, and never reads the installation\'s', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'project-reason-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, 'repo'));
+  const repo = fixtureCheckout(path.join(dir, 'repo'), { repo: 'acme/app' });
+  assert.equal(repoFileReason(repo), null, 'no file of its own');
+  fs.mkdirSync(path.join(repo, '.woodshed'));
+  fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject());
+  assert.equal(repoFileReason(repo), null, 'a file that reads');
+  fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), `version: 1\n${'x'.repeat(400)}: true\n`);
+  const reason = repoFileReason(repo);
+  assert.match(reason, /^\.woodshed\/project\.yaml: has x+/);
+  assert.ok(reason.length <= 300 && !reason.includes('\n'), 'one line, cut at 300');
+  // The installation's folder is never read for the reason (session/entrypoint.test.mjs runs it, with the command line).
+  process.env.WOODSHED_PROJECT_FILES_DIR = fixtureProjectFiles(path.join(dir, 'files'), { 'acme/app': 'not: [yaml\n', 'acme/App': 'x' });
+  t.after(() => { delete process.env.WOODSHED_PROJECT_FILES_DIR; });
+  assert.equal(repoFileReason(repo), reason);
 });

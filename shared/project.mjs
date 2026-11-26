@@ -758,6 +758,31 @@ export function loadProject(repoDir, { projectFilesDir = envValue(process.env, '
   }
 }
 
+/**
+ * Why the repo's own project file does not read, in one line, or null when it reads or there is none: the one reason a
+ * failed start may show (session/entrypoint.sh, readProjectFrom). That status reaches a review's comment on the pull
+ * request, so the installation's file is never read here: its errors name its path and can quote what it holds. Only
+ * the checkout's copy, or the default branch's, which are the repo's own to show.
+ * @param {string} repoDir
+ * @returns {string|null}
+ */
+export function repoFileReason(repoDir) {
+  const line = (err) => String(err?.message ?? err).split('\n')[0].slice(0, 300);
+  let file;
+  try {
+    file = readRepoFile(repoDir, PROJECT_FILE);
+  } catch (err) {
+    return line(err);
+  }
+  if (!file) return null;
+  try {
+    readProjectText(file.text);
+    return null;
+  } catch (err) {
+    return line(err);
+  }
+}
+
 // The installation's file is wrong in the same ways a repo's is, and is named by its path.
 function installationError(err, file) {
   err.message = err.message.replace(PROJECT_FILE, `the installation's project file ${file}`);
@@ -998,6 +1023,12 @@ async function main([command, arg]) {
     return;
   }
   const repoDir = process.env.REPO_DIR || process.cwd();
+  // Before the whole file is read, which is what failed when this is asked.
+  if (command === 'repo-file-error') {
+    const reason = repoFileReason(repoDir);
+    if (reason) process.stdout.write(`${reason}\n`);
+    return;
+  }
   const project = loadProject(repoDir);
   if (command === 'check') {
     // Loaded here, not imported: projectCheck.mjs imports this module.
