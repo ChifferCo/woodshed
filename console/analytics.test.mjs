@@ -142,8 +142,8 @@ test('GitHub\'s search: a row\'s state and its tier from the check\'s title, and
     number: n, url: url(n), title: 'T', createdAt: ago(1), mergedAt: null, closedAt: null, state: 'OPEN', isDraft: false, additions: 3, deletions: 1,
     headRefName: 'b', author: { login: 'ana', __typename: 'User' }, ...fields,
   });
-  const withCheck = node(1, { state: 'MERGED', mergedAt: ago(0.5), commits: { nodes: [{ commit: { checkSuites: { nodes: [{ checkRuns: { nodes: [{ title: 'High: touches billing' }] } }] } } }] } });
-  assert.deepEqual([recentPullRow(withCheck).state, recentPullRow(withCheck).tier], ['merged', 'High']);
+  const merged = node(1, { state: 'MERGED', mergedAt: ago(0.5), labels: { nodes: [{ name: 'merge risk: high' }] } });
+  assert.deepEqual([recentPullRow(merged).state, recentPullRow(merged).tier], ['merged', 'High']);
   assert.equal(recentPullRow(node(2, { isDraft: true })).state, 'draft');
   assert.equal(recentPullRow(node(4, { labels: { nodes: [{ name: 'bug' }, { name: 'merge risk: medium' }] } })).tier, 'Medium', 'the review\'s label, with no check');
   assert.equal(recentPullRow(node(3, { author: { login: 'dependabot', __typename: 'Bot' } })).bot, true);
@@ -155,12 +155,47 @@ test('GitHub\'s search: a row\'s state and its tier from the check\'s title, and
     const page = after ? [node(2)] : [node(1)];
     return { stdout: JSON.stringify({ data: { search: { issueCount: 2, pageInfo: { hasNextPage: !after, endCursor: 'c1' }, nodes: page } } }) };
   };
-  const found = await createGitHub({ repo: REPO, run }).recentPulls({ since: '2026-10-27', check: 'Merge risk' });
+  const found = await createGitHub({ repo: REPO, run }).recentPulls({ since: '2026-10-27' });
   assert.deepEqual(found.pulls.map((p) => p.number), [1, 2]);
   assert.equal(found.truncated, false);
   assert.ok(calls[0].includes(`q=repo:${REPO} is:pr created:>=2026-10-27 sort:created-desc`));
-  assert.ok(calls[0].includes('check=Merge risk'));
+  assert.ok(!calls[0].some((a) => /checkSuites|check=/.test(a)), 'no check suites in the search: GitHub answered 502 for them');
+
+  const checkCalls = [];
+  const checkRun = async (cmd, args) => {
+    checkCalls.push(args);
+    const numbers = [...args.find((a) => a.startsWith('query=')).matchAll(/pullRequest\(number: (\d+)\)/g)].map((m) => Number(m[1]));
+    const repository = Object.fromEntries(numbers.map((n) => [`pr${n}`, { number: n, commits: { nodes: [{ commit: { checkSuites: { nodes: [{ checkRuns: { nodes: n % 2 ? [{ title: 'Medium: x' }] : [] } }] } } }] } }]));
+    return { stdout: JSON.stringify({ data: { repository } }) };
+  };
+  const tiers = await createGitHub({ repo: REPO, run: checkRun }).checkTiers(Array.from({ length: 30 }, (_, i) => i + 1), 'Merge risk');
+  assert.equal(checkCalls.length, 2, '25 to a call');
+  assert.ok(checkCalls[0].includes('check=Merge risk'));
+  assert.equal(tiers.size, 15);
+  assert.equal(tiers.get(1), 'Medium');
   await assert.rejects(createGitHub({ repo: REPO, run }).recentPulls({ since: 'yesterday' }), /date/);
+});
+
+test('a pull request with no label is tiered by the merge risk check, asked apart, and a failed ask keeps the labels', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const config = { projects: [{ name: 'app', repo: REPO, default: true }] };
+  let failChecks = false;
+  const asked = [];
+  const gh = {
+    recentPulls: async () => ({ pulls: [pull({ number: 1, url: url(1), tier: 'Low' }), pull({ number: 2, url: url(2) }), pull({ number: 3, url: url(3) })], total: 3, truncated: false }),
+    checkTiers: async (numbers, check) => { asked.push([numbers, check]); if (failChecks) throw new Error('gh: HTTP 502'); return new Map([[2, 'High']]); },
+  };
+  const make = () => createAnalytics({ config, sessions: () => [], state: () => ({}), githubFor: () => gh, gatesOf: async () => ({ mergeRisk: { check: 'Merge risk' } }), now: () => NOW });
+  const r = await make().report({ days: 30 });
+  assert.deepEqual(asked, [[[2, 3], 'Merge risk']], 'only those with no label');
+  assert.deepEqual(Object.fromEntries(r.pulls.recent.map((p) => [p.number, p.tier])), { 1: 'Low', 2: 'High', 3: null });
+  failChecks = true;
+  const kept = await make().report({ days: 30 });
+  assert.deepEqual([kept.failed, Object.fromEntries(kept.pulls.recent.map((p) => [p.number, p.tier]))], [[], { 1: 'Low', 2: null, 3: null }]);
+  const noCheck = createAnalytics({ config, sessions: () => [], state: () => ({}), githubFor: () => gh, now: () => NOW });
+  asked.length = 0;
+  await noCheck.report({ days: 30 });
+  assert.deepEqual(asked, [], 'a project file with no merge risk check asks nothing more');
 });
 
 test('the report reads each repo once for five minutes, and a repo GitHub did not answer is named, not a failure of the page', async () => {
