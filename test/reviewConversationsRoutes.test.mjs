@@ -5,7 +5,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isolatedEnv } from '../../test/isolatedEnv.mjs';
+import { isolatedEnv } from './isolatedEnv.mjs';
 
 test('bulk resolution rechecks both pages of the reviewed PR and resolves only eligible displayed threads', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-conversations-'));
@@ -81,8 +81,8 @@ console.log(JSON.stringify({ data }));
   const originalEnv = process.env;
   process.env = env;
   t.after(() => { process.env = originalEnv; });
-  const { handleReviewRequest } = await import('./index.mjs');
-  const { writeSessionReview } = await import('./store.mjs');
+  const { handleReviewRequest } = await import('../shared/review/index.mjs');
+  const { writeSessionReview } = await import('../shared/review/store.mjs');
   const session = 'claude-1234abcd';
   writeSessionReview({ session, review: { kind: 'pr', pr: 42 } });
 
