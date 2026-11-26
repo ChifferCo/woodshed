@@ -19,6 +19,10 @@ import { allProjects, projectFor } from './projects.mjs';
 export const WINDOWS = [7, 30, 90];
 const DAY_MS = 86_400_000;
 const READ_MS = 5 * 60_000;
+// An old read is shown while a new one loads only this long past READ_MS; older, the viewer waits for the new one.
+const STALE_MS = 60 * 60_000;
+// After a failed refresh the last read is kept and no other read starts for this long.
+const RETRY_MS = 60_000;
 // Kept records older than this are dropped; the widest window is 90 days.
 const KEEP_MS = 180 * DAY_MS;
 const KEEP_MAX = 5000;
@@ -274,7 +278,7 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
     reads.set(key, { ...held, reading });
     const done = reading.then((value) => { reads.set(key, { at: now(), value }); return value; }, (err) => {
       // A failed read keeps the last one, if any.
-      if (held?.value) reads.set(key, { at: held.at, value: held.value });
+      if (held?.value) reads.set(key, { at: held.at, value: held.value, retryAt: now() + RETRY_MS });
       else reads.delete(key);
       throw err;
     });
@@ -285,10 +289,10 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
     const key = `${project.name}\n${project.repo}`;
     const held = reads.get(key);
     if (held?.reading) return held.value ?? held.reading;
-    if (held && now() - held.at < READ_MS) return held.value;
+    if (held && (now() - held.at < READ_MS || held.retryAt > now())) return held.value;
     const read = startRead(project, key, held);
     // Stale-while-revalidate: an old read is shown at once, the new one lands for the next view.
-    if (held?.value) {
+    if (held?.value && now() - held.at < STALE_MS) {
       read.catch((err) => console.warn('analytics: refresh failed, keeping the last read', { project: project.name, message: ghSaid(err) }));
       return held.value;
     }
@@ -312,7 +316,7 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
         const found = await projectPulls(project);
         // Newest first: a cut-off list still covers this window when its oldest pull request is older than the window.
         const oldest = found.pulls.at(-1)?.createdAt;
-        truncated ||= Boolean(found.truncated && (!oldest || Date.parse(oldest) > at - days * DAY_MS));
+        truncated ||= Boolean(found.truncated && (!oldest || Date.parse(oldest) >= at - days * DAY_MS));
         return { project: project.name, repo: project.repo, pulls: found.pulls };
       } catch (err) {
         console.warn('analytics: pull requests not read', { project: project.name, message: ghSaid(err) });

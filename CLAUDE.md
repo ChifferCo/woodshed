@@ -1121,7 +1121,8 @@ URL on top of each env file's Repo settings values
   not read`. It tries again a minute after a failure, and at once after the sign-in is saved again.
 - **The Analytics page leaves a repo out, or counts no merge risk.** The page names the repo GitHub did not answer for,
   and the console logs `analytics: pull requests not read` with the project and GitHub's error; it reads each repo again
-  after 5 minutes; its `message` is gh's own error (`gh: HTTP 502`). A pull request's merge risk is the review's `merge
+  after 5 minutes, once for all three windows, showing the last read meanwhile (up to an hour old) and logging `analytics:
+  refresh failed, keeping the last read` when the new one fails; its `message` is gh's own error (`gh: HTTP 502`). A pull request's merge risk is the review's `merge
   risk: <tier>` label, else its `mergeRisk` check's tier (asked apart, for the newest 100 with no label: `analytics:
   merge risk checks not read, the labels only` when that failed), else the tier its review session reported: one no
   review has seen says `not reviewed` (console/README.md, "Analytics"). A person with no sessions though they used Woodshed started them before their sessions were kept in

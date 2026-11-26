@@ -282,6 +282,27 @@ test('every window shares one read per repo, and a stale read is shown at once w
   release();
 });
 
+test('a capped read flags only the windows it does not reach back past, and an old read is waited for, not shown', async () => {
+  let now = NOW;
+  let fail = false;
+  let reads = 0;
+  const gh = { recentPulls: async () => { reads++; if (fail) throw new Error('HTTP 502'); return { pulls: [pull({ number: 9, url: url(9), createdAt: ago(14) })], total: 900, truncated: true }; } };
+  const analytics = createAnalytics({ config: { projects: [{ name: 'app', repo: REPO, default: true }] }, sessions: () => [], state: () => ({ usageKept: [] }), githubFor: () => gh, now: () => now });
+  assert.equal((await analytics.report({ days: 7 })).truncated, false);
+  assert.equal((await analytics.report({ days: 30 })).truncated, true);
+  // A refresh that fails keeps the last read and is not tried again at once.
+  now += 6 * 60_000;
+  fail = true;
+  await analytics.report({ days: 7 });
+  await new Promise((r) => setImmediate(r));
+  const before = reads;
+  assert.equal((await analytics.report({ days: 30 })).pulls.other.opened, 1);
+  assert.equal(reads, before, 'a failed refresh is paced');
+  // Past an hour the old read is not shown: the viewer waits, and a failure is the page's.
+  now += 2 * 60 * 60_000;
+  assert.deepEqual((await analytics.report({ days: 7 })).failed, [{ project: 'app', repo: REPO }]);
+});
+
 test('/api/analytics is an admin\'s, and answers the window asked for with each person\'s name', async (t) => {
   const { createMembers } = await import('./members.mjs');
   const store = { state: { members: {

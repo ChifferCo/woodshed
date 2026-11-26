@@ -3243,8 +3243,11 @@ day), with no prompt and a private one's title left out, kept 180 days. A sessio
 nothing it held outlives it, and while it is on the list it is counted with no branch, pull request or title. Remove My
 Woodshed takes every record of its person's My Woodshed sessions, those removed one by one before included; shared
 sessions they started stay, as the team's. A branch is matched only on the repo it was pushed to, so a fork's pull
-request on the same branch name is not the session's. Pull requests are read from GitHub's search, each repo at most every 5 minutes and at most its newest
-500 in the window: `analytics: pull requests not read` with the project and GitHub's error when a read fails, and the
+request on the same branch name is not the session's. Pull requests are read from GitHub's search, each repo at most every 5 minutes, once for the widest
+window (90 days) that all three windows share, and at most its newest 500 of those (a window is flagged cut off only when the
+500 do not reach back past its start). A read older than 5 minutes is shown at once while a new one loads, for up to an hour past
+those 5 minutes, then the viewer waits; a refresh that fails keeps the last read and is not tried again for a minute
+(`analytics: refresh failed, keeping the last read`). `analytics: pull requests not read` with the project and GitHub's error when a read fails, and the
 page names the repo it left out.
 
 ## Settings
