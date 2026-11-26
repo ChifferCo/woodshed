@@ -3232,7 +3232,7 @@ export function createHandler({
       const found = findFor(qaLogRead[1], user.login);
       const logs = qaLogRead[2] === 'qa' ? (isQa(found ?? {}) ? found.qa : null) : (isReview(found ?? {}) ? found.review : null);
       if (!found || !logs) return reply(res, 404, { error: `no such ${qaLogRead[2] === 'qa' ? 'QA' : 'review'} session` });
-      if (!isAdmin(user) && !(user.login && (found.startedBy === user.login || found.owner === user.login))) return reply(res, 403, { error: 'only an admin or whoever started the run reads its log' });
+      if (!isAdmin(user) && !(user.login && (sameLogin(found.startedBy, user.login) || sameLogin(found.owner, user.login)))) return reply(res, 403, { error: 'only an admin or whoever started the run reads its log' });
       if (!logs.log) return reply(res, 404, { error: 'this session sent no run log' });
       res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }).end(logs.log);
       return;

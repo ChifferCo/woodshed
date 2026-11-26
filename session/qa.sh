@@ -210,6 +210,9 @@ finish() {
 
 main() {
   touch "$RUNNING"
+  # The pull request's code can commit a .qa folder of its own, with a link in it to a file outside the checkout, which the run
+  # log would append to and then read. It is removed before anything is written there, and none of it is read.
+  rm -rf -- "$DIR"
   mkdir -p "$DIR/logs" "$DIR/plan" "$DIR/screenshots" "$DIR/video"
   cd "$REPO_DIR" || exit 1
   # The run's files stay out of the Diff tab: they are the run's, not changes to the branch.

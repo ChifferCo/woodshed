@@ -45,7 +45,7 @@ function listen(handler) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runQa(t, { skip = false, app = 'running', noReport = false, leak = false, screen = null, opaque = false, pin = false, notes = null } = {}) {
+async function runQa(t, { skip = false, app = 'running', noReport = false, leak = false, screen = null, opaque = false, pin = false, notes = null, planted = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-sh-'));
   const sessionDir = path.join(dir, 'session');
   const bin = path.join(dir, 'fakebin');
@@ -61,6 +61,13 @@ async function runQa(t, { skip = false, app = 'running', noReport = false, leak 
   execFileSync('bash', ['-c', `git init -q -b main "${repo}" && cd "${repo}" && mkdir .woodshed docs && echo 'Sign in as demo.' > .woodshed/qa.md && echo 'Custom notes.' > docs/qa-notes.md &&
     git add -A && git -c user.email=t@t -c user.name=t commit -qm base && git init -q --bare "${dir}/origin.git" &&
     git push -q "${dir}/origin.git" HEAD:refs/heads/stacked-base && git remote add origin "${dir}/origin.git"`]);
+
+  // A pull request that commits a .qa folder of its own, whose steps log is a link to a file outside the checkout.
+  const outside = path.join(dir, 'outside.txt');
+  if (planted) {
+    fs.writeFileSync(outside, 'OUTSIDE-SENTINEL\n');
+    execFileSync('bash', ['-c', `cd "${repo}" && mkdir -p .qa/logs && ln -s "${outside}" .qa/logs/steps.log && git add -f .qa && git -c user.email=t@t -c user.name=t commit -qm planted`]);
+  }
 
   const statusdCalls = [];
   const statusd = await listen((req, res) => {
@@ -105,7 +112,7 @@ async function runQa(t, { skip = false, app = 'running', noReport = false, leak 
     child.on('exit', (code) => (code === 0 ? resolve(out) : reject(new Error(`qa.sh exited ${code}: ${out}`))));
   });
   const ffmpegArgs = () => fs.readFileSync(path.join(dir, 'ffmpeg-args'), 'utf8').trim();
-  return { reports, videos, logs, statusdCalls, output, repo, ffmpegArgs, running: path.join(dir, 'qa-running') };
+  return { reports, videos, logs, statusdCalls, output, repo, outside, ffmpegArgs, running: path.join(dir, 'qa-running') };
 }
 
 test('a QA run plans, starts the app, tests and sends the verdict, the report, the commit and the cost', async (t) => {
@@ -189,4 +196,12 @@ test('the model\'s secret screen blanks the lines it names, and a screen that ca
   assert.match(second.logs.at(-1).text, /\[line removed: the secret screen found a secret in it\]/);
   const failed = await runQa(t, { screen: 'fail' });
   assert.match(failed.logs.at(-1).text, /model check for secrets did not run/);
+});
+
+test('a .qa folder the pull request commits, with a link in it to a file outside the checkout, is removed: the file is not written to or sent', async (t) => {
+  const { logs, outside, repo } = await runQa(t, { planted: true });
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'OUTSIDE-SENTINEL\n', 'the file outside is untouched');
+  assert.ok(logs.length > 0);
+  for (const l of logs) assert.doesNotMatch(l.text, /OUTSIDE-SENTINEL/);
+  assert.equal(fs.lstatSync(path.join(repo, '.qa', 'logs', 'steps.log')).isSymbolicLink(), false);
 });
