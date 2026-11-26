@@ -372,6 +372,8 @@ its sentence beside the icon.
 
 No icon set. The console uses text glyphs (`▾ ▸ ✓ ✗ ⋯ ☆ ↗`) and 6px status dots; a stopped session's dot is a ring. A lock on the Private tag is drawn in CSS, not an image. The phone's message box under the terminal is the one place with drawn icons (📎 and the mic, as round buttons): on a desktop, the same actions are outline buttons with words, Attach files and Dictate (Stop while it listens, with a plain "Listening." line in `sub` under the field, no motion).
 
+In Review's Files changed tab, Ask uses an outline Dictate button beside Explain or Send. It says Stop while listening, with a muted status line under the question.
+
 ## Asking for one line of text
 
 - A name or an address the person types (Rename…, the payload URL) is asked in the console's own dialog
