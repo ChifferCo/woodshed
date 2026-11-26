@@ -3184,6 +3184,38 @@ My Woodshed sessions never show there, nor the homes they keep under
 `<login>/sessions/`: those go only with the session's Remove, Forget it or
 Remove My Woodshed.
 
+## Analytics
+
+Console → **Analytics** (`/analytics`, `public/analytics.js`, `analytics.mjs`) is how the team uses Woodshed, for
+whoever leads it: admins only, behind a hosting proxy its owners (`GET /api/analytics?days=7|30|90`). It is written for an
+engineering manager asking who has taken Woodshed up and who has not, and whether work through it goes as well as
+work without it, not for ranking people:
+
+- **Sessions**: work sessions started in the window (My Woodshed and shared ones; reviews, QA runs and questions from
+  Slack counted apart), how many members started one, which agents they ran, and a bar a week (a day for 7 days).
+- **Pull requests**: those opened in the window on the console's repos, through Woodshed and without it, how many of
+  the merged ones went through Woodshed, the median time from opened to merged for each, and the merge risk of each
+  kind, with a bar a week of those merged.
+- **By person**: each member, those who started nothing included, with their sessions, the days they started one, their
+  pull requests each way, the share through Woodshed, their time to merge and their high-risk count. Picking a name
+  shows only their sessions and pull requests in the two lists under it.
+- **Sessions started** and **Pull requests**: the records behind the numbers, newest first, the pull requests filtered by
+  through Woodshed, without, or medium or high risk.
+
+A pull request is through Woodshed when a session reported it, or worked on its branch, and it is then that session's
+person's, whoever GitHub says opened it (a shared session's opens as the App). One opened by a bot with no session is
+left out. Merge risk is the tier the review gave it: the project file's `pullRequests.mergeRisk.check` on its head
+commit, else the review's `merge risk: <tier>` label, else the tier a review session reported (kept on it as
+`review.tier`). Lines changed are shown quietly, last, as a rough size and never as a measure of anyone's output.
+
+A My Woodshed session is counted, and its pull request listed (GitHub shows it to the repo's writers anyway), but its
+title and prompt never are: on the page it is "Private session". Sessions come from the console's list and from
+`usageKept` in `state.json`: a record of each session as it leaves the list (Remove, a deleted shared session's last
+day, a tainted session), with no prompt and a private one's title left out, kept 180 days. Remove My Woodshed keeps none
+of its person's. Pull requests are read from GitHub's search, each repo at most every 5 minutes and at most its newest
+500 in the window: `analytics: pull requests not read` with the project and GitHub's error when a read fails, and the
+page names the repo it left out.
+
 ## Settings
 
 | Variable | Default | |

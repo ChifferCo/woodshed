@@ -395,7 +395,7 @@ test('Webhook events is under Settings, not an entry of its own, and Keyboard sh
   const menu = t.side().querySelector('div.user-menu');
   assert.ok(!menu.querySelectorAll('a.menu-item').some((a) => a.getAttribute('href') === '/events'), 'nor in the avatar menu');
   assert.ok(!menu.querySelectorAll('a.menu-item').some((a) => /Webhook events/.test(a.textContent)));
-  assert.deepEqual([...t.W.consoleLinks().map((l) => l.label)], ['Settings'], 'People is a tab of Settings, not an entry');
+  assert.deepEqual([...t.W.consoleLinks().map((l) => l.label)], ['Settings', 'Analytics'], 'People is a tab of Settings, not an entry; Analytics is one of its own');
   assert.equal(t.settingsEntry().getAttribute('aria-current'), 'true', 'Settings is the set the page is in');
   assert.deepEqual(t.subs('side-sub').map(([, href, mark]) => [href, mark]), [
     ['/console-settings', null], ['/secrets', null], ['/orgs/acme/members', null], ['/orgs/acme/credits', null],
@@ -472,7 +472,7 @@ test('the avatar menu: My settings and the program\'s pages under the name, its 
   assert.deepEqual(menuRows(t), [
     'head', 'My settings', 'Your workspaces', '—',
     '[Organization]', 'Acme', 'Globex',
-    '[Console]', 'Settings', '› General', '› Secrets & webhooks', '› Members', '› Credits',
+    '[Console]', 'Settings', '› General', '› Secrets & webhooks', '› Members', '› Credits', 'Analytics',
     '[Service]', 'Admin', '› Overview', '› Pool',
     'Sign out',
   ], 'the entry\'s own pages always listed in the menu, as Settings\' tabs are');
@@ -484,7 +484,7 @@ test('the avatar menu: My settings and the program\'s pages under the name, its 
 test('the side list: You with the program\'s pages, Console, then the program\'s sections, an entry\'s pages open on its own', async () => {
   const t = load('/settings', (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]], { me: HOST_MENU });
   await answered();
-  assert.deepEqual(sideRows(t), ['[You]', 'My settings (page)', '› Sign-ins', '› Sessions', '› Kept for you', '› Repos and files', '› Display', 'Your workspaces', '[Console]', 'Settings', '[Service]', 'Admin', '[This browser]'],
+  assert.deepEqual(sideRows(t), ['[You]', 'My settings (page)', '› Sign-ins', '› Sessions', '› Kept for you', '› Repos and files', '› Display', 'Your workspaces', '[Console]', 'Settings', 'Analytics', '[Service]', 'Admin', '[This browser]'],
     'Admin one entry away from its pages');
 
   const first = load('/nowhere');
@@ -495,7 +495,7 @@ test('the side list: You with the program\'s pages, Console, then the program\'s
   assert.equal(admin.title(), 'Admin', 'the page\'s own heading, not Settings');
   assert.deepEqual(admin.tabs(), [['Overview', '/admin', null], ['Pool', '/admin/pool', 'page']], 'and the row of its entry\'s pages');
   assert.match(admin.app.querySelector('div.host-page').textContent, /The pool/);
-  assert.deepEqual(sideRows(admin), ['[You]', 'My settings', 'Your workspaces', '[Console]', 'Settings', '[Service]', 'Admin (true)', '› Overview', '› Pool (page)', '[This browser]'],
+  assert.deepEqual(sideRows(admin), ['[You]', 'My settings', 'Your workspaces', '[Console]', 'Settings', 'Analytics', '[Service]', 'Admin (true)', '› Overview', '› Pool (page)', '[This browser]'],
     'its pages open under it, the page marked, Settings closed');
   assert.deepEqual(menuRows(admin).slice(-4), ['Admin', '› Overview', '› Pool', 'Sign out']);
   const menu = admin.side().querySelector('div.user-menu');
@@ -521,18 +521,18 @@ test('People is Settings\' tab after Secrets & webhooks, before the program\'s, 
   assert.deepEqual(t.subs('side-sub'), expected, 'and under Settings in the side list, marked');
   assert.deepEqual(t.subs('menu-sub'), expected, 'and in the avatar menu');
   assert.equal(t.settingsEntry().getAttribute('aria-current'), 'true', 'Settings is the set People is in');
-  assert.deepEqual([...t.W.consoleLinks().map((l) => l.href)], ['/console-settings'], 'no People entry of its own');
+  assert.deepEqual([...t.W.consoleLinks().map((l) => l.href)], ['/console-settings', '/analytics'], 'no People entry of its own');
 
   const mine = (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]];
   const without = load('/settings', mine, { me: { login: 'sam', admin: true, hosted: true } });
   await answered();
   assert.deepEqual(without.subs('menu-sub').map(([label]) => label), ['General', 'Secrets & webhooks'], 'without the list, no People');
-  assert.deepEqual([...without.W.consoleLinks().map((l) => l.href)], ['/console-settings']);
+  assert.deepEqual([...without.W.consoleLinks().map((l) => l.href)], ['/console-settings', '/analytics']);
 
   const own = load('/settings', mine, { me: { login: 'sam', admin: true, people: true, asking: 2 } });
   await answered();
   assert.deepEqual(own.subs('menu-sub').map(([label]) => label), ['General', 'Secrets & webhooks', 'People2'], 'on a console of its own People is the same tab, with how many ask to join');
-  assert.deepEqual([...own.W.consoleLinks().map((l) => l.href)], ['/console-settings'], 'and no entry of its own');
+  assert.deepEqual([...own.W.consoleLinks().map((l) => l.href)], ['/console-settings', '/analytics'], 'and no entry of its own');
   const count = own.side().querySelectorAll('a.side-item').find((a) => a.getAttribute('href') === '/console-settings' && !a.matches('a.side-sub')).querySelector('span.menu-count');
   assert.deepEqual([count.textContent, count.getAttribute('title')], ['2', '2 asking to join'], 'Settings counts those asking, since People is under it');
 });

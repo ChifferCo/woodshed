@@ -1426,12 +1426,14 @@ test('Resume in the background answers before the container has an address', asy
 
 test('Remove takes a private session, running or stopped, off the list with the Claude home it kept, and only its owner\'s', async () => {
   const removedHomes = [];
-  const { fleet } = setup({ homes: { async remove(name) { removedHomes.push(name); } } });
+  const { fleet, store } = setup({ homes: { async remove(name) { removedHomes.push(name); } } });
   const mine = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
   await assert.rejects(fleet.removePrivateSession({ owner: 'mia', id: mine.id }), /no session you can open/);
   await fleet.removePrivateSession({ owner: 'joel', id: mine.id });
   assert.equal(fleet.find(mine.id), null);
   assert.deepEqual(removedHomes, [`joel/sessions/${mine.id}`]);
+  assert.deepEqual(store.state.usageKept.map((r) => [r.id, r.login, r.private, r.title]), [[mine.id, 'joel', true, null]],
+    'the Analytics page still counts it, with no title');
 
 });
 
@@ -3432,6 +3434,7 @@ test('the merge risk is a label too, the other tiers taken off', async () => {
   const { fleet, calls } = reviewSetup();
   await fleet.reviewOnTag({ number: 7 });
   await fleet.reviewFinished(fleet.sessions()[0], { ...REVIEW_RESULT, mergeRisk: { tier: 'High', reason: 'Touches sign-in.', summary: 'HIGH' } });
+  assert.equal(fleet.sessions()[0].review.tier, 'High', 'kept on the session, for the Analytics page');
   assert.deepEqual(calls.labelsMade, [{ name: 'merge risk: high', color: 'd93f0b', description: 'Set by the AI review' }]);
   assert.deepEqual(calls.labeled, [{ number: 7, label: 'merge risk: high' }]);
   assert.deepEqual(calls.unlabeled.map((u) => u.label).sort(), ['merge risk: low', 'merge risk: medium']);

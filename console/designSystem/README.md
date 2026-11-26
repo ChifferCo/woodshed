@@ -60,6 +60,12 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   alone. It adds no component of its own; one it needs is added here first, for every page to have.
 - A group's totals (how many people, what is held, how full a pool is) are figures (`components/Figures`): label, value
   in mono and a line under, in the group's box, never a column of cards. A list of records is still a table.
+- A count over time (sessions started each week, pull requests merged) is trend bars (`components/TrendBars`), under
+  the group's figures in the same box: `slate` bars, Woodshed's on the rest's `idle-dot` grey when there are two, the
+  numbers in each bar's tooltip. Never a line chart with two scales, and never a status colour for a count.
+- The Analytics page is the console's own (admins only), a page of its own under Console beside Settings, not one of
+  Settings' tabs. It counts a My Woodshed session and links its pull request, but never shows its title or prompt:
+  that stays its owner's. Lines changed are shown quietly in `meta`, last, never as a figure or a ranking.
 - A few things each set on or off at once, such as who reviews your pull requests on My settings, are an on/off grid (`components/OnOffGrid`): radios under Off and On, a row each, saved as they are picked.
 - Two or three exclusive choices whose difference matters, such as an MCP server's Ordinary or Production, are choice
   cards (`components/ChoiceCards`): side by side, each a title and one line saying what it does, the picked one in the

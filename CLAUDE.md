@@ -1110,6 +1110,12 @@ URL on top of each env file's Repo settings values
   (with `timed out`, `the answer is not JSON` or `the catalog is too large`), `the catalog listed no models` (a key with
   only image or video models), `own login expired, not read` (a Grok session refreshes it at its stop) or `credential
   not read`. It tries again a minute after a failure, and at once after the sign-in is saved again.
+- **The Analytics page leaves a repo out, or counts no merge risk.** The page names the repo GitHub did not answer for,
+  and the console logs `analytics: pull requests not read` with the project and GitHub's error; it reads each repo again
+  after 5 minutes. A pull request's merge risk is its `mergeRisk` check's tier, else the review's `merge risk: <tier>`
+  label, else the tier its review session reported: one no review has seen says `not reviewed` (console/README.md,
+  "Analytics"). A person with no sessions though they used Woodshed started them before their sessions were kept in
+  `usageKept`, which only sessions leaving the list since then are.
 - **The `/` list in New session is empty.** The console logs `console: skills
   read` with the count, or `console: skills not readable` with gh's error.
 - **A pin or rename does not stick.** The page says `Not saved` with the
@@ -1310,6 +1316,8 @@ review's comment, verdict, rename and merge, and a made-up review by Claude Code
 `DEV_CONSOLE_WEBHOOKS=1` names a webhook receiver (which never listens, since polling is off), so the Console
 settings page shows its GitHub webhooks switch (Slack's needs a console that answers Slack questions), and the
 Webhook events page lists made-up deliveries: acted on, ignored, skipped and failed.
+`/analytics` shows 90 days of made-up history (`devAnalytics.mjs`): sessions in `usageKept` and the pull requests the
+stand-in `gh` answers the page's search with, through Woodshed and without, with merge risk tiers.
 `DEV_CONSOLE_PEOPLE=1` gives the People page four made-up members, with their switches every way, and two people asking
 to join.
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
