@@ -256,6 +256,24 @@
     return s.trigger === 'review' || s.trigger === 'qa';
   }
 
+  /**
+   * The sessions the rail lists, its counts included: every one but a review or QA run that ended before the last
+   * ended run of its kind on its pull request, whose card holds the result. An earlier run is a commit since moved on.
+   * @param {object[]} sessions
+   * @returns {object[]}  in the order given
+   */
+  function latestPullChecks(sessions) {
+    const last = new Map();
+    for (const s of sessions) {
+      if (!isPullCheck(s) || isLive(s)) continue;
+      const key = `${s.project ?? ''}#${s.number}#${s.trigger}`;
+      const kept = last.get(key);
+      if (!kept || Date.parse(s.createdAt) >= Date.parse(kept.createdAt)) last.set(key, s);
+    }
+    const shown = new Set(last.values());
+    return sessions.filter((s) => !isPullCheck(s) || isLive(s) || shown.has(s));
+  }
+
   /** @returns {boolean}  a shared session nobody has, that still has something to do: Unassigned on Everyone */
   function isUnassigned(s) {
     return !s.owner && s.kind !== 'ask' && !isPullCheck(s) && !s.assignee && !['ended', 'merged', 'finished'].includes(group(s));
@@ -1197,6 +1215,18 @@
    */
   function asksPerson(s) {
     return isLive(s) ? displayStatus(s).key === 'needs-you' : needsYou(s);
+  }
+
+  /**
+   * The messages between this session and others of its person's (fleet.mjs noteMessage), newest first, for Details.
+   * @returns {{at: string, dir: 'in'|'out', other: {id: string|null, title: string}, question: boolean, unconfirmed: boolean, text: string}[]}
+   */
+  function messageLines(s, sessions, { max = 5 } = {}) {
+    return (s.messages ?? []).slice(0, max).map((m) => {
+      const other = sessions.find((x) => x.id === m.with);
+      return { at: m.at, dir: m.dir, question: Boolean(m.question), unconfirmed: Boolean(m.unconfirmed), text: m.text ?? '',
+        other: other ? { id: other.id, title: other.title } : { id: null, title: 'a session no longer on the list' } };
+    });
   }
 
   /**
@@ -2147,7 +2177,7 @@
     invite, sessionTab, forgetSignedIn, forgetOtherLogins, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, askChoice, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, anyAgentSignIn, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, hoursText, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, waitProgress, clock, prChip, prChips, hasPrs, shownPrs, prLines, peekView, startedLinks, railGroups, groupCounts, asksPerson, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
+    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, anyAgentSignIn, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, latestPullChecks, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, hoursText, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    startProgress, waitProgress, clock, prChip, prChips, hasPrs, shownPrs, prLines, peekView, startedLinks, messageLines, railGroups, groupCounts, asksPerson, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();

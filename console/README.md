@@ -16,7 +16,7 @@ A card shows the title and its tag (on Everyone, and on Mine for a session you s
 CPU and memory badge are in the pane bar, not on the card. **Assigned sessions.** The person who adds the `woodshed` label, or writes the first `/woodshed` comment, has the shared session
 if they *Can be assigned* (a switch per member on People, off for a new member, which needs Sessions from GitHub; an admin
 turns it on, see "Sign-in"). A starter who cannot be assigned leaves it unassigned. **Mine** lists your private sessions and the shared ones you
-started (your label or `/woodshed` comment, on your Claude plan when your switch is on) or that are assigned to you: **Needs you** (stopped sessions waiting on you; **Move to Stopped** in a card's ⋯ menu marks one stopped by you, which moves it to Stopped and leaves Resume as it was), then **Active** (those waiting on you first), **Finished** (assigned shared sessions whose pull request is in Slack) and **Stopped**; **Everyone** lists every shared session with **Unassigned** at the top. Both end with **Reviews and QA**, folded until opened: the review and QA sessions the console starts on pull requests, which run by themselves, so they are never Unassigned and cannot be assigned: no Take it, and no Assign in their ⋯ menu. A console one person uses has one list of
+started (your label or `/woodshed` comment, on your Claude plan when your switch is on) or that are assigned to you: **Needs you** (stopped sessions waiting on you; **Move to Stopped** in a card's ⋯ menu marks one stopped by you, which moves it to Stopped and leaves Resume as it was), then **Active** (those waiting on you first), **Finished** (assigned shared sessions whose pull request is in Slack) and **Stopped**; **Everyone** lists every shared session with **Unassigned** at the top. Both end with **Reviews and QA**, folded until opened: the review and QA sessions the console starts on pull requests, which run by themselves, so they are never Unassigned and cannot be assigned: no Take it, and no Assign in their ⋯ menu. It lists each one still going and the last ended run of each kind on each pull request; the console takes an ended run off the list once a later run on its pull request replaced it, or its pull request merged or closed (the last QA run stays while the recordings its comment links are kept). A console one person uses has one list of
 every session, with no switch, and its head reads **My sessions** (`/all` opens it): one nobody signs in to (it listens on
 loopback alone), one whose People list has a single member, or one whose `WOODSHED_ONE_PERSON` is `1`. The setting
 decides when set, `0` keeping the two views (the dev console sets it, `DEV_CONSOLE_ONE_PERSON=1` for the one list);
@@ -844,9 +844,25 @@ you would any other, and save a new one. Saving a new token or removing it
 reaches running sessions only at their next start.
 
 New session opens on **Codex** for someone with a Codex sign-in saved and no Claude token, and on Claude otherwise,
-until they pick an agent. Its **Agent** menu lists only the agents set up to run (`agents` in `GET /api/my`): Claude with a
-Claude token saved, Codex with a Codex sign-in saved or the team's `openai-api-key`. With one, the menu is greyed out
-on it, and a Codex start with neither is refused (409). Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
+until they pick an agent. Its **Agent** is a card per agent (`createAgentCards` in `public/launcher.js`), each saying what
+it runs on; only the agents set up to run can be picked (`agents` in `GET /api/my`): Claude with a Claude token saved,
+Codex with a Codex sign-in saved or the team's `openai-api-key`. The others stay shown, disabled, with a link to their
+box on My settings, and a Codex start with neither is refused (409). Each card says, in one line, the model, effort and
+permissions that agent would start with; the picked one's menus are a panel under the cards, and each agent keeps its own
+while the page is open, so the next session started from it offers them again.
+The Model and Effort menus' **default** says what it is, and so does each card, as of the page's last look at `GET
+/api/my` (`agentDefaults`, from `savedChoices` in `claudeSettings.mjs` over the person's shared copy, which a new
+session starts from; `claudeSettings.peek` reads it without bumping its version). For Claude Code it is the `model`
+and `effortLevel` in `~/.claude/settings.json`, which `/model` in any private session writes: `opus (your last pick)`
+in the menu, `opus (saved)` on the card. With none saved, Claude Code picks Opus or Sonnet by the plan (and switches of
+Anthropic's), which the console cannot see, so the menu says `plan default (Opus or Sonnet)` and the card `plan
+default`, never a model as if it were certain. For Codex it is `model` and `model_reasoning_effort` in
+`~/.codex/config.toml` (its `profile`'s own first; a profile written as an inline table shows `default`); with none, `default`, codex's own pick. A repo's own
+`.claude/settings.json` naming a model still wins in the session. Grok Build and OpenCode keep their model in nothing a
+session carries (`agentDefaults` has `null` for them), so theirs is `default`, the agent's own pick; once their
+settings are carried between sessions, `savedChoices` should read their saved model and effort too. A copy that does
+not read (`read: false`, and the console logs `console: shared Claude settings not read for New session`) or names
+something that is not a plain model or effort name shows plain `default` too. Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
 (`codexModels.mjs`): `GET https://chatgpt.com/backend-api/codex/models?client_version=<codex's version>`, asked with
 your own Codex sign-in, or the team's OpenAI key with none, kept 10 minutes. A model OpenAI ships shows the day it
 ships, and a start is refused with a model or effort the list does not offer. The console never refreshes a ChatGPT
@@ -855,7 +871,7 @@ answering, the menus are your last list read, or else codex's built-in list (`BU
 --bundled` of the image's codex), and a line under them says so. `CODEX_CLIENT_VERSION` follows the image's
 `CODEX_VERSION`, which `codexModels.test.mjs` checks; refresh `BUILT_IN` with it.
 
-**Grok Build** and **OpenCode** are on the Agent menu too (`shared/agents.cjs`), each only for someone whose own sign-in
+**Grok Build** and **OpenCode** have Agent cards too (`shared/agents.cjs`), each only for someone whose own sign-in
 for it is saved on My settings: they run on nothing else, since the console holds no team key or proxy for them. The
 sign-in is `users/<login>/grok-auth` (an xAI key, `xai-…`, or `~/.grok/auth.json` from `grok login`) or `opencode-auth`
 (`~/.local/share/opencode/auth.json` from `opencode auth login`), saved with `POST /api/my/agent-auth/<agent>` and
@@ -965,6 +981,12 @@ stopping one does nothing to the other.
   (`startedApart`): at the top of the rail, in no group and in no `list` but `--all`, still saying where it came from.
   The session's rules (`session/prompt.md`) tell Claude to choose by what it is asked: related work is a piece, unrelated
   work or work the person says they will drive is separate, and it says which it chose.
+- **Moving it later**: a session's ⋯ menu (and the command palette) has **Move out of its group** for one in a group,
+  which makes it separate as `--separate` would, and **Put under…** to pick another of the person's running sessions
+  to put it under, a session started on its own included. That session then has it in its `list` and gets its
+  questions, as if it had started it. Only the owner moves their own private sessions, never under itself or under one
+  in its own group (`POST /api/sessions/<id>/group`, `fleet.regroup`). The console logs `fleet: session put under
+  another` with `under` and the old `from`, and `fleet: session taken out of its group`.
 
 The console logs `sessionStarts: session started` with `from`, the new `id` and its `status` (`queued` when it waits in line), `sessionStarts: start
 refused` with `why` (`no prompt`, `same branch`, `not a member`, `write access gone`, or `start checks` with
@@ -991,6 +1013,11 @@ one session's machine to another's. `list --all` lists them; `list` alone the on
   nothing its agent wrote: no last message, and `tainted: true`.
 - `stop <id>` and `resume <id>` are the page's Stop and Resume, with Resume's checks (`resumeMine` in `server.mjs`).
 - `rename "<name>"` renames the session itself, `rename <id> "<name>"` another of the person's, as the page's rename.
+- Each message is kept on both sessions (`fleet.noteMessage`, the last 20, each cut to 200 characters) once sent, a
+  held one too, which is typed in once the other is at its prompt, and their Details lists the latest as **Messages**,
+  a history of what was sent: From or To (Asked, Asked by for a question), the other session as a link, when,
+  and the start of the text. The whole message is in the receiving session's Chat, or, for a reply handed to a wait
+  (`send --wait`, `wait`), in that waiting command's output in its session.
 - `reply --question "<question>"` (or `send --question`) asks something and waits for the answer: the asking session
   reads **asked a question** on the rail, as asking its person (`key: needs-you`), so its group counts it and Needs you
   shows its copy, until it is sent a message or works again after the turn it asked in (`fleet.noteQuestion`,
@@ -1307,6 +1334,12 @@ The review gets `review.agents` and `REVIEW_AGENTS` (any of `claude`, `codex`, `
 Before any of them starts, it removes the whole `.review/` folder: a branch can commit one, verdict and all, which a
 reviewer that writes none would leave to be reported as its own (the pane says `The pull request carries a .review
 folder of its own`).
+
+A review leaves a run log as a QA run does (`POST /review-log`; `fleet: review run log kept`), so one that ends with no
+verdict says why: the steps, how claude's pass ended (turns, cost, tool errors), what the agents said, and the verdict's
+word, scrubbed by value, by pattern and by a model's second look. An ended review session's page shows it under **Run log**
+(`GET /api/sessions/<id>/review-log`) to an admin and whoever started the review, and to no one else. A review is stopped
+before its first checkpoint leaves none.
 Codex works as in a Codex session: it reads the checkout, runs what it likes (the container is the sandbox) and writes
 its verdict's files itself, in `.review/codex/`. It gets `REVIEW_CODEX_MINUTES` (20 by default), then is stopped, and
 Claude's verdict goes out alone. Codex alone sends its own verdict.
@@ -1940,7 +1973,11 @@ database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. B
 `/api/cli/settings` for shared Claude settings and own files) and
 `/api/tunnel/exec/*` the token signs in to the routes listed in `console/cliSessions.mjs`. For `woodshed session` these
 are `GET /api/sessions`, `GET /api/my/projects`,
-`POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove`, `POST /api/sessions/<id>/stop|extend|limits` and
+`POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove`, `POST /api/sessions/<id>/stop|extend|limits`,
+`POST /api/sessions/<id>/rename` (the title's rename, for `session rename`),
+`POST /api/sessions/<id>/send` and `GET /api/sessions/<id>/transcript` (the Chat tab's Send and its conversation, for
+`session send`, `wait` and `read`; the transcript of a session that has seen production data is refused the token with
+409, `cliSessions: refused, a tainted session's conversation`, as `woodshed tunnel` is) and
 `POST /api/sessions/<id>/app/start|stop` (Start app and Stop app; Set up app stays the page's),
 while `woodshed review` uses `GET /api/review-readiness` ("The reviewer App"). For `woodshed config`
 (`console/cliConfig.mjs`), `GET /api/cli/config` returns the person's choices on My settings and
@@ -2865,8 +2902,20 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
    WebM only, one at a time) to `POST /qa-video` and a still from the first one's last second (Playwright's own ffmpeg,
    PNG) to `POST /qa-poster`, which the fleet keeps through `qaRecordings.mjs` (`qaVideo`, `qaPoster`) for 14 days,
    then the verdict, the report, the commit it tested and the cost to `POST /qa-report` (`qaSessions.mjs` checks it),
-   once.
-5. The fleet writes the report into the QA comment, with the still linking to the first video at `/qa/<session id>/video/1` and a link to each, posts the QA check on the commit tested with the verdict and the
+   once. A run log (`shared/qa/runLog.mjs`) goes to `POST /qa-log` after each pass and before the report, the latest
+   replacing the last, so a run stopped before its report still leaves why. It holds the steps the script took and, for each claude
+   pass, how it ended, its turns, cost and counts, claude's last words and the tool errors' text, scrubbed by value (the
+   session's own secret variables and the install secrets), by pattern, and by a model's second look (`screenLog` in
+   `session/qa.sh`, a haiku call that names the lines holding a secret, which are blanked; `the model check for secrets did
+   not run` in the log when it could not). A checkpoint taken before the planner and as the tests start skips the model's look
+   and says so. It is the run's own output, so it may still quote what the app printed: only an admin, and whoever started the
+   run (or owns the session), read it (`fleet: QA run log kept`).
+
+   An ended QA session's page shows it under **Run log** (`GET /api/sessions/<id>/qa-log`, answered 403 to anyone else). A run
+   with no report says in its verdict why when a pass ran out of turns, was cut off or hit an error.
+5. The fleet writes the report into the QA comment, with the still linking to the first video at `/qa/<session id>/video/1` and a link to each
+   (on a repo whose project file says `pullRequests.qa.recordings: public`, at `/qa-video/<session id>/<secret>/<n>.webm`,
+   which plays with no sign-in: the session got its secret, `qa.share`, when it started, and pages never see it), posts the QA check on the commit tested with the verdict and the
    report (the decision brief reads the report from there, since sessions can comment as the App but not post a
    check), and stops the session with `QA finished: <verdict>`. It pushes nothing and is not kept, so its databases go
    at the next sweep.

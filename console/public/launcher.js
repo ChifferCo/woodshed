@@ -32,6 +32,9 @@
   // What a session of that agent runs on, for the line under Start.
   const RUNS_ON = { claude: 'Claude plan', codex: 'Codex sign-in or the team key' };
   const runsOn = (id) => RUNS_ON[id] ?? `own ${A.agent(id).product} sign-in`;
+  // The same, short, for the agent's card on New session.
+  const CARD_LINES = { claude: 'Your Claude plan', codex: 'Your sign-in or the team key' };
+  const cardLine = (id) => CARD_LINES[id] ?? `Your ${A.agent(id).product} sign-in`;
   // Codex's models and efforts are OpenAI's catalog's, as the console reads it for you (GET /api/my/codex-models,
   // codexModels.mjs); its permission modes are CODEX_PERMISSION_MODES in sessions.mjs.
   const CODEX_MODES = [['auto', 'auto', 'Works unattended; asks when the model decides to'], ['plan', 'plan', 'Read-only, changes nothing'],
@@ -41,6 +44,55 @@
 
   // For + Another agent on a session's pane bar (session.js), which offers the same choices.
   W.agentChoices = { AGENTS, MODELS, EFFORTS, MODES, CODEX_MODES };
+
+  // New session's agent, as choice cards (designSystem/components/ChoiceCards): every agent stays shown, each saying what
+  // it runs on and, in mono under it, the model, effort and permissions it would start with; one with no sign-in saved is
+  // disabled with where to save it. `onPick` hears a person's pick.
+  function createAgentCards(onPick) {
+    let value = AGENTS[0][0];
+    const cards = new Map(AGENTS.map(([id, name, title]) => {
+      const input = h('input', { id: `l-agent-${id}`, type: 'radio', name: 'l-agent', value: id, 'aria-describedby': `l-agent-${id}-line`,
+        onchange: () => { value = id; paint(); onPick(id); } });
+      const line = h('span', { class: 'choice-line', id: `l-agent-${id}-line` });
+      const meta = h('span', { class: 'choice-meta', id: `l-agent-${id}-meta` }, 'default \u00b7 auto');
+      const card = h('label', { class: 'choice-card', for: `l-agent-${id}`, title },
+        input, h('span', { class: 'radio', 'aria-hidden': 'true' }), h('span', { class: 'choice-title' }, name), line, meta);
+      return [id, { card, input, line, meta }];
+    }));
+    function paint() {
+      for (const [id, c] of cards) {
+        c.input.checked = id === value;
+        c.card.classList.toggle('is-on', id === value);
+        c.card.classList.toggle('is-off', c.input.disabled);
+        c.meta.hidden = c.input.disabled;
+        c.input.setAttribute('aria-describedby', c.input.disabled ? `l-agent-${id}-line` : `l-agent-${id}-line l-agent-${id}-meta`);
+        // Drawn again only when the agent's availability changed, so a focused link keeps its focus.
+        if (c.off === c.input.disabled) continue;
+        c.off = c.input.disabled;
+        c.line.replaceChildren(...(c.input.disabled
+          ? [h('a', { href: `/settings#${id}`, 'aria-label': `Sign in on My settings for ${A.agent(id).product}` }, 'Sign in on My settings')]
+          : [cardLine(id)]));
+      }
+    }
+    paint();
+    return {
+      el: h('fieldset', { class: 'choice-set lagents' }, h('legend', { class: 'field-label' }, 'Agent'),
+        h('div', { class: 'choice-cards' }, [...cards.values()].map((c) => c.card))),
+      get value() { return value; },
+      set value(id) { value = id; paint(); },
+      /** @returns {string[]}  the agents a session can start on now, in their order */
+      get offered() { return [...cards].filter(([, c]) => !c.input.disabled).map(([id]) => id); },
+      /** What the agent would start with, on its card, its parts `opus (saved)`, `high`, `auto`, each kept whole where it fits. */
+      settings(id, parts) {
+        cards.get(id).meta.replaceChildren(...parts.flatMap((p, i) => [...(i ? [' \u00b7 '] : []), h('span', null, p)]));
+      },
+      /** Which agents have what they run on: the rest stay shown, disabled, saying where to save it. */
+      offer(ids) {
+        for (const [id, c] of cards) c.input.disabled = !ids.includes(id);
+        paint();
+      },
+    };
+  }
 
   function select(id, options) {
     return h('select', { id, class: 'field' }, options.map(([value, label, title]) => h('option', { value, title }, label)));
@@ -507,9 +559,16 @@
 
   /** @returns {{el: HTMLElement, update: (me: object) => void}} */
   function createLauncher() {
-    const prompt = h('textarea', { id: 'l-prompt', class: 'field', rows: '5', placeholder: 'What should Claude do? Type / for the repo\'s skills.' });
+    const prompt = h('textarea', { id: 'l-prompt', class: 'field', rows: '5', placeholder: 'What should Claude do? Type / for the repo\u2019s skills.' });
     const workOn = h('input', { id: 'l-on', class: 'field mono', autocomplete: 'off', placeholder: 'Search open PRs, or type PR #123 or a branch' });
-    const agent = select('l-agent', AGENTS);
+    const agent = createAgentCards(() => {
+      agentPicked = true;
+      // A model name is one agent's own (OpenCode's `provider/model`, Grok's `grok-…`): another agent starts from its own,
+      // kept from its last pick, or its default (showAgent).
+      grokTyped = false;
+      showAgent();
+      if (me) update(me);
+    });
     const model = select('l-model', MODELS);
     // An agent other than Claude Code or Codex takes any model name its own --model does (the registry's modelRe): typed,
     // unless it is Grok Build and the console read a list of its models on the person's own sign-in.
@@ -558,12 +617,69 @@
       e.preventDefault();
       attachments.add([...e.clipboardData.files]);
     });
-    // Model, effort and permissions, folded on a phone to one line of what is picked, and open on a desktop as before.
-    const picked = h('span', { class: 'loptions-picked' });
-    const showPicked = () => {
-      const modelWord = typedModel() ? modelText.value.trim() || 'default' : model.selectedOptions[0]?.textContent ?? '';
-      picked.textContent = [modelWord, ...[effort, mode].filter((s) => !s.hidden).map((s) => s.selectedOptions[0]?.textContent ?? '')].join(' · ');
-    };
+    // Until the person picks one, the agent follows their sign-ins: Codex for someone with only a Codex sign-in saved.
+    let agentPicked = false;
+    // What "default" is for each agent in the person's next session (`agentDefaults` in /api/my, savedChoices in
+    // claudeSettings.mjs): the model and effort their shared ~/.claude/settings.json or ~/.codex/config.toml names, which
+    // a new session starts from, as of the page's last look. Grok Build and OpenCode keep theirs in nothing a session
+    // carries (null), and a copy that did not read (`read: false`) names nothing: each then says only that the agent picks.
+    let defaults = null;
+    const product = (id) => A.agent(id).product;
+    const SAVED_IN = { claude: '~/.claude/settings.json (what /model writes)', codex: '~/.codex/config.toml (what /model writes)' };
+    /** The Model menu's default option and the card's word for it. */
+    function defaultModel(id) {
+      const d = defaults?.[id];
+      if (d?.read && d.model) {
+        return { label: `${d.model} (your last pick)`, meta: `${d.model} (saved)`,
+          title: `Saved in your ${SAVED_IN[id]}, which your sessions share: a new session starts on it` };
+      }
+      // Claude Code picks Opus or Sonnet by the plan (and Anthropic's own switches), which the console cannot see.
+      if (id === 'claude' && d?.read) {
+        return { label: 'plan default (Opus or Sonnet)', meta: 'plan default',
+          title: 'Nothing saved by /model yet: Claude Code picks Opus or Sonnet by your plan' };
+      }
+      // The card's title names the agent already, so its line says only `default`.
+      return { label: 'default', meta: 'default', title: `${product(id)}\u2019s own default: the console cannot tell which model it picks` };
+    }
+    /** The saved effort, when one is: the Effort menu's default option names it, and the card shows it. */
+    function savedEffort(id) {
+      const d = defaults?.[id];
+      return d?.read && d.effort ? d.effort : null;
+    }
+    // A menu's options with its first, the default, saying what it is.
+    function withDefaultModel(id, options) {
+      const { label, title } = defaultModel(id);
+      return options.map((o) => (o[0] === '' ? ['', label, title] : o));
+    }
+    function withDefaultEffort(id, options) {
+      const e = savedEffort(id);
+      return e ? options.map((o) => (o[0] === '' ? ['', `default (${e}, your last pick)`, `Saved in your ${SAVED_IN[id]}`] : o)) : options;
+    }
+    // The picked agent's model, effort and permissions, in a panel under the cards; its card says them in one line, and
+    // each agent keeps its own while the page is open: picking Codex again finds the model picked for it.
+    const settingsHead = h('p', { class: 'lsettings-head' });
+    // A card's line from what is picked: null for a default, which says what it is (defaultModel, savedEffort).
+    const pickedParts = () => ({
+      model: typedModel() ? modelText.value.trim() || null : model.value ? model.selectedOptions[0]?.textContent ?? '' : null,
+      effort: effort.hidden ? false : effort.value || null,
+      mode: mode.selectedOptions[0]?.textContent ?? '',
+    });
+    function metaFor(id, parts) {
+      const effortWord = parts.effort === false ? null : parts.effort ?? savedEffort(id);
+      return [parts.model ?? defaultModel(id).meta, ...(effortWord ? [effortWord] : []), parts.mode];
+    }
+    const showPicked = () => agent.settings(agent.value, metaFor(agent.value, pickedParts()));
+    // The cards not picked: what each was left at, or what it would start with.
+    function showOtherCards() {
+      for (const id of A.AGENT_IDS) {
+        if (id === agent.value) continue;
+        const own = !['claude', 'codex'].includes(id);
+        const noEffort = own && !A.agent(id).efforts;
+        agent.settings(id, metaFor(id, kept[id]?.parts ?? { model: null, effort: noEffort ? false : null, mode: A.agent(id).permissionModes[0] }));
+      }
+    }
+    const kept = {};
+    let shownAgent = agent.value;
     function fill(select, options) {
       select.replaceChildren(...options.map(([value, label, title]) => h('option', { value, title }, label)));
     }
@@ -571,16 +687,17 @@
     let codexCatalog = null;
     const catalogNote = h('p', { class: 'sub lcatalog-note', hidden: true });
     function codexModelOptions() {
-      return [['', 'default', 'Codex\u2019s own default'], ...(codexCatalog?.models ?? []).map((m) => [m.slug, m.slug, m.description || m.name])];
+      return withDefaultModel('codex', [['', 'default', 'Codex\u2019s own default'], ...(codexCatalog?.models ?? []).map((m) => [m.slug, m.slug, m.description || m.name])]);
     }
-    // The efforts the picked model takes; with Codex's default model, any a listed model takes.
+    // The efforts the picked model takes (with Codex's default, the saved model's); with neither, any a listed model takes.
     function codexEffortOptions() {
-      const picked = codexCatalog?.models.find((m) => m.slug === model.value);
+      const slug = model.value || (defaults?.codex?.read ? defaults.codex.model : null);
+      const picked = codexCatalog?.models.find((m) => m.slug === slug);
       const efforts = picked ? picked.efforts : [...new Set((codexCatalog?.models ?? []).flatMap((m) => m.efforts))];
-      return [['', picked?.defaultEffort ? `default (${picked.defaultEffort})` : 'default'], ...efforts.map((e) => [e, e])];
+      return withDefaultEffort('codex', [['', picked?.defaultEffort ? `default (${picked.defaultEffort})` : 'default'], ...efforts.map((e) => [e, e])]);
     }
     function grokModelOptions() {
-      return [['', 'default', 'Grok Build\u2019s own default'], ...(grokCatalog?.models ?? []).map((m) => [m.slug, m.name, m.description || m.slug])];
+      return withDefaultModel('grok', [['', 'default', 'Grok Build\u2019s own default'], ...(grokCatalog?.models ?? []).map((m) => [m.slug, m.name, m.description || m.slug])]);
     }
     // The picked model's efforts, when the list names them; the registry's otherwise, as for the default model.
     function grokEffortOptions() {
@@ -646,16 +763,24 @@
       if (agent.value === 'grok') keepPick(effort, grokEffortOptions());
     });
     function showAgent() {
+      if (shownAgent && shownAgent !== agent.value) {
+        kept[shownAgent] = { model: model.value, text: modelText.hidden ? '' : modelText.value, effort: effort.value, mode: mode.value, parts: pickedParts() };
+      }
+      const switched = shownAgent !== agent.value;
+      shownAgent = agent.value;
+      if (switched) modelText.value = kept[agent.value]?.text ?? '';
       const codex = agent.value === 'codex';
       const grok = agent.value === 'grok';
+      // A Grok model typed while there was no list stays typed when the list that came since does not have it.
+      if (switched && grok) grokTyped = Boolean(modelText.value) && !(grokCatalog?.models ?? []).some((m) => m.slug === modelText.value);
       const own = ownAgent();
       const typed = typedModel();
       const a = A.agent(agent.value);
       model.hidden = typed;
       modelText.hidden = !typed;
-      modelText.placeholder = a.modelHint ? `default (e.g. ${a.modelHint})` : 'default';
-      if (!typed) fill(model, codex ? codexModelOptions() : grok ? grokModelOptions() : MODELS);
-      fill(effort, codex ? codexEffortOptions() : grok ? grokEffortOptions() : own ? ownEfforts(agent.value) : EFFORTS);
+      modelText.placeholder = a.modelHint ? `${a.product}\u2019s default (e.g. ${a.modelHint})` : `${a.product}\u2019s default`;
+      if (!typed) fill(model, modelOptions());
+      fill(effort, effortOptions());
       // An agent with no effort on its command line has no menu for it.
       effortField.hidden = own && !a.efforts;
       effort.hidden = effortField.hidden;
@@ -664,24 +789,42 @@
       if (grok) loadGrokCatalog();
       showCatalogNote();
       prompt.placeholder = `What should ${a.name} do? Type / for the repo\u2019s skills.`;
+      settingsHead.textContent = `${a.name}\u2019s settings`;
+      const was = switched && kept[agent.value];
+      if (was) {
+        for (const [s, v] of [[model, was.model], [effort, was.effort], [mode, was.mode]]) {
+          if ([...s.options].some((o) => o.value === v)) s.value = v;
+        }
+        // A Grok model typed before its list came, and on it now: picked in the menu.
+        if (grok && was.text && !typedModel() && [...model.options].some((o) => o.value === was.text)) model.value = was.text;
+        if (codex) keepPick(effort, codexEffortOptions());
+        if (grok) keepPick(effort, grokEffortOptions());
+      }
       showPicked();
     }
-    // Until the person picks one, the agent follows their sign-ins: Codex for someone with only a Codex sign-in saved.
-    let agentPicked = false;
-    agent.addEventListener('change', () => {
-      agentPicked = true;
-      // A model name is one agent's own (OpenCode's `provider/model`, Grok's `grok-…`): another agent starts from its default.
-      modelText.value = '';
-      grokTyped = false;
-      showAgent();
-      if (me) update(me);
-    });
+    function modelOptions() {
+      return agent.value === 'codex' ? codexModelOptions() : agent.value === 'grok' ? grokModelOptions() : withDefaultModel('claude', MODELS);
+    }
+    function effortOptions() {
+      if (agent.value === 'codex') return codexEffortOptions();
+      if (agent.value === 'grok') return grokEffortOptions();
+      return ownAgent() ? ownEfforts(agent.value) : withDefaultEffort('claude', EFFORTS);
+    }
+    /** What the defaults resolve to, from /api/my: the menus' default options and every card say it, picks kept. */
+    function showDefaults(next) {
+      if (JSON.stringify(next ?? null) === JSON.stringify(defaults)) return;
+      defaults = next ?? null;
+      if (!typedModel()) keepPick(model, modelOptions());
+      keepPick(effort, effortOptions());
+      showPicked();
+      showOtherCards();
+    }
     for (const s of [model, effort, mode]) s.addEventListener('change', showPicked);
     modelText.addEventListener('input', showPicked);
-    showPicked();
-    const options = h('details', { class: 'loptions', open: !window.matchMedia('(max-width: 720px)').matches },
-      h('summary', null, h('span', { class: 'field-label' }, 'Agent, model, effort and permissions'), picked),
-      h('div', { class: 'lgrid4' }, field('l-agent', 'Agent', agent), field('l-model', 'Model', h('div', null, model, modelText)), effortField, field('l-mode', 'Permissions', mode)), catalogNote);
+    showAgent();
+    showOtherCards();
+    const options = h('div', { class: 'lsettings', role: 'group', 'aria-label': 'The agent\u2019s model, effort and permissions' }, settingsHead,
+      h('div', { class: 'lgrid3' }, field('l-model', 'Model', h('div', { class: 'lmodel' }, model, modelText)), effortField, field('l-mode', 'Permissions', mode)), catalogNote);
     // Where a blocked repo's fix card goes, in place of the rest of the form: the picker above stays.
     const blockedSlot = h('div', { class: 'launch-setup', hidden: true });
     const body = h('div', { class: 'launch-body' },
@@ -689,6 +832,8 @@
       attachments.el, attachments.chips,
       // No name to give: the console names the session from its prompt, and its page offers a rename once it has.
       field('l-on', 'Continue a PR or branch', pulls.el, 'optional: leave empty to start a new branch'),
+      // The agent sits over its own model, effort and permissions, after what it is asked to do.
+      agent.el,
       options,
       error,
       h('div', { class: 'launch-actions' }, start, note));
@@ -755,21 +900,24 @@
 
     function update(next) {
       me = next;
+      showDefaults(me?.agentDefaults);
       // Only the agents set up to run are offered (`agents` in /api/my): a Claude token, a Codex sign-in or the team's
       // OpenAI key, or the person's own sign-in for the others. A console from before `agents` offers Claude and Codex,
       // and one from before the other agents never lists them, which leaves them out.
-      const offered = AGENTS.filter(([value]) => (me?.agents ? me.agents[value] : ['claude', 'codex'].includes(value)));
-      const shown = offered.length ? offered : AGENTS.slice(0, 1);
-      if (shown.map(([v]) => v).join() !== [...agent.options].map((o) => o.value).join()) {
+      // The others stay shown, disabled, saying where to save what they run on.
+      const offered = A.AGENT_IDS.filter((id) => (me?.agents ? me.agents[id] : ['claude', 'codex'].includes(id)));
+      const shown = offered.length ? offered : A.AGENT_IDS.slice(0, 1);
+      if (shown.join() !== agent.offered.join()) {
         const was = agent.value;
-        fill(agent, shown);
-        if (shown.some(([v]) => v === was)) agent.value = was;
-        else agentPicked = false;
-        if (agent.value !== was) showAgent();
+        agent.offer(shown);
+        if (!shown.includes(was)) {
+          agentPicked = false;
+          agent.value = shown[0];
+          showAgent();
+        }
       }
-      agent.disabled = shown.length < 2;
       // With no Claude token, the first agent they can run: Codex for someone with only a Codex sign-in saved.
-      const preferred = !me?.claudeToken?.set && me?.codexAuth?.set && shown.some(([v]) => v === 'codex') ? 'codex' : shown[0][0];
+      const preferred = !me?.claudeToken?.set && me?.codexAuth?.set && shown.includes('codex') ? 'codex' : shown[0];
       if (me && !agentPicked && agent.value !== preferred) {
         agent.value = preferred;
         showAgent();

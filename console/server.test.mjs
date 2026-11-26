@@ -11,6 +11,7 @@ import { createProjectColors } from './projectColors.mjs';
 import { createTunnel } from './dbTunnel.mjs';
 import { createCliSignIn } from './cliSignIn.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
+import { createClaudeSettings } from './claudeSettings.mjs';
 import agentsRegistry from '../shared/agents.cjs';
 import { createSlack } from './slack.mjs';
 import { createUserSettings } from './userSettings.mjs';
@@ -165,6 +166,95 @@ test('a QA recording plays only for someone signed in who may open its session, 
   assert.equal((await getWith(port, `/qa-poster/0a1b2c3d/${secret}.png`)).status, 200, 'GitHub\'s image proxy signs in nowhere');
   assert.equal((await getWith(port, '/qa-poster/0a1b2c3d/short.png')).status, 401, 'anything else under it is behind sign-in');
   assert.deepEqual(served, [['video', { id: '0a1b2c3d', n: 1 }], ['poster', { id: '0a1b2c3d', secret }]]);
+});
+
+test('a QA run\'s log reads only for an admin or whoever started it, and for anyone else who may open the session it is refused', async (t) => {
+  const log = '## test\nEnded: ran out of turns\nLast said: PRIVATE-WORDS\n';
+  const sessions = [
+    { id: '0a1b2c3d', status: 'stopped', kind: 'pr', number: 7, title: 'QA', startedBy: 'starter', qa: { base: 'main', log } },
+    { id: '0a1b2c3e', status: 'stopped', kind: 'pr', number: 7, title: 'QA', qa: { base: 'main' } },
+    { id: '0a1b2c3f', status: 'stopped', kind: 'pr', number: 7, title: 'Work' },
+    { id: '0a1b2c40', status: 'stopped', kind: 'pr', number: 7, title: 'Theirs', owner: 'someone-else', qa: { base: 'main', log: 'SECRET' } },
+  ];
+  const fleet = { sessions: () => sessions, find: (id) => sessions.find((x) => x.id === id) ?? null };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+  };
+  const logins = { admin: 'admin', starter: 'starter', plain: 'plain' };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => {
+    const who = Object.keys(logins).find((k) => String(cookie).includes(`woodshed_session=${k}`));
+    return who ? { login: logins[who] } : null;
+  } };
+  const members = { hasAdmin: () => true, isAdmin: (login) => login === 'admin', hasGithubSessions: () => true, isMember: () => true, currentRole: () => 'member', hosted: false };
+  const handle = createHandler({ config, fleet, auth, members });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = (who) => (who ? { cookie: `woodshed_session=${who}` } : {});
+  const read = (id, headers) => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: `/api/sessions/${id}/qa-log`, headers: { host: `localhost:${port}`, ...headers } }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], nosniff: res.headers['x-content-type-options'], body }));
+    }).on('error', reject);
+  });
+
+  const asAdmin = await read('0a1b2c3d', as('admin'));
+  assert.deepEqual([asAdmin.status, asAdmin.type, asAdmin.nosniff, asAdmin.body], [200, 'text/plain; charset=utf-8', 'nosniff', log]);
+  assert.equal((await read('0a1b2c3d', as('starter'))).body, log, 'whoever started the run');
+  const plain = await read('0a1b2c3d', as('plain'));
+  assert.deepEqual([plain.status, plain.body.includes('PRIVATE-WORDS')], [403, false], 'a member who is neither reads nothing of it');
+  assert.equal((await read('0a1b2c3e', as('admin'))).status, 404, 'a QA session that sent no log');
+  // A review session's log is read the same way, at its own name: the starter reads it, others do not.
+  sessions.push({ id: '0a1b2c41', status: 'stopped', kind: 'pr', number: 7, title: 'Review', startedBy: 'starter', review: { base: 'main', log } });
+  const readReview = (id, headers) => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: `/api/sessions/${id}/review-log`, headers: { host: `localhost:${port}`, ...headers } }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    }).on('error', reject);
+  });
+  assert.equal((await readReview('0a1b2c41', as('starter'))).body, log);
+  const plainReview = await readReview('0a1b2c41', as('plain'));
+  assert.deepEqual([plainReview.status, plainReview.body.includes('PRIVATE-WORDS')], [403, false]);
+  assert.equal((await readReview('0a1b2c3d', as('admin'))).status, 404, 'a QA session is not read at the review name');
+  assert.equal((await read('0a1b2c3f', as('admin'))).status, 404, 'a session that is not QA');
+  const hidden = await read('0a1b2c40', as('plain'));
+  assert.deepEqual([hidden.status, hidden.body.includes('SECRET')], [404, false], 'a session this person cannot open');
+  assert.equal((await read('0a1b2c3d', as(null))).status, 401, 'signed out');
+});
+
+test('a public repo\'s QA video plays with no sign-in at its run\'s secret name, and no other name opens it', async (t) => {
+  const share = 'c'.repeat(32);
+  const session = { id: '0a1b2c3d', status: 'stopped', kind: 'pr', number: 7, title: 'QA', qa: { base: 'main', share, videos: [{ n: 1, bytes: 4 }] } };
+  const asked = [];
+  const fleet = {
+    sessions: () => [session], find: (id) => (id === session.id ? session : null),
+    publicQaVideo: (id, secret, n) => { asked.push([id, secret, n]); return id === session.id && secret === share && n === 1 ? session : null; },
+  };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
+  const served = [];
+  const qaRecordings = {
+    serveVideo: async (_req, res, which) => { served.push(which); res.writeHead(200, { 'content-type': 'video/webm' }).end('webm'); },
+    gone: (res) => { res.writeHead(410, { 'content-type': 'text/plain' }).end('no longer kept'); },
+  };
+  const handle = createHandler({ config, fleet, auth, qaRecordings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  assert.equal((await getWith(port, `/qa-video/0a1b2c3d/${share}/1.webm`, { accept: 'text/html' })).status, 200, 'a reader of the comment, signed in nowhere');
+  assert.equal((await getWith(port, `/qa-video/0a1b2c3d/${'d'.repeat(32)}/1.webm`)).status, 410, 'another secret');
+  assert.equal((await getWith(port, `/qa-video/0a1b2c3d/${share}/2.webm`)).status, 410, 'a video it never sent');
+  assert.equal((await getWith(port, `/qa-video/0a1b2c3d/${share}/1.mp4`)).status, 401, 'anything else under it is behind sign-in');
+  assert.equal((await getWith(port, '/qa/0a1b2c3d/video/1')).status, 401, 'the signed-in name stays behind sign-in');
+  assert.deepEqual(served, [{ id: '0a1b2c3d', n: 1 }]);
+  assert.equal(asked.length, 3);
 });
 
 test('the Diff tab\'s read goes to the running session\'s statusd, with its token, and a stopped session is refused', async (t) => {
@@ -543,6 +633,40 @@ test('an admin invites, accepts and removes on the People page, a member who is 
   assert.equal((await post(port, '/api/access/ask', {}, { ...sam, origin: 'https://evil.example' })).status, 403);
 });
 
+test('People names the personal tokens each member saved on My settings, never a value', async (t) => {
+  const { createMembers } = await import('./members.mjs');
+  const store = {
+    state: {
+      members: {
+        'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true },
+        'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' },
+      },
+      people: {
+        'mia-dev': { claudeTokenAt: '2026-10-03T00:00:00.000Z', codexAuthAt: '2026-10-03T00:00:00.000Z', agentAuthAt: { grok: '2026-10-03T00:00:00.000Z' }, github: { connectedAt: '2026-10-03T00:00:00.000Z' } },
+      },
+    },
+    save() {},
+  };
+  const members = createMembers({ store });
+  const userSettings = createUserSettings({ store, secrets: null });
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const auth = {
+    enabled: () => true, available: () => true,
+    sessionFor: async () => ({ login: 'mia-dev' }), visitorFor: async () => ({ login: 'mia-dev' }),
+  };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const people = await fetch(`http://127.0.0.1:${port}/api/people`, { headers: { cookie: 'woodshed_session=mia-dev' } });
+  assert.equal(people.status, 200);
+  const body = await people.json();
+  assert.deepEqual(Object.fromEntries(body.members.map((m) => [m.login, m.signIns])), {
+    'mia-dev': ['Claude', 'Codex', 'Grok Build', 'GitHub'],
+    'sam-ops': [],
+  });
+});
+
 test('on a console with no list of people, everyone signed in reaches the Secrets & webhooks and Webhook events pages', async (t) => {
   const reached = [];
   const settings = new Proxy({}, { get: (_, name) => async () => { reached.push(`settings.${String(name)}`); return {}; } });
@@ -818,7 +942,7 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
     { path: '/auth/app?id=ID&next=/' },
     { method: 'POST', path: '/api/sessions/ID/stop' }, { method: 'POST', path: '/api/sessions/ID/app/start' }, { method: 'POST', path: '/api/sessions/ID/app/stop' },
     { method: 'POST', path: '/api/sessions/ID/resume' }, { method: 'POST', path: '/api/sessions/ID/delete' },
-    { method: 'POST', path: '/api/sessions/ID/pin' }, { method: 'POST', path: '/api/sessions/ID/rename' },
+    { method: 'POST', path: '/api/sessions/ID/pin' }, { method: 'POST', path: '/api/sessions/ID/rename' }, { method: 'POST', path: '/api/sessions/ID/group' },
     { method: 'POST', path: '/api/sessions/ID/extend' }, { method: 'POST', path: '/api/sessions/ID/limits' },
     { method: 'POST', path: '/api/sessions/ID/upload?name=a.png' }, { path: '/api/sessions/ID/image?path=shot.png' }, { method: 'POST', path: '/api/sessions/ID/scroll' },
     { method: 'POST', path: '/api/sessions/ID/send' }, { method: 'POST', path: '/api/sessions/ID/interrupt' }, { method: 'POST', path: '/api/sessions/ID/answer' }, { path: '/api/sessions/ID/prompt' },
@@ -855,9 +979,19 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
 
 test('pins are the signed-in person\'s, a rename is the session\'s, and the app\'s icons need no sign-in', async (t) => {
   const session = { id: '0a1b2c3d', status: 'running', title: 'Old name', owner: null, startedBy: 'octocat' };
+  // Two of mia-dev's own, for the rail's groups.
+  const main = { id: '1a1a1a1a', kind: 'task', status: 'running', title: 'Main', owner: 'mia-dev', startedBy: 'mia-dev' };
+  const piece = { id: '2b2b2b2b', kind: 'task', status: 'running', title: 'Piece', owner: 'mia-dev', startedBy: 'mia-dev' };
+  const all = [session, main, piece];
+  const regrouped = [];
   const fleet = {
-    sessions: () => [session],
-    find: (id) => (id === session.id ? session : null),
+    sessions: () => all,
+    find: (id) => all.find((x) => x.id === id) ?? null,
+    regroup(s, under) {
+      regrouped.push([s.id, under?.id ?? null]);
+      s.startedFrom = under?.id ?? s.startedFrom;
+      return s;
+    },
     rename(s, title) {
       if (!String(title ?? '').trim()) throw Object.assign(new Error('a name cannot be empty'), { shown: true });
       s.title = title;
@@ -910,6 +1044,17 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.equal(session.title, 'New name');
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/rename', { title: '  ' }, as('mia-dev'))).status, 400);
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/rename', { title: 'x' })).status, 401, 'signed out');
+  // Its group on the rail is a private session's owner's alone: a shared session is in none.
+  assert.equal((await post(port, '/api/sessions/0a1b2c3d/group', { under: null }, as('mia-dev'))).status, 403);
+  const moved = await post(port, '/api/sessions/2b2b2b2b/group', { under: '1a1a1a1a' }, as('mia-dev'));
+  assert.equal(moved.status, 200);
+  assert.equal(moved.body.startedFrom, '1a1a1a1a');
+  assert.equal((await post(port, '/api/sessions/2b2b2b2b/group', { under: null }, as('mia-dev'))).status, 200);
+  assert.deepEqual(regrouped, [['2b2b2b2b', '1a1a1a1a'], ['2b2b2b2b', null]], 'its owner\'s two moves, through the fleet');
+  assert.equal((await post(port, '/api/sessions/2b2b2b2b/group', { under: 'nope' }, as('mia-dev'))).status, 400);
+  assert.equal((await post(port, '/api/sessions/2b2b2b2b/group', { under: 'ffffffff' }, as('mia-dev'))).status, 404);
+  assert.equal((await post(port, '/api/sessions/2b2b2b2b/group', { under: null }, as('octocat'))).status, 404, 'someone else\'s private session is no session');
+  assert.equal(regrouped.length, 2);
 
   // Extend and a session's own limits are the session's too, for whoever can open it; the fleet's refusals are 400s.
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/extend', {}, as('mia-dev'))).status, 200);
@@ -1360,6 +1505,46 @@ test('Remove My Woodshed needs your login typed, and removes only yours; the rai
   assert.deepEqual(await pulls(), [{ number: 7, title: "mia-dev's PR", why: 'yours', project: 'r', repo: 'o/r' }]);
   await pulls();
   assert.equal(asked, 1, 'kept for a minute');
+});
+
+test('/api/my names each agent\'s default as the person\'s shared settings have it, and only theirs', async (t) => {
+  const b64 = (text) => Buffer.from(text).toString('base64');
+  const objects = new Map([
+    ['mia-dev/claude-settings.json', JSON.stringify({ version: 3, items: {
+      '.claude/settings.json': b64(JSON.stringify({ model: 'opus', effortLevel: 'high' })),
+      '.codex/config.toml': b64('model = "gpt-5.5"\n'),
+    } })],
+    ['broken/claude-settings.json', '{not json'],
+  ]);
+  let puts = 0;
+  const store = { getText: async (key) => objects.get(key) ?? null, putText: async () => { puts++; }, removeKey: async () => {} };
+  const claudeSettings = createClaudeSettings({ store });
+  const fleet = { sessions: () => [], find: () => null };
+  const userSettings = { view: () => ({ claudeToken: { set: true, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: true, available: true }) };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet, auth, userSettings, claudeSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const me = async (login) => JSON.parse(await getBody(port, '/api/my', { cookie: `woodshed_session=${login}` }));
+
+  assert.deepEqual((await me('mia-dev')).agentDefaults, {
+    claude: { read: true, model: 'opus', effort: 'high' }, codex: { read: true, model: 'gpt-5.5', effort: null }, grok: null, opencode: null,
+  });
+  assert.deepEqual((await me('octocat')).agentDefaults, {
+    claude: { read: true, model: null, effort: null }, codex: { read: true, model: null, effort: null }, grok: null, opencode: null,
+  }, 'nothing saved: each agent picks its own, and nobody else\'s is shown');
+  const unread = { claude: { read: false, model: null, effort: null }, codex: { read: false, model: null, effort: null }, grok: null, opencode: null };
+  const warned = t.mock.method(console, 'warn', () => {});
+  const broken = await me('broken');
+  assert.equal(broken.login, 'broken', '/api/my still answers');
+  assert.deepEqual(broken.agentDefaults, unread, 'a copy that does not read names nothing');
+  assert.deepEqual((await me('broken')).agentDefaults, unread);
+  const lines = warned.mock.calls.filter((c) => c.arguments[0] === 'console: shared Claude settings not read for New session');
+  assert.equal(lines.length, 1, 'warned of once, not on every poll');
+  assert.equal(lines[0].arguments[1].login, 'broken');
+  assert.equal(puts, 0, 'reading writes nothing');
 });
 
 test('a person\'s files are read and written for the signed-in login only', async (t) => {

@@ -10,6 +10,8 @@ import { QA_RECORDING_DAYS } from './qaRecordings.mjs';
 
 // GitHub caps a comment at 65536 characters; the report is cut to leave room for the heading and the footer.
 export const MAX_REPORT_CHARS = 60_000;
+// The run log a QA session sends (POST /qa-log): its steps and how each claude pass ended, a few KB in practice.
+export const MAX_QA_LOG_BYTES = 100 * 1024;
 const CONCLUSIONS = new Set(['success', 'failure', 'neutral']);
 // A QA run's videos: the browser's recording of each page the tests opened, as Playwright writes them (WebM), about
 // 2 MB a minute at 1280x720. The console holds one whole in memory on its way to the store (its container has 512 MB),
@@ -35,18 +37,19 @@ export function isWebm(buffer) {
 }
 
 /**
- * @param {{url: string, bytes: number}[]} videos  each on the console, behind its sign-in
+ * @param {{url: string, bytes: number}[]} videos  each on the console, behind its sign-in unless `open`
  * @param {string|null} poster  a still from the first, at a public address, shown linking to it
+ * @param {boolean} [open]  the videos open with no sign-in (`pullRequests.qa.recordings: public`)
  * @returns {string}  the comment's lines for the recordings, empty with none
  */
-export function videoLine(videos = [], poster = null) {
+export function videoLine(videos = [], poster = null, open = false) {
   if (!videos.length) return '';
   const size = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   const links = videos.length === 1
     ? `[watch](${videos[0].url}) (${size(videos[0].bytes)})`
     : videos.map((v, i) => `[page ${i + 1}](${v.url}) (${size(v.bytes)})`).join(' · ');
   const what = videos.length === 1 ? 'the browser during the tests' : 'the browser during the tests, a video for each page it opened';
-  const line = `🎥 **Recording** of ${what}, on the console for ${QA_RECORDING_DAYS} days (sign in to watch): ${links}`;
+  const line = `🎥 **Recording** of ${what}, on the console for ${QA_RECORDING_DAYS} days${open ? '' : ' (sign in to watch)'}: ${links}`;
   // GitHub plays no video an app links, so the comment shows a still that opens the first.
   return poster ? `[![The QA run's recording](${poster})](${videos[0].url})\n\n${line}` : line;
 }
@@ -55,12 +58,12 @@ export function videoLine(videos = [], poster = null) {
  * The QA comment once the run is over, as the QA actions write it: the verdict's line, then the report when it has
  * test cases, and a link to the browser's recording when the session sent one.
  * @param {{heading: string, verdict: {status: string, total: number}, report: string, sessionUrl: string|null,
- *   videos?: {url: string, bytes: number}[], poster?: string|null}} args
+ *   videos?: {url: string, bytes: number}[], poster?: string|null, open?: boolean}} args
  * @returns {string}
  */
-export function finishedComment({ heading, verdict, report, sessionUrl, videos = [], poster = null }) {
+export function finishedComment({ heading, verdict, report, sessionUrl, videos = [], poster = null, open = false }) {
   const body = verdict.total > 0 && report.trim() ? `${report.trim()}\n\n` : '';
-  const video = videos.length ? `${videoLine(videos, poster)}\n\n` : '';
+  const video = videos.length ? `${videoLine(videos, poster, open)}\n\n` : '';
   const footer = sessionUrl ? `---\n\nRun in [a Woodshed session](${sessionUrl}), whose terminal shows the run.\n` : '';
   return `${heading}\n\n${verdict.status}\n\n${video}${body}${footer}`;
 }

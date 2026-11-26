@@ -2756,7 +2756,8 @@ ${DARK_PALETTE}
         more.type = 'button';
         more.addEventListener('click', function onMore() {
           descOpen = !descOpen;
-          render();
+          box.classList.toggle('clamped', !descOpen);
+          more.textContent = descOpen ? 'Show less' : 'Show the whole description';
         });
         content.appendChild(more);
       }
@@ -2832,9 +2833,16 @@ ${DARK_PALETTE}
       } else if (tag === 'IMG' || tag === 'VIDEO') {
         var src = webUrl(node.getAttribute('src'));
         if (!src) return null;
-        made.src = src;
         if (tag === 'VIDEO') made.controls = true;
-        else made.alt = node.getAttribute('alt') || '';
+        else {
+          made.alt = node.getAttribute('alt') || '';
+          if (/^https:[/][/]github[.]com[/][A-Za-z0-9_.-]+[/][A-Za-z0-9_.-]+[/]blob[/][a-f0-9]{40}[/][^?#]+[?]raw=true$/i.test(src)) {
+            made.addEventListener('error', function loadWithGitHubAccess() {
+              made.src = '/reviews/' + state.session + '/image?src=' + encodeURIComponent(src);
+            }, { once: true });
+          }
+        }
+        made.src = src;
         var w = parseInt(node.getAttribute('width'), 10);
         if (w > 0) made.style.width = Math.min(w, 2000) + 'px';
       } else if (tag === 'TH' || tag === 'TD') {
@@ -3118,14 +3126,8 @@ ${DARK_PALETTE}
 
     // --- Q&A ------------------------------------------------------------------
     //
-    // A model playing a junior developer, new to the codebase and lost in its
-    // jargon, asked about the change; another read the code and answered; the
-    // newcomer then asked about whatever in each answer it did not follow. The
-    // server keeps the result as a flat list whose parent ids make the tree.
-    // Every question starts folded: the reader opens only the ones they have.
-    // A reader asks their own questions too: a follow-up under any answer, or a
-    // question of theirs under the tree. The answerer answers it as it answered
-    // the newcomer's; it is written to the tree at once, waiting, and answered there.
+    // The server writes questions and answers in levels, with parent ids linking the tree.
+    // Questions start folded. A reader can also ask a question at the root or under an answer.
     var qaView = { session: null, data: null, loading: false, error: null, started: false, timer: null, open: {}, drafts: {}, sending: {}, refilled: {}, reads: 0, readsDone: 0, posted: {} };
 
     function qaTabCount() {
@@ -3197,7 +3199,7 @@ ${DARK_PALETTE}
             view.otherDiff = !!(view.data && (view.data.forDiff || null) !== (state.diffAt || null));
             if (view.otherDiff) view.data = null;
           } else {
-            view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
+            view.data = { status: 'running', phase: 'generating', depth: 1, items: [] };
           }
         }
       } catch (e) {
@@ -3271,22 +3273,15 @@ ${DARK_PALETTE}
       if (was !== qaView) return;
       clearTimeout(was.timer);
       var view = freshQaView(true);
-      if (!asked.kept) view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
+      if (!asked.kept) view.data = { status: 'running', phase: 'generating', depth: 1, items: [] };
       qaView = view;
       render();
       loadQa(!asked.kept);
     }
 
     function qaPhaseText(d) {
-      var open = 0;
-      var items = d.items || [];
-      for (var i = 0; i < items.length; i++) if (!items[i].answer) open++;
-      if (d.phase === 'answering') {
-        return 'Reading the code to answer ' + open + (open === 1 ? ' question' : ' questions')
-          + (d.depth > 1 ? ' (follow-ups, level ' + d.depth + ')' : '') + '…';
-      }
-      if (d.depth > 1) return 'Writing follow-up questions about the answers…';
-      return 'Writing the questions someone new to this code would ask…';
+      return d.depth > 1 ? 'Reading the code and writing follow-up questions and answers…'
+        : 'Reading the code and writing questions and answers…';
     }
 
     function renderQa(content) {

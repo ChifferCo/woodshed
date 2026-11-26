@@ -43,7 +43,7 @@ window.Woodshed.settingsPage('/people', (app, life) => {
   }
 
   function who(login, line) {
-    const named = data.names?.[login];
+    const named = ownName(login);
     return h('div', { class: 'who' },
       h('b', null, named || `@${login}`),
       h('div', { class: 'meta' }, [named && `@${login}`, line].filter(Boolean).join(' · ')));
@@ -278,11 +278,47 @@ window.Woodshed.settingsPage('/people', (app, life) => {
       h('td', null, who(m.login, addedLine(m))),
       roleCell(m),
       canCell(m),
+      signInsShown() && h('td', { class: 'sign-ins' }, signInsCell(m)),
       data.slack !== null && h('td', null, slackLine(m.login)),
       h('td', { class: 'end-cell' }, isMe(m.login) ? h('span', { class: 'foot' }, 'you')
         : h('button', { type: 'button', class: 'btn btn-delete', onclick: (e) => act('remove', m.login, e.currentTarget) }, 'Remove')));
     if (editing !== m.login) return [row];
-    return [row, h('tr', { class: 'edit-row' }, h('td', { colspan: '5' }, slackEditor(m.login, data.slack?.[m.login])))];
+    return [row, h('tr', { class: 'edit-row' }, h('td', { colspan: String(columns()) }, slackEditor(m.login, data.slack?.[m.login])))];
+  }
+
+  // A console with no My settings sends no sign-ins, and the column is left out.
+  const signInsShown = () => data.members.some((m) => Array.isArray(m.signIns));
+  const columns = () => 4 + (signInsShown() ? 1 : 0) + (data.slack !== null ? 1 : 0);
+
+  // The personal tokens a member saved on My settings (Claude, Codex, …, GitHub connected), by name alone.
+  function signInsCell(m) {
+    if (!m.signIns?.length) return h('span', { class: 'foot' }, 'None');
+    return h('span', { class: 'sign-in-list' }, m.signIns.map((name) => h('span', { class: 'pill is-ok' }, name)));
+  }
+
+  // The name the reply gives, read as its own string entry: a handle such as `constructor` falls back to itself.
+  const ownName = (login) => {
+    const named = data.names && Object.hasOwn(data.names, login) ? data.names[login] : null;
+    return typeof named === 'string' && named ? named : null;
+  };
+  const nameOf = (m) => ownName(m.login) ?? m.login;
+
+  // Members by role, in the order the roles are offered (Owner first), each role's people by name: a body of its own
+  // per role, headed by a row naming it.
+  function roleSections() {
+    const order = (data.roles ?? []).map((r) => r.id);
+    const rank = (m) => { const i = order.indexOf(m.access); return i === -1 ? order.length : i; };
+    const sorted = [...data.members].sort((a, b) => rank(a) - rank(b)
+      || nameOf(a).localeCompare(nameOf(b), undefined, { sensitivity: 'base' }) || a.login.localeCompare(b.login));
+    const bodies = [];
+    for (const m of sorted) {
+      if (bodies.at(-1)?.access !== m.access) bodies.push({ access: m.access, members: [] });
+      bodies.at(-1).members.push(m);
+    }
+    return bodies.map(({ access, members }) => h('tbody', { class: 'role-group' },
+      h('tr', { class: 'role-head' }, h('th', { scope: 'rowgroup', colspan: String(columns()) },
+        `${roleNamed(access)?.label ?? 'Other'} · ${members.length}`)),
+      members.flatMap(memberRows)));
   }
 
   // The table sits in the group's box, and scrolls sideways inside it on a phone.
@@ -296,9 +332,10 @@ window.Woodshed.settingsPage('/people', (app, life) => {
           h('th', { scope: 'col' }, 'Member'),
           h('th', { scope: 'col', class: 'switch-cell' }, 'Role'),
           h('th', { scope: 'col' }, 'What they can do'),
+          signInsShown() && h('th', { scope: 'col' }, 'Personal tokens'),
           data.slack !== null && h('th', { scope: 'col' }, 'Slack'),
           h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Remove')))),
-        h('tbody', null, data.members.flatMap(memberRows)))),
+        roleSections())),
       inviteRow());
   }
 

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sharedHomeName } from './homes.mjs';
 import { withDefaultReview } from './defaultReview.mjs';
+import { parseReviewReport } from './reviewSessions.mjs';
 
 import { sessionForStartToken, startTokenHash } from './sessionStarts.mjs';
 import { commentConsoleUrl, createFleet, failedComment, failureReason, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
@@ -1222,6 +1223,36 @@ test('a session started or resumed for a parent in its person\'s Herdr is told t
   await fleet.stop(child, 'stopped from the console', { by: 'joel' });
   await fleet.resumePrivate({ owner: 'joel', id: child.id, herdrParent: true });
   assert.equal(envOf(child).WOODSHED_HERDR_PARENT, '1', 'woodshed session herdr --parent resumes it waiting');
+});
+
+test('a person moves their own session into another\'s group, or out of the one it is in, never into a loop', async () => {
+  const { fleet } = setup();
+  const main = await fleet.startPrivate({ owner: 'joel', prompt: 'Plan the billing page' });
+  const piece = await fleet.startPrivate({ owner: 'joel', prompt: 'Add CSV export', startedFrom: main.id });
+  const alone = await fleet.startPrivate({ owner: 'joel', prompt: 'Audit refunds' });
+  const theirs = await fleet.startPrivate({ owner: 'ana', prompt: 'Their work' });
+
+  fleet.regroup(piece, null);
+  assert.deepEqual([piece.startedFrom, piece.startedApart], [main.id, true], 'out of the group, still saying where it came from');
+  fleet.regroup(piece, main);
+  assert.deepEqual([piece.startedFrom, piece.startedApart], [main.id, undefined], 'back in it');
+  fleet.regroup(alone, main);
+  assert.equal(alone.startedFrom, main.id, 'one started on its own, put under the main chat');
+  fleet.regroup(alone, null);
+  fleet.regroup(alone, null);
+  assert.equal(alone.startedApart, true, 'taking it out twice does nothing more');
+
+  assert.throws(() => fleet.regroup(main, piece), /in this session's own group/);
+  // However deep the chain.
+  let last = piece;
+  for (let i = 0; i < 60; i++) last = await fleet.startPrivate({ owner: 'joel', prompt: `Step ${i}`, startedFrom: last.id });
+  assert.throws(() => fleet.regroup(main, last), /in this session's own group/, 'sixty sessions down');
+  assert.throws(() => fleet.regroup(main, main), /under itself/);
+  assert.throws(() => fleet.regroup(alone, theirs), /your own sessions/);
+  const shared = await fleet.createSession({ kind: 'task', number: null, title: 's', startedBy: 'joel', trigger: 'console', prompt: 'p' });
+  assert.throws(() => fleet.regroup(shared, main), /only a My Woodshed session/);
+  await fleet.stop(main, 'stopped from the console', { by: 'joel' });
+  assert.throws(() => fleet.regroup(alone, main), /is not running/);
 });
 
 test('each run of a person\'s own session gets a start token, kept only as its hash, and none once it stops', async () => {
@@ -2781,6 +2812,50 @@ test('a QA session\'s videos and still are kept by the console, and its comment 
   assert.equal(session.qa.videos.length, 2, 'kept past the report');
 });
 
+test('a public repo\'s QA run links its videos with no sign-in, while its comments still name no console otherwise', async () => {
+  const qaRecordings = {
+    async saveVideo(id, n) { return { key: `${id}/video-${n}.webm` }; },
+    async savePoster(id) { return { path: `/qa-poster/${id}/${'e'.repeat(32)}.png` }; },
+  };
+  const gates = { ...QA_GATES, qa: { ...QA_GATES.qa, recordings: 'public' } };
+  const { fleet, calls } = qaSetup({ qaRecordings, gates, consoleLinks: async () => false });
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const [session] = fleet.sessions();
+  const { share } = session.qa;
+  assert.match(share, /^[0-9a-f]{32}$/);
+  assert.doesNotMatch(calls.comments.at(-1).body, /console\.test/, 'the running comment links no session');
+  await fleet.qaVideo(session, Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1]));
+  await fleet.qaVideo(session, Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 2]));
+  await fleet.qaPoster(session, Buffer.from('png'));
+  await fleet.qaFinished(session, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  await settle();
+  const body = calls.comments.at(-1).body;
+  const base = `https://console.test/qa-video/${session.id}/${share}`;
+  assert.ok(body.includes(`[![The QA run's recording](https://console.test/qa-poster/${session.id}/${'e'.repeat(32)}.png)](${base}/1.webm)`), body);
+  assert.ok(body.includes(`[page 1](${base}/1.webm)`) && body.includes(`[page 2](${base}/2.webm)`), body);
+  assert.doesNotMatch(body, /sign in to watch/);
+  const others = body.replaceAll(`https://console.test/qa-video/${session.id}/${share}/`, '').replaceAll(`https://console.test/qa-poster/${session.id}/`, '');
+  assert.doesNotMatch(others, /console\.test/, 'no session link, no signed-in video link');
+
+  assert.equal(fleet.publicQaVideo(session.id, share, 2), session);
+  assert.equal(fleet.publicQaVideo(session.id, share, 3), null, 'a video it never sent');
+  assert.equal(fleet.publicQaVideo(session.id, 'f'.repeat(32), 1), null, 'another secret');
+  assert.equal(fleet.publicQaVideo('0000aaaa', share, 1), null, 'another session');
+});
+
+test('a QA run on a repo whose recordings are signed-in keeps them behind sign-in, with no public name', async () => {
+  const qaRecordings = { async saveVideo(id, n) { return { key: `${id}/video-${n}.webm` }; }, async savePoster() { return { path: null }; } };
+  const { fleet, calls } = qaSetup({ qaRecordings, gates: { ...QA_GATES, qa: { ...QA_GATES.qa, recordings: 'signed-in' } } });
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const [session] = fleet.sessions();
+  assert.equal(session.qa.share, undefined);
+  await fleet.qaVideo(session, Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1]));
+  await fleet.qaFinished(session, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  await settle();
+  assert.match(calls.comments.at(-1).body, /\(sign in to watch\): \[watch\]\(https:\/\/console\.test\/qa\/[0-9a-f]{8}\/video\/1\)/);
+  assert.equal(fleet.publicQaVideo(session.id, '0'.repeat(32), 1), null);
+});
+
 test('a console that keeps no QA recordings refuses a video, and the comment has no recording line', async () => {
   const { fleet, calls } = qaSetup();
   await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
@@ -3368,6 +3443,17 @@ test('a review that wrote no verdict submits nothing and stops the session', asy
   assert.deepEqual([session.review.reported, session.review.conclusion], [true, null]);
 });
 
+test('a review that wrote no verdict says why on the pull request, and only in the words the session\'s classifier makes', async () => {
+  const reason = 'its plan or API usage limit looks used up (check the plan or billing behind its sign-in)';
+  const { fleet, calls } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  const raw = JSON.stringify({ conclusion: null, sha: 'a'.repeat(40), why: `Codex: ${reason}; Grok Build: sk-SECRET123; Nobody: ${reason}` });
+  await fleet.reviewFinished(fleet.sessions()[0], parseReviewReport(raw));
+  const body = calls.comments.at(-1).body;
+  assert.ok(body.includes(`Codex: ${reason}`), 'the known reason reaches the comment');
+  assert.ok(!body.includes('SECRET') && !body.includes('Nobody'), 'text the classifier never makes is dropped');
+});
+
 test('a review session is not started for a pull request from a fork', async () => {
   const { fleet, github } = reviewSetup();
   github.pull = async () => ({ ...REVIEW_PULL, head: { ...REVIEW_PULL.head, repo: { full_name: 'someone/fork' } } });
@@ -3404,6 +3490,91 @@ test('a review on an author without Sessions from GitHub still runs, on the team
   t.github.pull = async () => REVIEW_PULL;
   assert.equal((await t.fleet.reviewOnTag({ number: 7 })).outcome, 'started');
   assert.equal(t.fleet.sessions()[0].review.teamKey, true);
+});
+
+test('an ended review a later one on its pull request replaced goes off the list, and the last once the pull request closed', async () => {
+  const { fleet, github } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  await fleet.reviewFinished(fleet.sessions()[0], REVIEW_RESULT);
+  const newer = { ...REVIEW_PULL, head: { ...REVIEW_PULL.head, sha: 'b'.repeat(40) } };
+  github.pull = async () => newer;
+  await fleet.reviewOnDemand({ project: { name: 'r', repo: 'o/r', default: true }, number: 7, login: 'joel' });
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 2, 'the first stays while the second runs: its verdict is the last posted one');
+  await fleet.reviewFinished(fleet.sessions()[1], { ...REVIEW_RESULT, sha: 'b'.repeat(40) });
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.review.sha), ['b'.repeat(40)], 'the replaced review is off the list');
+  assert.deepEqual(await fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'the commit still reads as reviewed');
+  github.pull = async () => ({ ...newer, state: 'closed' });
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 1, 'the pull request is read again only after a while, or a webhook');
+  assert.deepEqual(fleet.pullsChanged([7]), [7]);
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 0, 'nothing reads a closed pull request\'s runs');
+});
+
+test('an ended QA run stays while the run that replaces it is still going: its result is the pull request\'s until then', async () => {
+  const { fleet, github } = qaSetup();
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  await fleet.qaFinished(fleet.sessions()[0], { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  const newer = { ...QA_PULL, head: { ...QA_PULL.head, sha: 'c'.repeat(40) } };
+  github.pull = async () => newer;
+  github.reviews = async () => reviewOn(newer.head.sha);
+  await fleet.qaAfterReview({ number: 7 });
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['a', 'c'], 'c runs, with a\'s comment: a stays');
+  await fleet.qaFinished(fleet.sessions()[1], { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'c'.repeat(40), costUsd: 1 });
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['c'], 'once c ended, a goes');
+});
+
+test('an ended QA run a later one replaced goes off the list, recordings or not, and the last one\'s recordings outlast its pull request', async () => {
+  const { fleet, github } = qaSetup();
+  for (const sha of ['a', 'c', 'd']) {
+    const pull = { ...QA_PULL, head: { ...QA_PULL.head, sha: sha.repeat(40) } };
+    github.pull = async () => pull;
+    github.reviews = async () => reviewOn(pull.head.sha);
+    if (sha === 'a') await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+    else await fleet.qaAfterReview({ number: 7 });
+    const run = fleet.sessions().at(-1);
+    if (sha !== 'c') run.qa.videos = [{ n: 1, bytes: 10 }];
+    await fleet.qaFinished(run, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: sha.repeat(40), costUsd: 1 });
+  }
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['d'], 'a\'s recording is no longer linked: the comment is d\'s now');
+  github.pull = async () => ({ ...QA_PULL, state: 'closed' });
+  fleet.pullsChanged([7]);
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['d'], 'once closed, the run whose recording the comment links stays, for its days');
+  fleet.sessions()[0].qa.videos = [];
+  fleet.pullsChanged([7]);
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 0, 'with no recording, it goes too');
+});
+
+test('a QA run whose comment could not be edited posted its own: the old comment\'s recordings keep their run listed', async () => {
+  const { fleet, github } = qaSetup();
+  for (const sha of ['a', 'c']) {
+    const pull = { ...QA_PULL, head: { ...QA_PULL.head, sha: sha.repeat(40) } };
+    github.pull = async () => pull;
+    github.reviews = async () => reviewOn(pull.head.sha);
+    if (sha === 'a') await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+    else {
+      github.updateComment = async () => { throw new Error('HTTP 404: the comment was deleted'); };
+      await fleet.qaAfterReview({ number: 7 });
+    }
+    const run = fleet.sessions().at(-1);
+    run.qa.videos = [{ n: 1, bytes: 10 }];
+    await fleet.qaFinished(run, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: sha.repeat(40), costUsd: 1 });
+  }
+  const [a, c] = fleet.sessions();
+  assert.notEqual(a.qa.commentId, c.qa.commentId, 'c posted a comment of its own');
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['a', 'c'], 'a\'s comment still links its recording');
+  github.pull = async () => ({ ...QA_PULL, state: 'closed' });
+  fleet.pullsChanged([7]);
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['a', 'c'], 'and after the pull request closed, while they are kept');
 });
 
 const HELD_GATES = { ...REVIEW_GATES, qa: QA_GATES.qa };
@@ -3559,7 +3730,7 @@ test('a commit approved while a QA run held QA gets its own run when that run st
   await t.fleet.stop(qa, 'idle for 2 h');
   await t.fleet.tick();
   const runs = t.fleet.sessions().filter((s) => s.trigger === 'qa');
-  assert.deepEqual(runs.map((s) => s.qa.sha), ['a'.repeat(40), 'b'.repeat(40)], 'the newer commit is tested now');
+  assert.deepEqual(runs.map((s) => s.qa.sha), ['a'.repeat(40), 'b'.repeat(40)], 'the newer commit is tested now, and the run it replaces stays until it ends');
 });
 
 // Each repo's own label and switches (repoTriggers.mjs), set on its settings page.
@@ -4568,4 +4739,24 @@ test('a Stop pressed while a hand-off pushes is carried out when the push fails'
   assert.equal(first.stopReason, 'stopped from the console');
   assert.equal(first.stoppedBy, 'joel');
   assert.ok(!alive.has(`c-${first.id}`));
+});
+
+test('a message between two sessions is kept on both, newest first, the last 20, each cut to a line', async () => {
+  const { fleet } = setup();
+  const main = await fleet.startPrivate({ owner: 'joel', prompt: 'Plan the billing page' });
+  const child = await fleet.startPrivate({ owner: 'joel', prompt: 'Write NOTES.md', startedFrom: main.id });
+  fleet.noteMessage({ from: main, to: child, text: 'Use cents,\n\nnot floats.' });
+  fleet.noteMessage({ from: child, to: main, text: 'Developers or customers?', question: true });
+  assert.deepEqual(child.messages.map((m) => [m.dir, m.with, m.question, m.text]), [
+    ['out', main.id, true, 'Developers or customers?'],
+    ['in', main.id, false, 'Use cents, not floats.'],
+  ]);
+  assert.deepEqual(main.messages.map((m) => m.dir), ['in', 'out']);
+  fleet.noteMessage({ from: main, to: child, text: 'Maybe.', unconfirmed: true });
+  assert.equal(child.messages[0].unconfirmed, true);
+  assert.equal(child.messages[1].unconfirmed, undefined);
+  for (let i = 0; i < 25; i++) fleet.noteMessage({ from: main, to: child, text: `x${i} ${'y'.repeat(300)}` });
+  assert.equal(child.messages.length, 20);
+  assert.match(child.messages[0].text, /^x24 /);
+  assert.equal(child.messages[0].text.length, 200);
 });

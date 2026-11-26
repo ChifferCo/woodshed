@@ -134,6 +134,7 @@ export function createReviewProxy({ findFor, request = http.request, fleet = nul
     const upstream = request({ host, port: statusPort, method: req.method, path: target.path, headers, timeout: TIMEOUT_MS }, (upRes) => {
       const type = upRes.headers['content-type'] || 'application/json';
       const passed = { 'content-type': type, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
+      if (type.startsWith('image/')) passed['cross-origin-resource-policy'] = 'same-origin';
       // The Review tab frames the page, which the console otherwise forbids for every page.
       if (type.startsWith('text/html')) passed['content-security-policy'] = "frame-ancestors 'self'";
       res.writeHead(upRes.statusCode || 502, passed);
