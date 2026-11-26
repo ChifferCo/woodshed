@@ -273,7 +273,7 @@ function draw() {
     const rule = `\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m`;
     out(`\n${rule}\n❯\u00a0${typed || hint('Try "fix lint errors"')}\n${rule}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`);
   } else if (screen === 'idle' && format === 'opencode') out(`\n┃ ${typed || hint('Ask anything... "Fix a TODO in the codebase"')}\n┃\n┃ Build  stand-in/model\n\n  ${repo}                    tab agents  ctrl+p commands\n`);
-  else if (screen === 'idle' && format === 'grok') out(`\n❯ ${typed || hint('Ask Grok to build something')}\n\n  stand-in grok-build · ${repo}\n`);
+  else if (screen === 'idle' && format === 'grok') out(`\n╭──────────────────────────────────────╮\n│ ❯ ${typed}\n╰──────────────────────────────────────╯\n  stand-in grok-build · ${repo}\n`);
   else if (screen === 'idle') out(`\n\x1b[1m›\x1b[0m ${typed || hint('Ask anything')}\n\n  stand-in codex · /tmp/fx/repo\n`);
 }
 

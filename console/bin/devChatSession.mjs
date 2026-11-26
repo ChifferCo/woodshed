@@ -229,7 +229,7 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   execFileSync('tmux', ['new-session', '-d', '-s', 'claude', '-x', '120', '-y', '30', '-c', repo, paneCommand], { env: tmuxEnv });
   if (real && !realCodex) await trustOnce(tmuxEnv);
   // The agents started beside a stand-in session's own (session/agents.mjs, statusd's /agents), from New agent on its
-  // pane bar: stand-ins too, a `claude` and a `codex` that run devChatAgent.mjs in their own tmux sessions, writing their
+  // pane bar: stand-ins that run devChatAgent.mjs in their own tmux sessions, writing their
   // records where the real ones would. The real agents' sessions start none: they would spend this machine's sign-ins.
   const agentsEnv = {};
   if (!real) {
@@ -241,12 +241,17 @@ exec '${process.execPath}' '${AGENT}' claude "$HOME/.claude/projects/$(printf %s
     fs.writeFileSync(path.join(agentBin, 'codex'), `#!/bin/sh
 exec '${process.execPath}' '${AGENT}' codex "\${CODEX_HOME:-$HOME/.codex}" "$PWD" "$@"
 `, { mode: 0o755 });
+    fs.writeFileSync(path.join(agentBin, 'grok'), `#!/bin/bash
+exec -a grok '${process.execPath}' '${AGENT}' grok "$(dirname "$GROK_HOME")" "$PWD" "$@"
+`, { mode: 0o755 });
+    const grokRules = path.join(root, 'grok-rules.md');
+    fs.writeFileSync(grokRules, '# Woodshed dev console rules\n');
     fs.writeFileSync(path.join(root, 'agent-claude-flags'), '');
     fs.writeFileSync(path.join(root, 'codex-ready'), '');
     Object.assign(agentsEnv, {
       SESSION_KIND: 'private', WOODSHED_AGENT_BIN: agentBin, UPLOADS_DIR: path.join(root, 'uploads'),
       WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(root, 'agent-claude-flags'), WOODSHED_CODEX_READY_FILE: path.join(root, 'codex-ready'),
-      WOODSHED_AGENT_STATE_DIR: root,
+      WOODSHED_AGENT_STATE_DIR: root, WOODSHED_GROK_RULES_FILE: grokRules,
     });
   }
   // The TUI tab, as a session serves it (startClaude in session/entrypoint.sh): ttyd running woodshed-attach, which

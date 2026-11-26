@@ -3097,7 +3097,11 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
     maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, launcher: { kind: 'docker' }, localLogin: 'local',
   };
   let hasClaude = false;
-  const userSettings = { claudeToken: async () => hasClaude ? 'dummy-owner-claude-token' : null };
+  let hasGrok = false;
+  const userSettings = {
+    claudeToken: async () => hasClaude ? 'dummy-owner-claude-token' : null,
+    agentAuth: async (owner, agent) => hasGrok && owner === 'local' && agent === 'grok' ? 'xai-dummy-owner-grok-key' : null,
+  };
   const server = http.createServer(createHandler({ config, fleet, userSettings }));
   const port = await listen(server);
   t.after(() => server.close());
@@ -3113,7 +3117,9 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'bash' })).status, 400);
   assert.equal((await call('/api/sessions/1b2c3d4e/agents', { agent: 'claude' })).status, 404, 'someone else\'s session');
   assert.equal((await call('/api/sessions/2c3d4e5f/agents', { agent: 'claude' })).status, 409, 'a tainted session starts none');
-  assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'grok' })).status, 400, 'Grok Build and OpenCode never start beside another');
+  const missingGrok = await call('/api/sessions/0a1b2c3d/agents', { agent: 'grok' });
+  assert.equal(missingGrok.status, 409);
+  assert.match((await missingGrok.json()).error, /save your Grok Build sign-in on My settings/);
   assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'opencode', model: 'openai/gpt-5' })).status, 400);
   const missingClaude = await call('/api/sessions/3d4e5f6a/agents', { agent: 'claude' });
   assert.equal(missingClaude.status, 409);
@@ -3139,6 +3145,12 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
     ['POST', '/agents/agent-2/interrupt', '{}'],
     ['POST', '/agents/agent-2/stop', '{}'],
   ]);
+  hasGrok = true;
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'grok', permissionMode: 'plan' })).status, 200);
+  assert.deepEqual(allowed.at(-1), ['0a1b2c3d', 'grok']);
+  assert.equal(JSON.parse(asked.at(-1).body).grokAuth, 'xai-dummy-owner-grok-key');
+  assert.equal((await call('/api/sessions/3d4e5f6a/agents', { agent: 'grok' })).status, 200);
+  assert.equal(JSON.parse(asked.at(-1).body).grokAuth, undefined, 'a Grok session already has its owner’s sign-in');
 });
 
 test('a Codex agent beside claude is started with its owner\'s sign-in, and allowed the team key only once it started', async (t) => {

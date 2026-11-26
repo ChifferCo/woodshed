@@ -1554,7 +1554,11 @@ function configureAgent(name, auth, env = {}) {
   const vars = ['OWN_AGENT_AUTH_FILE=$HOME/.config/woodshed/agent-auth', 'GROK_HOME_DIR=$HOME/.grok',
     'OPENCODE_DATA_DIR=$HOME/.local/share/opencode', 'OPENCODE_CONFIG_DIR=$HOME/.config/opencode'];
   const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }', ...vars,
-    fn('ownAgentAuthIsKey'), fn('agentDir'), fn('refuseRulesOutsideCheckout'), fn('opencodePermission'), fn(name).replaceAll('/tmp/', `${tmp}/`), name].join('\n');
+    fn('ownAgentAuthIsKey'), fn('agentDir'), fn('opencodePermission'),
+    name === 'configureGrok'
+      ? `WOODSHED_RULES_FILE="${tmp}/woodshed-rules.md"; . "${SESSION_DIR}/grokSetup.sh"`
+      : fn(name).replaceAll('/tmp/', `${tmp}/`),
+    name].join('\n');
   const read = (file) => (fs.existsSync(path.join(home, file)) ? fs.readFileSync(path.join(home, file), 'utf8') : null);
   const mode = (file) => fs.statSync(path.join(home, file)).mode & 0o777;
   try {

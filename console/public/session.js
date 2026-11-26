@@ -296,10 +296,9 @@
     const C = W.agentChoices;
     const select = (options) => h('select', { class: 'field' }, options.map(([value, label, title]) => h('option', { value, title }, label)));
     const fill = (el, options) => el.replaceChildren(...options.map(([value, label, title]) => h('option', { value, title }, label)));
-    // Claude Code or Codex alone beside a session's own (session/agents.mjs): Grok Build and OpenCode run only as a
-    // session's own agent, on their owner's own sign-in.
-    const agent = select(C.AGENTS.filter(([value]) => window.WoodshedAgents.isAgent(value) && window.WoodshedAgents.agent(value).teamCredential));
+    const agent = select(C.AGENTS.filter(([value]) => ['claude', 'codex', 'grok'].includes(value)));
     const model = select(C.MODELS);
+    const grokModel = h('input', { class: 'field', type: 'text', 'aria-label': 'Model', placeholder: 'Default', hidden: true, disabled: true });
     const effort = select(C.EFFORTS);
     const mode = select(C.MODES);
     const prompt = h('textarea', { class: 'field', rows: '3', placeholder: 'Optional: what it should do first. Leave it empty to write to it on the Chat tab.' });
@@ -315,8 +314,11 @@
     };
     function showAgent() {
       const codex = agent.value === 'codex';
-      fill(model, codex ? codexModels() : C.MODELS);
-      fill(effort, codex ? codexEfforts() : C.EFFORTS);
+      const grok = agent.value === 'grok';
+      model.hidden = model.disabled = grok;
+      grokModel.hidden = grokModel.disabled = !grok;
+      if (!grok) fill(model, codex ? codexModels() : C.MODELS);
+      fill(effort, codex ? codexEfforts() : grok ? window.WoodshedAgents.agent('grok').efforts.map((value) => [value, value || 'default']) : C.EFFORTS);
       fill(mode, codex ? C.CODEX_MODES : C.MODES);
       if (codex && !catalog) {
         W.getJson('/api/my/codex-models').then((answer) => {
@@ -338,7 +340,7 @@
     const field = (label, control) => h('label', { class: 'field-label' }, h('span', null, label), control);
     const form = h('form', { method: 'dialog', class: 'agent-form' },
       h('p', { class: 'sub' }, 'It works in this session\'s checkout, beside the agents already in it. Use the agent switch in Chat or TUI to choose which agent you see.'),
-      h('div', { class: 'agent-grid' }, field('Agent', agent), field('Model', model), field('Effort', effort), field('Permissions', mode)),
+      h('div', { class: 'agent-grid' }, field('Agent', agent), field('Model', [model, grokModel]), field('Effort', effort), field('Permissions', mode)),
       field('First message', prompt),
       error,
       h('div', { class: 'dialog-actions' }, cancel, go));
@@ -352,9 +354,10 @@
       cancel.disabled = true;
       go.textContent = 'Starting…';
       error.hidden = true;
+      const pickedModel = agent.value === 'grok' ? grokModel.value.trim() : model.value;
       try {
         const answer = await W.postJson(`/api/sessions/${s.id}/agents`, {
-          agent: agent.value, model: model.value, effort: effort.value, permissionMode: mode.value, prompt: prompt.value.trim(),
+          agent: agent.value, model: pickedModel, effort: effort.value, permissionMode: mode.value, prompt: prompt.value.trim(),
         });
         busy = false;
         dialog.close();
@@ -364,7 +367,7 @@
           justStarted.set(s.id, [...(justStarted.get(s.id) ?? []), { ...started, seenAt: Date.now() }]);
           keepAgentPick(s.id, started.id);
         }
-        W.shell.toast(`${agentLabel(agent.value, model.value)} is starting: it shows on ${tab === 'tui' ? 'TUI' : 'Chat'} as it opens`);
+        W.shell.toast(`${agentLabel(agent.value, pickedModel)} is starting: it shows on ${tab === 'tui' ? 'TUI' : 'Chat'} as it opens`);
         if (tab === 'chat' || tab === 'tui') render();
         else setTab('chat');
         refresh();

@@ -482,8 +482,8 @@ export function grokFolderName(dir) {
 
 // The newest updates.jsonl of the checkout's sessions: its folder by name, or by the `.cwd` a long path's folder holds.
 // With none for the checkout, the newest of any, as codex's rollouts are read.
-async function newestGrokUpdates(home, root) {
-  const base = path.join(home, '.grok', 'sessions');
+async function newestGrokUpdates(grokHome, root, { skip, conversation }) {
+  const base = path.join(grokHome, 'sessions');
   const dirs = await fs.readdir(base).catch(() => []);
   const mine = [];
   for (const d of dirs) {
@@ -497,6 +497,7 @@ async function newestGrokUpdates(home, root) {
     let best = null;
     for (const d of list) {
       for (const id of await fs.readdir(path.join(base, d)).catch(() => [])) {
+        if (skip?.has(id) || (conversation && conversation !== id)) continue;
         const file = path.join(base, d, id, 'updates.jsonl');
         const stat = await fs.stat(file).catch(() => null);
         if (stat?.isFile() && (!best || stat.mtimeMs > best.stat.mtimeMs)) best = { file, stat };
@@ -724,7 +725,7 @@ async function newestRollout(codexHome, skip = null) {
  *   partial: older entries were left out, by the read or by the limit. unchanged: the newest record is still the
  *   one written at `since`, so the caller's entries stand
  */
-export async function readSessionTranscript({ agent, claudeDir, codexHome, home = os.homedir(), root, limit = MAX_ENTRIES, since = null, writtenFrom = 0, resume = null, skip = null, file }) {
+export async function readSessionTranscript({ agent, claudeDir, codexHome, home = os.homedir(), grokHome = path.join(home, '.grok'), conversation, root, limit = MAX_ENTRIES, since = null, writtenFrom = 0, resume = null, skip = null, file }) {
   const max = Math.max(1, Math.min(MAX_ENTRIES, Math.trunc(Number(limit)) || MAX_ENTRIES));
   if (agent === 'opencode') {
     const read = await readOpenCode({ dbFile: openCodeDb(home), root, since });
@@ -734,7 +735,7 @@ export async function readSessionTranscript({ agent, claudeDir, codexHome, home 
   }
   const newest = file !== undefined ? await fileStat(file)
     : agent === 'codex' ? await newestRollout(codexHome, skip)
-      : agent === 'grok' ? await newestGrokUpdates(home, root)
+      : agent === 'grok' ? await newestGrokUpdates(grokHome, root, { skip, conversation })
         : await ownClaudeTranscript(claudeDir, { writtenFrom, resume, skip });
   if (!newest) return { agent, entries: [], partial: false, writtenAt: null };
   if (since !== null && newest.stat.mtimeMs === since) return { agent, unchanged: true, writtenAt: since };

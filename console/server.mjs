@@ -2320,12 +2320,25 @@ export function createHandler({
       } catch (err) {
         return reply(res, 400, { error: err.message });
       }
-      // The agents beside a session's own are Claude Code or Codex alone (session/agents.mjs).
-      if (!agentsRegistry.agent(picked.agent).teamCredential) return reply(res, 400, { error: 'the agent must be claude or codex' });
+      if (picked.agent === 'opencode') return reply(res, 400, { error: 'the agent must be claude, codex or grok' });
       const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
       if (prompt.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in the first message` });
       // A direct Anthropic call must use the owner's credential, not the session token used by the plan proxy.
       const primary = agentsRegistry.agent(agentsRegistry.agentOfSession(session));
+      let grokAuth = null;
+      if (picked.agent === 'grok' && (session.kind === 'ask' || ['review', 'qa', 'slack'].includes(session.trigger))) {
+        return reply(res, 409, { error: 'Grok Build starts only beside a private coding session' });
+      }
+      if (picked.agent === 'grok' && primary.id !== 'grok') {
+        try {
+          grokAuth = await userSettings?.agentAuth?.(session.owner, 'grok');
+        } catch {
+          console.warn('console: Grok Build sign-in not read for an agent', { id: session.id });
+          return reply(res, 502, { error: 'the console could not read your Grok Build sign-in: try again' });
+        }
+        if (!grokAuth) return reply(res, 409, { error: 'save your Grok Build sign-in on My settings first' });
+        if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
+      }
       const needsClaudeToken = picked.agent === 'claude' && !primary.teamCredential;
       let claudeToken = null;
       if (needsClaudeToken) {
@@ -2360,7 +2373,7 @@ export function createHandler({
       return toStatusd(req, res, session, {
         // Older images refuse this route rather than ignoring the credential and launching on the session token.
         method: 'POST', path: needsClaudeToken ? '/agents/with-claude-token' : '/agents',
-        body: { ...picked, prompt, ...(claudeToken ? { claudeToken } : {}), ...(codexAuth ? { codexAuth } : {}) },
+        body: { ...picked, prompt, ...(claudeToken ? { claudeToken } : {}), ...(codexAuth ? { codexAuth } : {}), ...(grokAuth ? { grokAuth } : {}) },
         onStatus: (code) => { if (code === 200 && !session.taintedAt && !fleet.isLocked?.(session)) fleet.allowAgent(session, picked.agent); },
       });
     }
