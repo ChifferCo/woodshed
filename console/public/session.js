@@ -255,7 +255,7 @@
     const own = { id: null, agent: W.agentOf(s), model: s.options?.model || null, state: s.state };
     const waiting = [own, ...list].filter((a) => a.state === 'needs-you' && a.id !== (shown?.id ?? null)).length;
     const label = [
-      h('span', null, agentLabel((shown ?? own).agent, (shown ?? own).model)),
+      h('span', { class: 'pagent-label' }, agentLabel((shown ?? own).agent, (shown ?? own).model)),
       list.length > 0 && h('span', { class: 'pagent-count' }, `${list.length + 1} agents`),
       waiting > 0 && h('span', { class: 'pagent-needs' }, `${waiting} needs you`),
       ' ▾',

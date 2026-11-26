@@ -16,7 +16,8 @@ Build or OpenCode session can start Claude Code and Codex agents alongside its o
   first message, then Cancel and **Start agent**, orange. While it starts, both are disabled and the action says
   `Starting…`; a refusal stays in the dialog as a `form-error`. It picks the other agent first: a second opinion is the
   usual reason to start one.
-- Never orange on the bar: switching agents is not the view's primary action. On a phone the switch stays, on a row of
-  its own under the tabs, since it is how Chat and TUI reach another agent there. The session's ⋯ menu also offers
+- Never orange on the bar: switching agents is not the view's primary action. On a phone the switch sits beside the
+  session title and before ⋯. It keeps the needs-you indicator, hides the agent count, and truncates long agent or model
+  names to leave room for the title. The menu lists each agent by its full name. The session's ⋯ menu also offers
   **+ Another agent** on every tab when the owner can start one. Starting from outside Chat or TUI opens Chat with the
   new agent selected.
