@@ -10,6 +10,8 @@ import { QA_RECORDING_DAYS } from './qaRecordings.mjs';
 
 // GitHub caps a comment at 65536 characters; the report is cut to leave room for the heading and the footer.
 export const MAX_REPORT_CHARS = 60_000;
+// The run log a QA session sends (POST /qa-log): its steps and how each claude pass ended, a few KB in practice.
+export const MAX_QA_LOG_BYTES = 100 * 1024;
 const CONCLUSIONS = new Set(['success', 'failure', 'neutral']);
 // A QA run's videos: the browser's recording of each page the tests opened, as Playwright writes them (WebM), about
 // 2 MB a minute at 1280x720. The console holds one whole in memory on its way to the store (its container has 512 MB),

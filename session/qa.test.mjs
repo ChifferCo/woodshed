@@ -13,9 +13,21 @@ const QA_MJS = path.join(HERE, '../shared/qa/qa.mjs');
 
 // A fake claude: the planner writes the plan (or SKIP.md), the tests write the report, and each ends with its cost.
 const FAKE_CLAUDE = `#!/bin/bash
+# The secret screen over the run log: it answers with the line numbers FAKE_SCREEN names, or fails with FAKE_SCREEN=fail.
+case " $* " in *" haiku "*)
+  [ "\${FAKE_SCREEN:-}" = fail ] && exit 1
+  echo "\${FAKE_SCREEN:-NONE}"; exit 0 ;;
+esac
+if [ -n "\${FAKE_NO_REPORT:-}" ] && [ -f .qa/plan/plan.md ]; then
+  echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Opening the app"},{"type":"tool_use","name":"x"}]}}'
+  echo '{"type":"result","subtype":"error_max_turns","is_error":false,"num_turns":200,"total_cost_usd":2}'
+  exit 0
+fi
 if [ ! -f .qa/plan/plan.md ]; then
   if [ -n "\${FAKE_SKIP:-}" ]; then echo 'Docs only' > .qa/plan/SKIP.md; else echo '# Plan' > .qa/plan/plan.md; fi
   echo '{"type":"result","total_cost_usd":0.5}'
+  [ -n "\${FAKE_LEAK:-}" ] && echo 'npm ERR! _authToken=abcdef1234567890'
+  [ -n "\${FAKE_OPAQUE:-}" ] && echo 'registry said the credential is zzOpaque7788 for this user'
 else
   printf '## TC-1: signs in ✅\\n## TC-2: saves ❌\\n' > .qa/report.md
   # The browser's recording, where the MCP config claude was given says to write it.
@@ -33,7 +45,7 @@ function listen(handler) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runQa(t, { skip = false, app = 'running' } = {}) {
+async function runQa(t, { skip = false, app = 'running', noReport = false, leak = false, screen = null, opaque = false, pin = false, notes = null, planted = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-sh-'));
   const sessionDir = path.join(dir, 'session');
   const bin = path.join(dir, 'fakebin');
@@ -46,9 +58,16 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
   const ffmpeg = path.join(bin, 'ffmpeg-linux');
   fs.writeFileSync(ffmpeg, `#!/bin/bash\necho "$*" > "${path.join(dir, 'ffmpeg-args')}"\nprintf '\\x89PNG\\r\\n\\x1a\\nstill' > "\${@: -1}"\n`, { mode: 0o755 });
   // The base is a branch the clone has never fetched, as for a stacked pull request.
-  execFileSync('bash', ['-c', `git init -q -b main "${repo}" && cd "${repo}" && mkdir .woodshed && echo 'Sign in as demo.' > .woodshed/qa.md &&
+  execFileSync('bash', ['-c', `git init -q -b main "${repo}" && cd "${repo}" && mkdir .woodshed docs && echo 'Sign in as demo.' > .woodshed/qa.md && echo 'Custom notes.' > docs/qa-notes.md &&
     git add -A && git -c user.email=t@t -c user.name=t commit -qm base && git init -q --bare "${dir}/origin.git" &&
     git push -q "${dir}/origin.git" HEAD:refs/heads/stacked-base && git remote add origin "${dir}/origin.git"`]);
+
+  // A pull request that commits a .qa folder of its own, whose steps log is a link to a file outside the checkout.
+  const outside = path.join(dir, 'outside.txt');
+  if (planted) {
+    fs.writeFileSync(outside, 'OUTSIDE-SENTINEL\n');
+    execFileSync('bash', ['-c', `cd "${repo}" && mkdir -p .qa/logs && ln -s "${outside}" .qa/logs/steps.log && git add -f .qa && git -c user.email=t@t -c user.name=t commit -qm planted`]);
+  }
 
   const statusdCalls = [];
   const statusd = await listen((req, res) => {
@@ -57,6 +76,7 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
   });
   const reports = [];
   const videos = [];
+  const logs = [];
   const consoleServer = await listen((req, res) => {
     const chunks = [];
     req.on('data', (c) => { chunks.push(c); });
@@ -64,6 +84,11 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
       const body = Buffer.concat(chunks);
       if (req.url === '/qa-video' || req.url === '/qa-poster') {
         videos.push({ path: req.url, authorization: req.headers.authorization, type: req.headers['content-type'], body, before: reports.length });
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+        return;
+      }
+      if (req.url.startsWith('/qa-log')) {
+        logs.push({ authorization: req.headers.authorization, type: req.headers['content-type'], text: body.toString('utf8'), reports: reports.length });
         res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
         return;
       }
@@ -75,8 +100,8 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
 
   const env = {
     ...isolatedEnv(), PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', QA_BASE: 'stacked-base',
-    SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`,
-    STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_FFMPEG: ffmpeg, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}),
+    SESSION_ID: '0a1b2c3d', SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`,
+    STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_FFMPEG: ffmpeg, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}), ...(noReport ? { FAKE_NO_REPORT: '1' } : {}), ...(leak ? { FAKE_LEAK: '1' } : {}), ...(screen ? { FAKE_SCREEN: screen } : {}), ...(opaque ? { FAKE_OPAQUE: '1' } : {}), ...(notes ? { QA_NOTES: notes } : {}), ...(pin ? { REGISTRY_PIN: '3999', WOODSHED_INSTALL_SECRETS: 'REGISTRY_PIN' } : {}),
   };
   const output = await new Promise((resolve, reject) => {
     const child = spawn('bash', [QA_SH], { env });
@@ -87,7 +112,7 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
     child.on('exit', (code) => (code === 0 ? resolve(out) : reject(new Error(`qa.sh exited ${code}: ${out}`))));
   });
   const ffmpegArgs = () => fs.readFileSync(path.join(dir, 'ffmpeg-args'), 'utf8').trim();
-  return { reports, videos, statusdCalls, output, repo, ffmpegArgs, running: path.join(dir, 'qa-running') };
+  return { reports, videos, logs, statusdCalls, output, repo, outside, ffmpegArgs, running: path.join(dir, 'qa-running') };
 }
 
 test('a QA run plans, starts the app, tests and sends the verdict, the report, the commit and the cost', async (t) => {
@@ -129,4 +154,54 @@ test('a plan with nothing to test sends a neutral verdict and never starts the a
 test('an app that fails to start is not covered, and says so', async (t) => {
   const { reports } = await runQa(t, { app: 'failed' });
   assert.equal(reports[0].body.verdict.title, 'Not covered: the app did not start');
+});
+
+test('the run log reaches the console after each pass and with the report, and says how the passes ended', async (t) => {
+  const { logs } = await runQa(t);
+  assert.equal(logs.length, 5, 'before the plan, after the plan, as the tests begin, after the tests, and as the run finishes');
+  assert.deepEqual([logs[0].authorization, logs[0].type], ['Bearer tok', 'text/plain']);
+  assert.deepEqual(logs.map((l) => l.reports), [0, 0, 0, 0, 0], 'each before the report');
+  assert.match(logs[0].text, /Planning the tests[\s\S]*## plan\nStarted; its outcome is not known yet\./, 'a run stopped while its planner works still says so');
+  assert.match(logs[0].text, /model check for secrets has not run on this log yet/, 'a checkpoint says it was not screened');
+  assert.match(logs[2].text, /Test pass started; if the run is stopped now/);
+  assert.match(logs[3].text, /## steps[\s\S]*Planning the tests[\s\S]*Running the tests/);
+  assert.match(logs[3].text, /## plan\nEnded: finished/);
+  assert.doesNotMatch(logs[3].text, /has not run on this log yet/, 'a pass\'s end is screened');
+});
+
+test('a test pass that runs out of turns with no report says so in the verdict and the log', async (t) => {
+  const { reports, logs } = await runQa(t, { noReport: true });
+  const { verdict } = reports[0].body;
+  assert.equal(verdict.conclusion, 'neutral');
+  assert.match(verdict.status, /the run ended without a QA report, because the test pass ran out of turns before it finished \(200 turns\)/);
+  assert.match(logs.at(-1).text, /## test\nEnded: ran out of turns[\s\S]*Opening the app[\s\S]*No report\.md was written\./);
+});
+
+test('a credential a pass printed is taken out of the log the console keeps', async (t) => {
+  const { logs } = await runQa(t, { leak: true });
+  assert.ok(logs.length > 0);
+  for (const l of logs) assert.doesNotMatch(l.text, /abcdef1234567890/);
+  assert.match(logs.at(-1).text, /_authToken=\[redacted\]/);
+});
+
+test('the model\'s secret screen blanks the lines it names, and a screen that cannot run leaves a note', async (t) => {
+  // An opaque value in prose, which no pattern knows: the screen names its line, and it is blanked.
+  const first = await runQa(t, { opaque: true, screen: 'NONE' });
+  assert.match(first.logs.at(-1).text, /zzOpaque7788/, 'a pattern cannot know it: only the screen can');
+  const lineOf = (text) => text.split('\n').findIndex((l) => l.includes('zzOpaque7788')) + 1;
+  const line = lineOf(first.logs.at(-1).text);
+  assert.ok(line > 0);
+  const second = await runQa(t, { opaque: true, screen: `${line}` });
+  assert.doesNotMatch(second.logs.at(-1).text, /zzOpaque7788/);
+  assert.match(second.logs.at(-1).text, /\[line removed: the secret screen found a secret in it\]/);
+  const failed = await runQa(t, { screen: 'fail' });
+  assert.match(failed.logs.at(-1).text, /model check for secrets did not run/);
+});
+
+test('a .qa folder the pull request commits, with a link in it to a file outside the checkout, is removed: the file is not written to or sent', async (t) => {
+  const { logs, outside, repo } = await runQa(t, { planted: true });
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'OUTSIDE-SENTINEL\n', 'the file outside is untouched');
+  assert.ok(logs.length > 0);
+  for (const l of logs) assert.doesNotMatch(l.text, /OUTSIDE-SENTINEL/);
+  assert.equal(fs.lstatSync(path.join(repo, '.qa', 'logs', 'steps.log')).isSymbolicLink(), false);
 });

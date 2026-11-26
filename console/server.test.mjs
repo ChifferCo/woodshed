@@ -168,6 +168,63 @@ test('a QA recording plays only for someone signed in who may open its session, 
   assert.deepEqual(served, [['video', { id: '0a1b2c3d', n: 1 }], ['poster', { id: '0a1b2c3d', secret }]]);
 });
 
+test('a QA run\'s log reads only for an admin or whoever started it, and for anyone else who may open the session it is refused', async (t) => {
+  const log = '## test\nEnded: ran out of turns\nLast said: PRIVATE-WORDS\n';
+  const sessions = [
+    { id: '0a1b2c3d', status: 'stopped', kind: 'pr', number: 7, title: 'QA', startedBy: 'starter', qa: { base: 'main', log } },
+    { id: '0a1b2c3e', status: 'stopped', kind: 'pr', number: 7, title: 'QA', qa: { base: 'main' } },
+    { id: '0a1b2c3f', status: 'stopped', kind: 'pr', number: 7, title: 'Work' },
+    { id: '0a1b2c40', status: 'stopped', kind: 'pr', number: 7, title: 'Theirs', owner: 'someone-else', qa: { base: 'main', log: 'SECRET' } },
+  ];
+  const fleet = { sessions: () => sessions, find: (id) => sessions.find((x) => x.id === id) ?? null };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+  };
+  const logins = { admin: 'admin', starter: 'starter', plain: 'plain' };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => {
+    const who = Object.keys(logins).find((k) => String(cookie).includes(`woodshed_session=${k}`));
+    return who ? { login: logins[who] } : null;
+  } };
+  const members = { hasAdmin: () => true, isAdmin: (login) => login === 'admin', hasGithubSessions: () => true, isMember: () => true, currentRole: () => 'member', hosted: false };
+  const handle = createHandler({ config, fleet, auth, members });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = (who) => (who ? { cookie: `woodshed_session=${who}` } : {});
+  const read = (id, headers) => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: `/api/sessions/${id}/qa-log`, headers: { host: `localhost:${port}`, ...headers } }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], nosniff: res.headers['x-content-type-options'], body }));
+    }).on('error', reject);
+  });
+
+  const asAdmin = await read('0a1b2c3d', as('admin'));
+  assert.deepEqual([asAdmin.status, asAdmin.type, asAdmin.nosniff, asAdmin.body], [200, 'text/plain; charset=utf-8', 'nosniff', log]);
+  assert.equal((await read('0a1b2c3d', as('starter'))).body, log, 'whoever started the run');
+  const plain = await read('0a1b2c3d', as('plain'));
+  assert.deepEqual([plain.status, plain.body.includes('PRIVATE-WORDS')], [403, false], 'a member who is neither reads nothing of it');
+  assert.equal((await read('0a1b2c3e', as('admin'))).status, 404, 'a QA session that sent no log');
+  // A review session's log is read the same way, at its own name: the starter reads it, others do not.
+  sessions.push({ id: '0a1b2c41', status: 'stopped', kind: 'pr', number: 7, title: 'Review', startedBy: 'starter', review: { base: 'main', log } });
+  const readReview = (id, headers) => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: `/api/sessions/${id}/review-log`, headers: { host: `localhost:${port}`, ...headers } }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    }).on('error', reject);
+  });
+  assert.equal((await readReview('0a1b2c41', as('starter'))).body, log);
+  const plainReview = await readReview('0a1b2c41', as('plain'));
+  assert.deepEqual([plainReview.status, plainReview.body.includes('PRIVATE-WORDS')], [403, false]);
+  assert.equal((await readReview('0a1b2c3d', as('admin'))).status, 404, 'a QA session is not read at the review name');
+  assert.equal((await read('0a1b2c3f', as('admin'))).status, 404, 'a session that is not QA');
+  const hidden = await read('0a1b2c40', as('plain'));
+  assert.deepEqual([hidden.status, hidden.body.includes('SECRET')], [404, false], 'a session this person cannot open');
+  assert.equal((await read('0a1b2c3d', as(null))).status, 401, 'signed out');
+});
+
 test('a public repo\'s QA video plays with no sign-in at its run\'s secret name, and no other name opens it', async (t) => {
   const share = 'c'.repeat(32);
   const session = { id: '0a1b2c3d', status: 'stopped', kind: 'pr', number: 7, title: 'QA', qa: { base: 'main', share, videos: [{ n: 1, bytes: 4 }] } };

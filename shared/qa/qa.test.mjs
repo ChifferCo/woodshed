@@ -60,3 +60,14 @@ test('the command line writes the prompts and reads a run folder into the same v
   const down = JSON.parse(execFileSync('node', [QA, 'verdict', dir, '--not-covered', 'app down'], { encoding: 'utf8' }));
   assert.equal(down.title, 'Not covered: app down');
 });
+
+test('a run with no report says how the test pass ended, when it is known', () => {
+  const v = verdictOf({ report: null, skip: null, noPlan: null, notCovered: null, endedWith: 'the test pass ran out of turns' });
+  assert.equal(v.status, '⚠️ **Not covered**: the run ended without a QA report, because the test pass ran out of turns');
+  assert.equal(v.title, 'Not covered: no QA report');
+});
+
+test('a run with no plan says how the planner ended, when it is known', () => {
+  const v = verdictOf({ report: null, skip: null, noPlan: 'the planner ended without writing a test plan', notCovered: null, endedWith: 'the plan pass ran out of turns' });
+  assert.match(v.status, /without writing a test plan, because the plan pass ran out of turns$/);
+});

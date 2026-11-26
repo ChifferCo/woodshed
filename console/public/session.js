@@ -2480,7 +2480,30 @@
             ? `A QA session pushes nothing: its report is the QA comment and check on ${W.ref(s)}. Add the QA label to the pull request again to run QA again.`
             : `This QA session stopped before it sent a report, so ${W.ref(s)} has no QA result from it. Add the QA label to the pull request again to run QA again.`)
             : h('p', null, 'Work in progress is committed and pushed to the branch before a stop. Comment ', h('code', null, '/woodshed …'), ` on ${W.ref(s)} to start a new session on the same branch.`),
-      h('dl', null, facts.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])));
+      h('dl', null, facts.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])),
+      // Only an admin and whoever started the run read it; the console answers anyone else 403, so the fold is not drawn for them.
+      ((W.isAdmin() || W.sameLogin(s.startedBy, data.login) || W.sameLogin(s.owner, data.login))
+        && ((s.trigger === 'qa' && s.qa?.hasLog && qaRunLog(s, 'qa')) || (s.trigger === 'review' && s.review?.hasLog && qaRunLog(s, 'review')))));
+  }
+
+  // A QA or review run's log, read when it is opened: how each claude pass ended and what the run did, for a run with no verdict.
+  function qaRunLog(s, kind) {
+    const body = h('pre', { class: 'run-log' }, 'Loading…');
+    let loaded = false;
+    const load = async () => {
+      if (loaded) return;
+      loaded = true;
+      try {
+        const res = await fetch(`/api/sessions/${s.id}/${kind}-log`, { cache: 'no-store' });
+        if (!res.ok) loaded = false;
+        body.textContent = res.ok ? await res.text() : `The run log was not read (${res.status}).`;
+      } catch {
+        loaded = false;
+        body.textContent = 'The run log was not read: the console did not answer.';
+      }
+    };
+    return h('details', { class: 'run-log-box', ontoggle: (e) => e.target.open && load() },
+      h('summary', null, 'Run log'), body);
   }
 
   // A pause says which limit it hit, from the console's reason: `idle for 1 h` or `ran for 8 h`.
@@ -2858,7 +2881,7 @@
     if (s.status === 'starting') return `${s.id}:starting:${Date.now()}`;
     // A wait with steps counts its seconds, as a start does.
     if (W.waitsForRetry(s) && s.waitProgress) return `${s.id}:waiting:${Date.now()}`;
-    return s.status === 'running' ? `${agentTermKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.stoppedBy}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
+    return s.status === 'running' ? `${agentTermKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.stoppedBy}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}:${Boolean(s.qa?.hasLog)}:${Boolean(s.review?.hasLog)}:${W.isAdmin()}:${data?.login}`;
   }
 
   let currentSession = null;

@@ -638,6 +638,9 @@ export function publicSession({ token, terminalToken, startTokenHash, endpoint, 
   // The page's ids of the messages held, never their text: a send whose answer it lost can tell it is still held.
   const heldIds = (pendingMessages ?? []).filter((m) => m && typeof m === 'object' && m.id).map((m) => m.id);
   // A public QA run's secret opens its videos to anyone: the page has the comment's links, never the key to them.
-  const qa = rest.qa?.share ? (({ share, ...own }) => own)(rest.qa) : rest.qa;
-  return { ...rest, ...(qa ? { qa } : {}), pendingMessages: pendingMessages?.length ?? 0, heldIds, hasShell: Boolean(endpoint?.shellPort) };
+  // Its run log is read on request (GET /api/sessions/<id>/qa-log), not carried in every list: the page gets `hasLog`.
+  const withoutLogs = ({ share, log, ...own }) => ({ ...own, ...(log ? { hasLog: true } : {}) });
+  const qa = rest.qa ? withoutLogs(rest.qa) : rest.qa;
+  const review = rest.review ? withoutLogs(rest.review) : rest.review;
+  return { ...rest, ...(qa ? { qa } : {}), ...(review ? { review } : {}), pendingMessages: pendingMessages?.length ?? 0, heldIds, hasShell: Boolean(endpoint?.shellPort) };
 }
