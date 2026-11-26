@@ -265,6 +265,23 @@ test('the report reads each repo once for five minutes, and a repo GitHub did no
   assert.equal(reads, 2);
 });
 
+test('every window shares one read per repo, and a stale read is shown at once while a new one loads', async () => {
+  let reads = 0;
+  let now = NOW;
+  let release = null;
+  const gh = { recentPulls: async () => { reads++; if (release) await new Promise((r) => { release = r; }); return { pulls: [pull({ number: 9, url: url(9), createdAt: ago(1) })], total: 1, truncated: false }; } };
+  const analytics = createAnalytics({ config: { projects: [{ name: 'app', repo: REPO, default: true }] }, sessions: () => [], state: () => ({ usageKept: [] }), githubFor: () => gh, now: () => now });
+  for (const days of [7, 30, 90]) await analytics.report({ days });
+  assert.equal(reads, 1, 'the three windows are one search');
+  now += 6 * 60_000;
+  release = () => {};
+  const stale = await Promise.race([analytics.report({ days: 30 }), new Promise((r) => setTimeout(() => r('slow'), 200))]);
+  assert.notEqual(stale, 'slow', 'a stale read does not wait for the new one');
+  assert.equal(stale.pulls.other.opened, 1);
+  assert.equal(reads, 2);
+  release();
+});
+
 test('/api/analytics is an admin\'s, and answers the window asked for with each person\'s name', async (t) => {
   const { createMembers } = await import('./members.mjs');
   const store = { state: { members: {

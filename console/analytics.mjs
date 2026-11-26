@@ -246,18 +246,15 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
  *   project file's pull request gates, whose `mergeRisk.check` tiers a pull request the review's label does not
  */
 export function createAnalytics({ config, sessions, state, githubFor, gatesOf = async () => null, members = () => [], now = Date.now }) {
-  // Each project's search, by project and day it starts from: {at, value} once read, or the read in flight.
+  // Each project's search, by project: {at, value} once read, or the read in flight. One read of the widest window serves
+  // all three, since the report filters by date itself, so the first view of 7 days warms the 30 and the 90.
   const reads = new Map();
 
-  async function projectPulls(project, since) {
-    // Yesterday's windows are never asked again: what is past its time and not being read goes.
-    for (const [old, entry] of reads) if (!entry.reading && now() - entry.at >= READ_MS) reads.delete(old);
-    const key = `${project.name}\n${project.repo}\n${since}`;
-    const held = reads.get(key);
-    if (held && (held.reading || now() - held.at < READ_MS)) return held.reading ?? held.value;
+  function startRead(project, key, held) {
     const reading = (async () => {
       const gh = githubFor(project);
       if (!gh?.recentPulls) throw new Error('this console has no GitHub access for it');
+      const since = new Date(now() - Math.max(...WINDOWS) * DAY_MS).toISOString().slice(0, 10);
       // Both reads name the repo the viewer was let see: the default project's client follows the default repo, which an
       // admin may change between them, and a number on another repo is another pull request.
       const found = await gh.recentPulls({ since, repo: project.repo });
@@ -275,16 +272,27 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
       }
     })();
     reads.set(key, { ...held, reading });
-    try {
-      const value = await reading;
-      reads.set(key, { at: now(), value });
-      return value;
-    } catch (err) {
-      // A failed read keeps the last one, if any, for this window.
-      if (held?.value) reads.set(key, held);
+    const done = reading.then((value) => { reads.set(key, { at: now(), value }); return value; }, (err) => {
+      // A failed read keeps the last one, if any.
+      if (held?.value) reads.set(key, { at: held.at, value: held.value });
       else reads.delete(key);
       throw err;
+    });
+    return done;
+  }
+
+  async function projectPulls(project) {
+    const key = `${project.name}\n${project.repo}`;
+    const held = reads.get(key);
+    if (held?.reading) return held.value ?? held.reading;
+    if (held && now() - held.at < READ_MS) return held.value;
+    const read = startRead(project, key, held);
+    // Stale-while-revalidate: an old read is shown at once, the new one lands for the next view.
+    if (held?.value) {
+      read.catch((err) => console.warn('analytics: refresh failed, keeping the last read', { project: project.name, message: ghSaid(err) }));
+      return held.value;
     }
+    return read;
   }
 
   /**
@@ -294,7 +302,6 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
    */
   async function report({ days, repos = null }) {
     const at = now();
-    const since = new Date(at - days * DAY_MS).toISOString().slice(0, 10);
     const allowed = repos ? new Set(repos.map(lower)) : null;
     const visible = (repo) => !allowed || allowed.has(lower(repo));
     const projects = allProjects(config).filter((p) => p.repo && visible(p.repo));
@@ -302,8 +309,10 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
     let truncated = false;
     const pulls = (await Promise.all(projects.map(async (project) => {
       try {
-        const found = await projectPulls(project, since);
-        truncated ||= found.truncated;
+        const found = await projectPulls(project);
+        // Newest first: a cut-off list still covers this window when its oldest pull request is older than the window.
+        const oldest = found.pulls.at(-1)?.createdAt;
+        truncated ||= Boolean(found.truncated && (!oldest || Date.parse(oldest) > at - days * DAY_MS));
         return { project: project.name, repo: project.repo, pulls: found.pulls };
       } catch (err) {
         console.warn('analytics: pull requests not read', { project: project.name, message: ghSaid(err) });
