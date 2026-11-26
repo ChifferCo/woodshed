@@ -309,7 +309,7 @@ test('a read over an hour old is never shown, not while a refresh is in flight a
   const gh = { recentPulls: async () => {
     if (mode === 'fail') throw new Error('HTTP 502');
     if (mode === 'slow') await new Promise((r) => setTimeout(r, 30));
-    return { pulls: [pull({ number: 9, url: url(9), createdAt: ago(1) })], total: 1, truncated: false };
+    return { pulls: [pull({ number: mode === 'slow' ? 10 : 9, url: url(mode === 'slow' ? 10 : 9), createdAt: ago(1) })], total: 1, truncated: false };
   } };
   const analytics = createAnalytics({ config: { projects: [{ name: 'app', repo: REPO, default: true }] }, sessions: () => [], state: () => ({ usageKept: [] }), githubFor: () => gh, now: () => now });
   await analytics.report({ days: 7 });
@@ -317,7 +317,8 @@ test('a read over an hour old is never shown, not while a refresh is in flight a
   mode = 'slow';
   const first = analytics.report({ days: 7 });
   const second = analytics.report({ days: 7 });
-  assert.deepEqual([(await first).failed, (await second).failed], [[], []]);
+  // Both wait for the new read (pull request 10), never the old one (9).
+  assert.deepEqual([(await first).pulls.recent[0].number, (await second).pulls.recent[0].number], [10, 10]);
   now += 2 * 60 * 60_000;
   mode = 'fail';
   assert.equal((await analytics.report({ days: 7 })).failed.length, 1);
