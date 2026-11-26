@@ -303,6 +303,27 @@ test('a capped read flags only the windows it does not reach back past, and an o
   assert.deepEqual((await analytics.report({ days: 7 })).failed, [{ project: 'app', repo: REPO }]);
 });
 
+test('a read over an hour old is never shown, not while a refresh is in flight and not in the minute after a failed one', async () => {
+  let now = NOW;
+  let mode = 'ok';
+  const gh = { recentPulls: async () => {
+    if (mode === 'fail') throw new Error('HTTP 502');
+    if (mode === 'slow') await new Promise((r) => setTimeout(r, 30));
+    return { pulls: [pull({ number: 9, url: url(9), createdAt: ago(1) })], total: 1, truncated: false };
+  } };
+  const analytics = createAnalytics({ config: { projects: [{ name: 'app', repo: REPO, default: true }] }, sessions: () => [], state: () => ({ usageKept: [] }), githubFor: () => gh, now: () => now });
+  await analytics.report({ days: 7 });
+  now += 2 * 60 * 60_000;
+  mode = 'slow';
+  const first = analytics.report({ days: 7 });
+  const second = analytics.report({ days: 7 });
+  assert.deepEqual([(await first).failed, (await second).failed], [[], []]);
+  now += 2 * 60 * 60_000;
+  mode = 'fail';
+  assert.equal((await analytics.report({ days: 7 })).failed.length, 1);
+  assert.equal((await analytics.report({ days: 7 })).failed.length, 1, 'the failure is reported again, not the old read');
+});
+
 test('/api/analytics is an admin\'s, and answers the window asked for with each person\'s name', async (t) => {
   const { createMembers } = await import('./members.mjs');
   const store = { state: { members: {

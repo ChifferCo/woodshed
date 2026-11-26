@@ -236,7 +236,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     const failed = data.failed.map((f) => f.repo);
     return [
       failed.length > 0 && h('p', { class: 'form-error', role: 'alert' }, `GitHub did not answer for ${failed.join(', ')}: its pull requests are left out. Try again in a minute.`),
-      data.truncated && h('p', { class: 'foot' }, 'A repo opened more than 500 pull requests in this window: only the newest 500 are counted.'),
+      data.truncated && h('p', { class: 'foot' }, 'This repo has more pull requests than the 500 read: some from this window may be missing.'),
     ];
   }
 

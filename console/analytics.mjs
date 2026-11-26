@@ -19,7 +19,7 @@ import { allProjects, projectFor } from './projects.mjs';
 export const WINDOWS = [7, 30, 90];
 const DAY_MS = 86_400_000;
 const READ_MS = 5 * 60_000;
-// An old read is shown while a new one loads only this long past READ_MS; older, the viewer waits for the new one.
+// A read is shown while a new one loads only while it is under this old; older, the viewer waits for the new one.
 const STALE_MS = 60 * 60_000;
 // After a failed refresh the last read is kept and no other read starts for this long.
 const RETRY_MS = 60_000;
@@ -288,11 +288,14 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
   async function projectPulls(project) {
     const key = `${project.name}\n${project.repo}`;
     const held = reads.get(key);
-    if (held?.reading) return held.value ?? held.reading;
-    if (held && (now() - held.at < READ_MS || held.retryAt > now())) return held.value;
+    // An old read is shown only while it is under STALE_MS old, on every path; past that the viewer waits for a new one.
+    const usable = Boolean(held?.value) && now() - held.at < STALE_MS;
+    if (held?.reading) return usable ? held.value : held.reading;
+    if (held && now() - held.at < READ_MS) return held.value;
+    if (usable && held.retryAt > now()) return held.value;
     const read = startRead(project, key, held);
     // Stale-while-revalidate: an old read is shown at once, the new one lands for the next view.
-    if (held?.value && now() - held.at < STALE_MS) {
+    if (usable) {
       read.catch((err) => console.warn('analytics: refresh failed, keeping the last read', { project: project.name, message: ghSaid(err) }));
       return held.value;
     }
