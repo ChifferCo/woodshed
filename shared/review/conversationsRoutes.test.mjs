@@ -5,13 +5,17 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { isolatedEnv } from '../../test/isolatedEnv.mjs';
 
 test('bulk resolution rechecks both pages of the reviewed PR and resolves only eligible displayed threads', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-conversations-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const env = isolatedEnv();
+  env.PATH = `${root}:${env.PATH}`;
+  env.WOODSHED_REVIEWS = path.join(root, 'reviews');
   const repo = path.join(root, 'repo');
-  execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', 'https://github.com/example/project.git']);
+  execFileSync('git', ['init', '-q', repo], { env });
+  execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', 'https://github.com/example/project.git'], { env });
   const statePath = path.join(root, 'state.json');
   const thread = (id, options = {}, state = 'SUBMITTED') => ({
     id, path: 'src/app.mjs', line: 10, isResolved: false, isOutdated: false, viewerCanResolve: true,
@@ -30,6 +34,9 @@ test('bulk resolution rechecks both pages of the reviewed PR and resolves only e
   fs.writeFileSync(path.join(root, 'gh'), String.raw`#!${process.execPath}
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+assert.equal(process.env.HC_TERMINAL_ID, undefined);
+assert.equal(process.env.HC_TERMINAL_SOCKET, undefined);
+assert.equal(process.env.HC_SESSION, 'test');
 const statePath = ${JSON.stringify(statePath)};
 const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
 const [api, graphql, ...args] = process.argv.slice(2);
@@ -69,15 +76,11 @@ if (fields.query.includes('reviewThreads')) {
 console.log(JSON.stringify({ data }));
 `, { mode: 0o755 });
 
-  const originalPath = process.env.PATH;
-  const originalReviews = process.env.WOODSHED_REVIEWS;
-  process.env.PATH = `${root}:${originalPath}`;
-  process.env.WOODSHED_REVIEWS = path.join(root, 'reviews');
-  t.after(() => {
-    process.env.PATH = originalPath;
-    if (originalReviews === undefined) delete process.env.WOODSHED_REVIEWS;
-    else process.env.WOODSHED_REVIEWS = originalReviews;
-  });
+  // The route spawns Git and gh itself. Give this test worker's route the
+  // same isolated environment as the setup commands.
+  const originalEnv = process.env;
+  process.env = env;
+  t.after(() => { process.env = originalEnv; });
   const { handleReviewRequest } = await import('./index.mjs');
   const { writeSessionReview } = await import('./store.mjs');
   const session = 'claude-1234abcd';
