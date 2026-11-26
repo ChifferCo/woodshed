@@ -83,7 +83,7 @@ async function start({ consoleUrl, kind = 'private', mode = '', env = {}, envFil
     'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
     `REPO_SETTINGS_JSON=${home}/.config/woodshed/repo-settings.json`,
     fn('consoleCall').replaceAll('--retry-delay 5', '--retry-delay 1'), fn('fetchRepoSettings'),
-    fn('writeEnvFiles'), fn('leaveOutConsoleLinks'), fn('appRules'), fn('writeRules').replaceAll('/tmp/', `${tmp}/`),
+    fn('writeEnvFiles'), fn('leaveOutConsoleLinks'), fn('readProjectFrom'), fn('appRules'), fn('writeRules').replaceAll('/tmp/', `${tmp}/`),
     'fetchRepoSettings',
     'if [ -f "$REPO_SETTINGS_JSON" ]; then echo "answer kept: $(stat -c %a "$REPO_SETTINGS_JSON")"; else echo "answer kept: no"; fi',
     'writeEnvFiles', 'writeRules', 'rm -f "$REPO_SETTINGS_JSON"',

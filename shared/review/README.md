@@ -156,7 +156,7 @@ explain.mjs    prompt, validation, answer extraction
 chat.mjs       the conversation about the change as a whole: prompt, history bound
 aiReviews.mjs  the AI reviews on the pull request (Claude Code, Codex) read into verdicts and findings
 prChecks.mjs   the merge risk and QA checks on the pull request's head commit, for the AI reviews tab
-qa.mjs         the Q&A tab: a newcomer's questions and their answers, as a tree
+qa.mjs         the Q&A tab: questions and answers generated from the reviewed code
 jobs.mjs       `claude -p` child lifecycle, concurrency, orphan reaping
 store.mjs      on-disk layout under $REVIEWS_DIR, one directory per session
 github.mjs     the `gh` CLI
@@ -422,32 +422,25 @@ and uses that same credential for the contents read.
   job's id is its askId; it has its own breadcrumb kind so an orphaned chat
   cannot clear the analysis's.
 
-- **The Q&A is two voices, and the newcomer cannot read the code.** The shed starts it when the review opens, with the
-  analysis (`startReviewQaIfNone`, which session/reviewShed/host.mjs calls on the page's or the terminal's first status
-  read in the container), and when a take or Re-review starts a new diff's analysis; `POST /reviews/<session>/qa?first=1`,
-  which the page and the terminal send when the Q&A tab opens, joins or keeps that run, so a commit gets one. It runs
-  rounds of `claude -p`: a newcomer, whose whole system prompt is a junior
-  developer new to the codebase who knows none of its jargon (`--system-prompt`, `--tools ''`), asks up to six
-  questions from the title, description, file list and overview; an answerer with the explain's containment (Read,
-  Grep and Glob) answers them all in one run, quoting real code where it helps. Unlike every other run here, the
-  answerer does not read the live worktree: it reads a copy of the tree the diff was taken from (`snapshot`, the
+- **Q&A generates questions and answers from the reviewed code.** The shed starts it when the review opens, with
+  the analysis, and when a take or Re-review starts a new diff's analysis. The page and terminal join or keep that run
+  with `POST /reviews/<session>/qa?first=1`. Each round generates complete pairs in one call. Claude gets a bounded
+  saved diff excerpt and Read, Grep and Glob in a copy of the tree the diff was taken from (`snapshot`, the
   scratch index's `write-tree` for a worktree review, held from gc by `refs/woodshed-qa/<session>/<tree>` (one ref per tree, pruned to the one the record names) until the review
   is removed, or the head commit), whose blobs are written as git stores them
   (`ls-tree` and one `cat-file --batch`) into a scratch folder for the run: not `git archive`, whose `export-ignore`
   could drop a file the diff shows, nor `checkout-index`, whose line-ending and filter conversions could change one.
-  The folder is deleted after the run, and the next copy removes any a restart left (more than 3 hours old), so its answers never quote code the diff beside them
-  lacks; the newcomer reads
-  each answer and asks about what it did not follow, at most two per answer, and so on to three levels. A round with
-  no follow-ups ends it, so most runs are four to six calls. Tools on the newcomer would defeat it: it would read the
-  checkout and ask what a model that has read it thinks a newcomer should. `qa.json` holds a flat list whose
-  `parent` ids make the tree, written after every step so the page polls it growing; the page folds every question
+  The folder is deleted after the run, and the next copy removes any a restart left (more than 3 hours old).
+  The first round writes up to six pairs. Later rounds write up to two follow-ups per answer, down to three
+  levels, and an empty round ends generation. `qa.json` holds a flat list whose `parent` ids make the tree,
+  written after every level so the page polls it growing. The page folds every question
   and opens only what is clicked. It describes a diff, so `removeArtifact` drops it with the artifact (a re-review or
   Discard), and a run the shed restarted under reads back as `interrupted`.
 
   The reader asks too. `POST /reviews/<session>/qa/ask` (`{ parent, question, forDiff }`, `forDiff` required) takes a follow-up under any
   answered item, or with `parent` null a question of their own at the top, down to `MAX_ASK_DEPTH` levels. The same
   answerer answers it alone, on a fresh copy of the diff's tree, with the questions and answers above it in its prompt;
-  there is no newcomer round after it. It runs as a `qa-ask` job, in the explain's slot rather than the Q&A's, since
+  it does not generate any follow-ups. It runs as a `qa-ask` job, in the explain's slot rather than the Q&A's, since
   someone is waiting on it. The item is written at once, `asking` and `mine`, and the answer lands on it; a failure
   takes it out and leaves its question and reason in `askErrors` under its parent's id, and the page puts them back in
   that box. One question waits in a box at a time, so a box's one `askErrors` entry never loses a question. Each write
@@ -640,7 +633,7 @@ import is missing from it: when you add one, add it to
 Woodshed sessions pass their launch-time agent, model and reasoning effort to
 Review tab jobs. Codex runs through the session's existing Codex sign-in or
 console proxy, with an ephemeral run outside the checkout. Analysis,
-explanations, chat and Q&A answers use the saved diff as code context. Codex
+explanations, chat and Q&A use the saved diff as code context. Codex
 receives a bounded excerpt of that diff with shell, MCP, image and web tools
 disabled. Claude keeps its review tool restrictions. When the session has no
 explicit model, Codex uses its CLI default and Claude uses the review default.

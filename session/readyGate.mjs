@@ -106,6 +106,20 @@ export function projectRefusal(err) {
 }
 
 /**
+ * A project file that does not read at all refuses the call only when this branch changed it. One the branch left as
+ * the default branch has it is not its break: most often this session's image reads it with an older reader than the
+ * file was written for (a field the default branch has started using since the image was built), which nothing on
+ * this branch can fix. With nothing read there is no app to check, so the call goes through, as anything the gate
+ * cannot work out does. Git that could not say is still refused.
+ * @param {{err: Error, changedFiles: string[]|null}} args
+ * @returns {string|null}
+ */
+export function unreadRefusal({ err, changedFiles }) {
+  if (changedFiles && !changedFiles.includes(PROJECT_FILE)) return null;
+  return projectRefusal(err);
+}
+
+/**
  * A branch that breaks its own project file is refused even where the installation's file stands in for it
  * (`repoFileError`, shared/project.mjs): that file keeps this installation running and would hide the break from every
  * other. A repo whose file the default branch already broke is not refused for it: this branch did not break it.
@@ -128,14 +142,18 @@ function main() {
   const cwd = payload.cwd || process.cwd();
   const repoDir = checkoutOf(cwd);
   if (!repoDir) return;
+  // From the checkout's top folder: from a subfolder, `git ls-files --others` lists only that folder's new files, so a
+  // project file the branch added and has not committed would not count as changed.
+  const changedFiles = changedFilesIn(repoDir);
   let project;
   try {
     project = loadProject(repoDir);
   } catch (err) {
-    process.stderr.write(`${projectRefusal(err)}\n`);
+    const reason = unreadRefusal({ err, changedFiles });
+    if (!reason) return;
+    process.stderr.write(`${reason}\n`);
     process.exit(2);
   }
-  const changedFiles = changedFilesIn(cwd);
   const apps = project.apps.map((app) => ({ ...app, started: appStartedIn({ repoDir, app }) }));
   const reason = brokenFileRefusal({ project, changedFiles }) ?? refusal({ payload, changedFiles, apps });
   if (!reason) return;

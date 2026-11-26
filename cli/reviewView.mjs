@@ -607,15 +607,14 @@ export function qaLines(state, columns) {
     // As renderQa says it: after a Discard nothing asks again by itself, since it is a paid run (a Re-review's is the shed's).
     if (qa.error) add([['dim', 'A tries again.']]);
     else if (qa.started && !qa.loading) for (const l of wrapText('There is no Q&A for this diff yet. A asks the questions.', columns, 'dim')) add(l);
-    else for (const l of wrapText('Starting the Q&A: the questions someone new to this code would ask, each answered from the code…', columns, 'dim')) add(l);
+    else for (const l of wrapText('Starting the Q&A…', columns, 'dim')) add(l);
     return { lines, items: null, cursor: -1 };
   }
   const all = d.items ?? [];
   const running = d.status === 'running';
   if (running) {
-    const open = all.filter((i) => !i.answer).length;
-    for (const l of wrapText(d.phase === 'answering' ? `⋯ Reading the code to answer ${open} question${open === 1 ? '' : 's'}${d.depth > 1 ? ` (follow-ups, level ${d.depth})` : ''}…`
-      : d.depth > 1 ? '⋯ Writing follow-up questions about the answers…' : '⋯ Writing the questions someone new to this code would ask…', columns, 'yellow')) add(l);
+    const activity = d.depth > 1 ? 'follow-up questions and answers' : 'questions and answers';
+    for (const l of wrapText(`⋯ Reading the code and writing ${activity}…`, columns, 'yellow')) add(l);
   } else if (d.status === 'failed') for (const l of wrapText(`The Q&A failed: ${d.error ?? 'no reason given'}`, columns, 'red')) add(l);
   else if (d.status === 'interrupted') for (const l of wrapText('The Q&A was cut off before it finished. A asks again.', columns, 'red')) add(l);
   else if (d.status === 'ready' && !all.length) for (const l of wrapText('There was nothing to ask about.', columns, 'dim')) add(l);

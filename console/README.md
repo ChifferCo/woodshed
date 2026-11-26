@@ -736,6 +736,10 @@ session again, with its page, branch and options, and runs
 newest transcript's name. When the restored home doesn't hold that
 conversation, the session starts its original prompt again: a session that
 never reached claude, or one stopped before sessions kept their own homes.
+A launcher that keeps the session's machine between runs (`keptMachine`, "Embedding the console") resumes it on the image
+that machine was made from, which may no longer start a branch that took a newer project file: when it says so, the page
+offers **Resume on the latest image** too, which asks first, then leaves that machine, with its databases and whatever
+else the session kept there, for a new one; the branch and the conversation go along as on any Resume.
 **Remove**, on a stopped private session's page, takes it off the list and
 deletes the home it kept; its branch stays on GitHub. **Forget it** on My
 settings and Remove My Woodshed delete your kept home and every one of your
@@ -1319,7 +1323,7 @@ console to post to GitHub:
   person's (`fleet: review threads resolved`).
 - **The merge risk** is the Merge risk check and the `merge risk: low|medium|high` label, the other two taken off.
 - **The PR comment** says `Reviewing`, with the spinner Claude's GitHub Action shows, as soon as the session starts, and becomes the review's comment when it ends.
-  A session that ends without a review turns it into `The review did not finish` with the reason
+  A session that ends without a review turns it into `The review did not finish` with the reason, quoted as code so nothing in it renders
   (`fleet: review ended without a report`).
 
 ### Who reviews: Claude Code, Codex, Grok Build, OpenCode, several or none
@@ -1353,6 +1357,12 @@ The review gets `review.agents` and `REVIEW_AGENTS` (any of `claude`, `codex`, `
 Before any of them starts, it removes the whole `.review/` folder: a branch can commit one, verdict and all, which a
 reviewer that writes none would leave to be reported as its own (the pane says `The pull request carries a .review
 folder of its own`).
+
+A review leaves a run log as a QA run does (`POST /review-log`; `fleet: review run log kept`), so one that ends with no
+verdict says why: the steps, how claude's pass ended (turns, cost, tool errors), what the agents said, and the verdict's
+word, scrubbed by value, by pattern and by a model's second look. An ended review session's page shows it under **Run log**
+(`GET /api/sessions/<id>/review-log`) to an admin and whoever started the review, and to no one else. A review is stopped
+before its first checkpoint leaves none.
 Codex works as in a Codex session: it reads the checkout, runs what it likes (the container is the sandbox) and writes
 its verdict's files itself, in `.review/codex/`. It gets `REVIEW_CODEX_MINUTES` (20 by default), then is stopped, and
 Claude's verdict goes out alone. Codex alone sends its own verdict.
@@ -2493,6 +2503,12 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   `linked`, `unmatched`, `manual` or `skipped`; Slack's bot needs `users:read.email`.
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
+- A launcher's `keptMachine(sessionId)`, for one that keeps a stopped session's machine between its runs: `null` for
+  none, else `{outdated}`, true when that machine was made from an older image of the session's repo than a new session
+  gets. The stopped private session's page then offers **Resume on the latest image** beside Resume, and the console
+  passes that start `{latestImage: true}` as `start`'s third argument: the launcher leaves an outdated machine, its data
+  with it, and makes a new one (`fleet: resuming a private session` with `latestImage`). One that threw answers none
+  (`fleet: kept machine not read`).
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
   `toMessage` makes the message from GitHub's own payload): the GitHub poll then runs only as a fallback.
 
@@ -2915,7 +2931,17 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
    WebM only, one at a time) to `POST /qa-video` and a still from the first one's last second (Playwright's own ffmpeg,
    PNG) to `POST /qa-poster`, which the fleet keeps through `qaRecordings.mjs` (`qaVideo`, `qaPoster`) for 14 days,
    then the verdict, the report, the commit it tested and the cost to `POST /qa-report` (`qaSessions.mjs` checks it),
-   once.
+   once. A run log (`shared/qa/runLog.mjs`) goes to `POST /qa-log` after each pass and before the report, the latest
+   replacing the last, so a run stopped before its report still leaves why. It holds the steps the script took and, for each claude
+   pass, how it ended, its turns, cost and counts, claude's last words and the tool errors' text, scrubbed by value (the
+   session's own secret variables and the install secrets), by pattern, and by a model's second look (`screenLog` in
+   `session/qa.sh`, a haiku call that names the lines holding a secret, which are blanked; `the model check for secrets did
+   not run` in the log when it could not). A checkpoint taken before the planner and as the tests start skips the model's look
+   and says so. It is the run's own output, so it may still quote what the app printed: only an admin, and whoever started the
+   run (or owns the session), read it (`fleet: QA run log kept`).
+
+   An ended QA session's page shows it under **Run log** (`GET /api/sessions/<id>/qa-log`, answered 403 to anyone else). A run
+   with no report says in its verdict why when a pass ran out of turns, was cut off or hit an error.
 5. The fleet writes the report into the QA comment, with the still linking to the first video at `/qa/<session id>/video/1` and a link to each
    (on a repo whose project file says `pullRequests.qa.recordings: public`, at `/qa-video/<session id>/<secret>/<n>.webm`,
    which plays with no sign-in: the session got its secret, `qa.share`, when it started, and pages never see it), posts the QA check on the commit tested with the verdict and the

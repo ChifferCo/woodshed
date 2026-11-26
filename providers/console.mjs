@@ -64,7 +64,8 @@ function cannotStart(err) {
  * console's stand-in for an embedding program (scripts/devHostConsole.mjs), and `hostApp` for its made-up reviewer App
  * (scripts/devReviewerConsole.mjs); the image passes none.
  */
-export function run({ repos = null, projectReadiness = null, hostApp = null, repoPage = null } = {}) {
+/** `withProvider`, for a dev program alone: the provider it was given, with a hook of its own added (scripts/devHostConsole.mjs). */
+export function run({ repos = null, projectReadiness = null, hostApp = null, repoPage = null, withProvider = null } = {}) {
   let config;
   let provider;
   // A setting that is wrong, such as a secrets folder without its key, is said in one line, not a stack trace.
@@ -74,6 +75,7 @@ export function run({ repos = null, projectReadiness = null, hostApp = null, rep
     requireClosedWhenReachable(config);
     requireAppPortsSafe(config);
     provider = createProvider(config);
+    if (withProvider) provider = withProvider(provider);
   } catch (err) {
     cannotStart(err);
   }

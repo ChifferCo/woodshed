@@ -543,9 +543,9 @@
   }
 
   // Resume on a stopped private session: it opens on its page as it starts again. @returns {Promise<boolean>}
-  async function resumePrivate(s) {
+  async function resumePrivate(s, { latestImage = false } = {}) {
     try {
-      const next = await W.postJson(`/api/my/sessions/${s.id}/resume`, {});
+      const next = await W.postJson(`/api/my/sessions/${s.id}/resume`, latestImage ? { latestImage: true } : {});
       navigate(`/s/${next.id}?tab=chat`);
       return true;
     } catch (err) {
@@ -663,6 +663,49 @@
       },
     }, 'Resume');
     return button;
+  }
+
+  // The machine its launcher keeps for a stopped private session, read once for each stop: one made from an older image
+  // of its repo than a new session gets resumes on that image, which may no longer start the branch. Resume on the latest
+  // image leaves it, with what it held, for a new one; the branch and the conversation go along as on any Resume.
+  // A settled answer is read again after a minute, so a newer image pushed while the page stays open shows.
+  const keptMachines = new Map();
+  const KEPT_MACHINE_MS = 60_000;
+  function keptMachineRow(s) {
+    const key = `${s.id}@${s.stoppedAt ?? ''}`;
+    const slot = h('div');
+    const fill = (kept) => {
+      if (!kept?.outdated) return;
+      const button = h('button', {
+        type: 'button', class: 'btn btn-plain', title: 'Start it on a new machine from its repo\u2019s latest image',
+        onclick: async (e) => {
+          e.preventDefault();
+          // What goes along is what a Resume keeps anywhere but the machine: the branch, and claude's saved conversation.
+          // The other agents start a new conversation on any Resume, and what they kept on the machine goes with it.
+          const along = W.agentOf(s) === 'claude'
+            ? 'The branch goes along, and claude\u2019s conversation when your Claude home saved it.'
+            : `The branch goes along. ${W.agentTitle(s)} starts a new conversation, as on any Resume, and what it kept on that machine goes too.`;
+          if (!window.confirm(`Resume \u201c${s.title}\u201d on the latest image? The machine it ran on is removed, with its databases and anything else it kept there. ${along}`)) return;
+          button.disabled = true;
+          if (!(await resumePrivate(s, { latestImage: true }))) button.disabled = false;
+        },
+      }, 'Resume on the latest image');
+      slot.replaceChildren(
+        h('p', { class: 'hint' }, 'Its machine was made from an older image of its repo, which Resume starts again. If that no longer starts the branch, resume it on the latest image.'),
+        h('div', { class: 'row' }, button));
+    };
+    // The read itself is kept, so a panel drawn again before it answers fills from the same answer.
+    const cached = keptMachines.get(key);
+    if (!cached || (cached.settledAt && Date.now() - cached.settledAt > KEPT_MACHINE_MS)) {
+      const entry = { settledAt: null };
+      entry.read = W.getJson(`/api/my/sessions/${s.id}/machine`).catch(() => null).then((kept) => {
+        entry.settledAt = Date.now();
+        return kept;
+      });
+      keptMachines.set(key, entry);
+    }
+    keptMachines.get(key).read.then(fill);
+    return slot;
   }
 
   // Pins are the console's, per person; a change shows at once and the next refresh confirms it.
@@ -2500,13 +2543,37 @@
         ? [h('p', null, W.agentOf(s) !== 'claude'
           ? `Work in progress is committed and pushed to the branch before a stop. Resume starts ${W.agentOf(s)} again on the same branch, in a new conversation: ${W.agentTitle(s)} keeps none between runs.`
           : 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
-          h('div', { class: 'row' }, W.canResumePrivate(s) && resumeButton(s, false), removeButton(s))]
+          h('div', { class: 'row' }, W.canResumePrivate(s) && resumeButton(s, false), removeButton(s)),
+          W.canResumePrivate(s) && keptMachineRow(s)]
         : s.kind === 'ask' ? h('p', null, 'Its conversation is deleted. Mention the bot in a Slack thread to ask again.')
           : s.trigger === 'qa' ? h('p', null, s.qa?.conclusion
             ? `A QA session pushes nothing: its report is the QA comment and check on ${W.ref(s)}. Add the QA label to the pull request again to run QA again.`
             : `This QA session stopped before it sent a report, so ${W.ref(s)} has no QA result from it. Add the QA label to the pull request again to run QA again.`)
             : h('p', null, 'Work in progress is committed and pushed to the branch before a stop. Comment ', h('code', null, '/woodshed …'), ` on ${W.ref(s)} to start a new session on the same branch.`),
-      h('dl', null, facts.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])));
+      h('dl', null, facts.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])),
+      // Only an admin and whoever started the run read it; the console answers anyone else 403, so the fold is not drawn for them.
+      ((W.isAdmin() || W.sameLogin(s.startedBy, data.login) || W.sameLogin(s.owner, data.login))
+        && ((s.trigger === 'qa' && s.qa?.hasLog && qaRunLog(s, 'qa')) || (s.trigger === 'review' && s.review?.hasLog && qaRunLog(s, 'review')))));
+  }
+
+  // A QA or review run's log, read when it is opened: how each claude pass ended and what the run did, for a run with no verdict.
+  function qaRunLog(s, kind) {
+    const body = h('pre', { class: 'run-log' }, 'Loading…');
+    let loaded = false;
+    const load = async () => {
+      if (loaded) return;
+      loaded = true;
+      try {
+        const res = await fetch(`/api/sessions/${s.id}/${kind}-log`, { cache: 'no-store' });
+        if (!res.ok) loaded = false;
+        body.textContent = res.ok ? await res.text() : `The run log was not read (${res.status}).`;
+      } catch {
+        loaded = false;
+        body.textContent = 'The run log was not read: the console did not answer.';
+      }
+    };
+    return h('details', { class: 'run-log-box', ontoggle: (e) => e.target.open && load() },
+      h('summary', null, 'Run log'), body);
   }
 
   // A pause says which limit it hit, from the console's reason: `idle for 1 h` or `ran for 8 h`.
@@ -2884,7 +2951,7 @@
     if (s.status === 'starting') return `${s.id}:starting:${Date.now()}`;
     // A wait with steps counts its seconds, as a start does.
     if (W.waitsForRetry(s) && s.waitProgress) return `${s.id}:waiting:${Date.now()}`;
-    return s.status === 'running' ? `${agentTermKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.stoppedBy}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
+    return s.status === 'running' ? `${agentTermKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.stoppedBy}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}:${Boolean(s.qa?.hasLog)}:${Boolean(s.review?.hasLog)}:${W.isAdmin()}:${data?.login}`;
   }
 
   let currentSession = null;

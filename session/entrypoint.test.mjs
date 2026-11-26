@@ -48,6 +48,7 @@ function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDi
     // The function writes and reads under /tmp; point both at this test's own folder.
     fn('writePrompt').replaceAll('/tmp/', `${tmp}/`),
     fn('leaveOutConsoleLinks'),
+    fn('readProjectFrom'),
     fn('appRules'),
     fn('writeRules').replaceAll('/tmp/', `${tmp}/`),
     'writePrompt',
@@ -620,6 +621,65 @@ test('the default branch is what the remote says, not a name the entrypoint assu
   assert.equal(run().stdout.trim().split('\n').at(-1), 'trunk');
 });
 
+test('a project file that does not parse stops the start with the reader\'s reason, which the console shows as its status', (t) => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-unread-'));
+  t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(repoDir, '.woodshed'));
+  // A field this reader does not know, as a branch gets by merging a newer default branch into an older session.
+  fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), `${fixtureProject({})}surprise: true\n`);
+  const run = spawnSync('bash', ['-c', [
+    'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
+    'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
+    fn('usesVariable'), fn('readProjectFrom'), fn('writeEnvFiles'), 'writeEnvFiles', 'echo "went on"',
+  ].join('\n')], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir }) });
+  assert.equal(run.status, 1);
+  assert.doesNotMatch(run.stdout, /went on/);
+  assert.match(run.stdout, /ERROR: the project file could not be read: \.woodshed\/project\.yaml: .*surprise/);
+  // The console's status is the last ERROR line (console/fleet.mjs, failureReason): it is this one.
+  assert.match(run.stdout.trim().split('\n').findLast((line) => line.includes('ERROR: ')), /surprise/);
+  assert.match(run.stderr, /^project: /m, 'the reader\'s whole message is still logged');
+});
+
+test('a failed start shows the repo\'s own reason, never what the installation\'s files say, which the log keeps', (t) => {
+  // The real reader. The status reaches a review's comment on the pull request: the installation's paths stay out of it.
+  const scratch = (prefix) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    return dir;
+  };
+  const start = (repoDir, files) => spawnSync('bash', ['-c', [
+    'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
+    'project() { node "$SHARED_DIR/project.mjs" "$@"; }', fn('readProjectFrom'), 'readProjectFrom from', 'echo "went on"',
+  ].join('\n')], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, WOODSHED_PROJECT_FILES_DIR: files }) });
+  const errorOf = (run) => run.stdout.trim().split('\n').findLast((line) => line.includes('ERROR: '));
+
+  // The repo's own file does not read, and the installation has two files for the repo, differing in case.
+  const repo = fixtureCheckout(scratch('woodshed-reason-'), { repo: 'acme/app' });
+  fs.mkdirSync(path.join(repo, '.woodshed'));
+  fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), 'version: 1\nsurprise: true\n');
+  const files = scratch('woodshed-reason-files-');
+  fs.mkdirSync(path.join(files, 'acme'));
+  fs.writeFileSync(path.join(files, 'acme', 'app.yaml'), fixtureProject());
+  fs.writeFileSync(path.join(files, 'acme', 'App.yaml'), fixtureProject());
+  const both = start(repo, files);
+  assert.equal(both.status, 1);
+  assert.doesNotMatch(both.stdout, /went on/);
+  assert.match(errorOf(both), /ERROR: the project file could not be read: \.woodshed\/project\.yaml: has surprise, which is not a field/);
+  assert.ok(!both.stdout.includes(files), 'no installation path in the status');
+  assert.ok(both.stderr.includes(files), 'the reader\'s own message, in the log');
+
+  // No file of the repo's own, and the installation's does not read: the status says no more than that.
+  const bare = fixtureCheckout(scratch('woodshed-reason-bare-'), { repo: 'acme/app' });
+  const broken = scratch('woodshed-reason-broken-');
+  fs.mkdirSync(path.join(broken, 'acme'));
+  fs.writeFileSync(path.join(broken, 'acme', 'app.yaml'), 'version: 1\nregistry: private.example/secret-image\n');
+  const installation = start(bare, broken);
+  assert.equal(installation.status, 1);
+  assert.match(errorOf(installation), /ERROR: the project file could not be read$/);
+  assert.doesNotMatch(installation.stdout, /private\.example|secret-image/);
+  assert.ok(installation.stderr.includes(broken), 'the reader\'s own message, in the log');
+});
+
 test('a session starts only the services its project\'s env uses, and warns of a line whose variable is unset', (t) => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-services-'));
   t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
@@ -629,7 +689,7 @@ test('a session starts only the services its project\'s env uses, and warns of a
     return spawnSync('bash', ['-c', [
       'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
       'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
-      fn('usesVariable'), fn('writeEnvFiles'), 'writeEnvFiles', 'usesVariable REDIS_URL && echo redis || echo no-redis',
+      fn('usesVariable'), fn('readProjectFrom'), fn('writeEnvFiles'), 'writeEnvFiles', 'usesVariable REDIS_URL && echo redis || echo no-redis',
     ].join('\n')], { encoding: 'utf8', env: { PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, ...env } });
   };
   const none = run([]);
@@ -691,7 +751,7 @@ test('a project with no databases needs no engine to start, and one with databas
     return spawnSync('bash', ['-c', [
       'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
       'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
-      fn('usesVariable'), fn('requireDatabases'), fn('writeEnvFiles'),
+      fn('usesVariable'), fn('requireDatabases'), fn('readProjectFrom'), fn('writeEnvFiles'),
       'requireDatabases', 'writeEnvFiles', 'echo "mongo=${MONGODB_URI:-none} pg=${PG_URL:-none} app=${APP_DB:-none}"', 'cat a/.env',
     ].join('\n')], { encoding: 'utf8', cwd: repoDir, env: { PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, ...env } });
   };
@@ -737,7 +797,7 @@ test('the database viewers start for the databases the console made and for the 
     const out = spawnSync('bash', ['-c', [
       'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
       'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
-      fn('usesVariable'), fn('requireDatabases'), fn('useDatabaseFrom'), fn('writeEnvFiles'), fn('startDbViewers'),
+      fn('usesVariable'), fn('requireDatabases'), fn('useDatabaseFrom'), fn('readProjectFrom'), fn('writeEnvFiles'), fn('startDbViewers'),
       'requireDatabases',
       consoleMade ? 'useDatabaseFrom \'{"database":{"user":"woodshed_mia","password":"secret","name":"woodshed_mia"}}\'' : ':',
       'writeEnvFiles', 'startDbViewers',
@@ -838,7 +898,7 @@ test('the template commands run each database\'s migrate, then its seed for a ne
     const result = spawnSync('bash', ['-c', [
       'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
       'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
-      fn('usesVariable'), fn('startRedisIfUsed'), fn('requireDatabases'), fn('writeEnvFiles'), fn('runTemplateCommands').replaceAll('/tmp/', `${repoDir}/`),
+      fn('usesVariable'), fn('startRedisIfUsed'), fn('requireDatabases'), fn('readProjectFrom'), fn('writeEnvFiles'), fn('runTemplateCommands').replaceAll('/tmp/', `${repoDir}/`),
       `runTemplateCommands ${mode}`,
     ].join('\n')], {
       encoding: 'utf8',
@@ -866,7 +926,7 @@ test('migrate-own runs each database\'s migrate on the owner\'s databases, never
     const result = spawnSync('bash', ['-c', [
       'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
       'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
-      fn('usesVariable'), fn('startRedisIfUsed'), fn('requireDatabases'), fn('writeEnvFiles'), fn('runTemplateCommands').replaceAll('/tmp/', `${repoDir}/`),
+      fn('usesVariable'), fn('startRedisIfUsed'), fn('requireDatabases'), fn('readProjectFrom'), fn('writeEnvFiles'), fn('runTemplateCommands').replaceAll('/tmp/', `${repoDir}/`),
       'runTemplateCommands migrate own',
     ].join('\n')], {
       encoding: 'utf8',
@@ -917,7 +977,7 @@ async function seedEnvFilesWritten(t, { secretValues, project = 'app', envFiles 
   const result = spawnSync('bash', ['-c', [
     'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
     'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
-    fn('usesVariable'), fn('startRedisIfUsed'), fn('requireDatabases'), fn('writeEnvFiles'), fn('runTemplateCommands').replaceAll('/tmp/', `${repoDir}/`),
+    fn('usesVariable'), fn('startRedisIfUsed'), fn('requireDatabases'), fn('readProjectFrom'), fn('writeEnvFiles'), fn('runTemplateCommands').replaceAll('/tmp/', `${repoDir}/`),
     'runTemplateCommands seed',
   ].join('\n')], { encoding: 'utf8', env: { ...env, PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir } });
   assert.equal(result.status, 0, result.stdout + result.stderr);

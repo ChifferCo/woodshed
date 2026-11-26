@@ -133,10 +133,16 @@ async function runReview(t, { committed = {}, origin = 'https://github.com/Acme/
   }
   if (Object.keys(committed).length) execFileSync('bash', ['-c', `cd "${repo}" && git add -A -f && git -c user.email=t@t -c user.name=t commit -qm branch`]);
   const reports = [];
+  const logs = [];
   const consoleServer = await listen((req, res) => {
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
+      if (req.url.startsWith('/review-log')) {
+        logs.push({ type: req.headers['content-type'], auth: req.headers.authorization, text: body, reports: reports.length });
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+        return;
+      }
       reports.push({ path: req.url, body: body ? JSON.parse(body) : null, auth: req.headers.authorization });
       res.writeHead(204).end();
     });
@@ -144,9 +150,10 @@ async function runReview(t, { committed = {}, origin = 'https://github.com/Acme/
   t.after(() => consoleServer.close());
   const env = {
     ...isolatedEnv(), PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', REVIEW_BASE: 'main',
-    SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`, REVIEW_SCRIPT: REVIEW_MJS,
+    SESSION_ID: '0a1b2c3d', SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`, REVIEW_SCRIPT: REVIEW_MJS,
     REVIEW_RUNNING: path.join(dir, 'running'), REVIEW_AUTHOR: 'rev[bot]', GIT_ALLOW_PROTOCOL: 'file',
   };
+  for (const k of ["REVIEW_AGENTS", "REVIEW_CODEX_AUTH", "REVIEW_CODEX_ACCOUNT", "REVIEW_CODEX_MINUTES", "REVIEW_OPENCODE_PROVIDER"]) delete env[k];
   delete env.GITHUB_REPOSITORY;
   delete env.WOODSHED_CODEX_AUTH;
   delete env.CODEX_HOME;
@@ -167,7 +174,7 @@ async function runReview(t, { committed = {}, origin = 'https://github.com/Acme/
     child.stderr.on('data', (c) => { output += c; });
     child.on('close', resolve);
   });
-  return { reports, output, standIn: fs.existsSync(seen) ? JSON.parse(fs.readFileSync(seen, 'utf8')) : null, codexHome };
+  return { reports, logs, output, standIn: fs.existsSync(seen) ? JSON.parse(fs.readFileSync(seen, 'utf8')) : null, codexHome };
 }
 
 test('a review in a session, where GitHub Actions\' variables are not set, finds its repo from the checkout and reports the verdict', async (t) => {
@@ -374,4 +381,65 @@ test('a verdict the pull request commits in .review is never reported, for a sol
     assert.doesNotMatch(JSON.stringify(body), /ship it/, `${agents ?? 'claude'}: nothing of the planted summary`);
     assert.match(output, /carries a \.review folder of its own/, `${agents ?? 'claude'}: said in the pane`);
   }
+});
+
+// Claude as the review's reviewer or only as the secret screen: it records every prompt it is given that names the screen.
+const REVIEW_FAKE_SCREEN_RECORDER = `#!/bin/bash
+case " $* " in *" haiku "*) printf '%s\\n' "$4" >> "\${FAKE_SCREEN_SEEN:?}"; echo NONE; exit 0 ;; esac
+exec "\${FAKE_REAL_CLAUDE:?}" "$@"
+`;
+
+const REVIEW_FAKE_FAILING_CLAUDE = `#!/bin/bash
+prompt=$4
+[ -n "$prompt" ] || exit 1
+case " $* " in *" haiku "*) echo "\${FAKE_SCREEN:-NONE}"; exit 0 ;; esac
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"registry said zzOpaque7788"},{"type":"tool_use","name":"Bash"}]}}'
+echo '{"type":"result","subtype":"error_max_turns","is_error":false,"num_turns":60,"total_cost_usd":2}'
+`;
+
+test('a review leaves a run log before the reviewers finish and one with the verdict, each before the report', async (t) => {
+  const { logs, reports } = await runReview(t);
+  assert.ok(logs.length >= 2, 'a checkpoint as the reviewers start, and the log with the verdict');
+  assert.deepEqual([logs[0].auth, logs[0].type], ['Bearer tok', 'text/plain']);
+  assert.match(logs[0].text, /Review of pull request #7 against main[\s\S]*## review\nStarted; its outcome is not known yet\.[\s\S]*Verdict: not yet/);
+  assert.match(logs[0].text, /model check for secrets has not run on this log yet/, 'a checkpoint says it was not screened');
+  assert.match(logs.at(-1).text, /## review\nEnded: finished \(success\)[\s\S]*Verdict: APPROVE/);
+  assert.ok(logs.every((l) => l.reports === 0), 'all before the report');
+  assert.equal(reports.length, 1);
+});
+
+test('a review whose claude ran out of turns says so in its log and writes no verdict', async (t) => {
+  const { logs } = await runReview(t, { claude: REVIEW_FAKE_FAILING_CLAUDE });
+  assert.match(logs.at(-1).text, /Ended: ran out of turns before it finished \(error_max_turns\)[\s\S]*registry said zzOpaque7788[\s\S]*Verdict: none/);
+});
+
+test('the model screen is a claude call, so a review that did not choose Claude never sends its other providers\' diagnostics to it', async (t) => {
+  const seen = path.join(os.tmpdir(), `screen-seen-${process.pid}-${Date.now()}`);
+  t.after(() => fs.rmSync(seen, { force: true }));
+  const realClaude = path.join(os.tmpdir(), `real-claude-${process.pid}-${Date.now()}`);
+  fs.writeFileSync(realClaude, FAKE_CLAUDE, { mode: 0o755 });
+  t.after(() => fs.rmSync(realClaude, { force: true }));
+  process.env.FAKE_SCREEN_SEEN = seen;
+  process.env.FAKE_REAL_CLAUDE = realClaude;
+  t.after(() => { delete process.env.FAKE_SCREEN_SEEN; delete process.env.FAKE_REAL_CLAUDE; });
+  const codexWithPrivateDiagnostic = FAKE_CODEX.replace("echo '{\"type\":\"turn.completed\"}'", "echo '{\"message\":\"@octo sign-in refused for PRIVATE-WORKSPACE-MARKER\"}'");
+  const codexOnly = await runReview(t, { agents: 'codex', claude: REVIEW_FAKE_SCREEN_RECORDER, codex: codexWithPrivateDiagnostic });
+  assert.equal(fs.existsSync(seen), false, 'claude was never called, not even as the screen');
+  assert.match(codexOnly.logs.at(-1).text, /No model check for secrets: Claude is not one of this review's reviewers/);
+  const both = await runReview(t, { agents: 'claude codex', claude: REVIEW_FAKE_SCREEN_RECORDER, codex: codexWithPrivateDiagnostic });
+  assert.ok(fs.existsSync(seen), 'with Claude among the reviewers, the screen runs');
+  const prompts = fs.readFileSync(seen, 'utf8');
+  assert.doesNotMatch(prompts, /PRIVATE-WORKSPACE-MARKER/, 'another provider\'s diagnostic is never in the screen\'s prompt');
+  assert.match(both.logs.at(-1).text, /## what the agents said[\s\S]*PRIVATE-WORKSPACE-MARKER/, 'it is in the restricted log, after the screen');
+});
+
+test('a review whose branch commits a .review folder with a link in it follows none, and says the folder was removed', async (t) => {
+  const { output, logs } = await runReview(t, { committed: { '.review/note.txt': 'planted' } });
+  assert.match(output, /The pull request carries a \.review folder of its own/);
+  assert.match(logs.find((l) => /carries a \.review folder/.test(l.text))?.text ?? '', /carries a \.review folder of its own/, 'the step reaches the run log');
+});
+
+test('a Codex-only review records its starting step before its first checkpoint', async (t) => {
+  const { logs } = await runReview(t, { agents: 'codex' });
+  assert.match(logs[0].text, /Reviewing the diff of \S+ with Codex/);
 });

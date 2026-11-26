@@ -53,7 +53,9 @@
 //   POST /api/my/github/disconnect
 //   POST /api/my/home/forget     deletes your saved Claude home: MCP logins, memory, transcripts
 //   POST /api/my/sessions/<id>/resume   a stopped private session again, claude's conversation and all; {"herdrParent": true}
-//                                       as a start's, for that run alone
+//                                       as a start's, for that run alone; {"latestImage": true} on a new machine from the
+//                                       repo's latest image, leaving the one its launcher kept for it, data and all
+//   GET  /api/my/sessions/<id>/machine  {kept, outdated}: whether its launcher keeps a machine for it, made from an older image
 //   POST /api/my/sessions/<id>/handoff  {"agent": "codex", "model"?, "effort"?, "permissionMode"?, "note"?: "...",
 //                                       "conversation"?: true}   a running private session's work into a new one run by
 //                                       that agent, on its branch, with its conversation attached; it stops (handoff.mjs)
@@ -260,7 +262,7 @@ import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetu
 import { createInstallation } from './installation.mjs';
 import { conversationKey, sessionHomeName } from './homes.mjs';
 import { parseSavedConversation } from '../shared/savedConversation.mjs';
-import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sessionOptions, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
+import { ACTIVE_STATUSES, activePrivateCount, canSee, isQa, isReview, linkQueryString, prUrlsOf, publicSession, sessionOptions, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
 import { WEBHOOK_SECRET } from './settings.mjs';
 import { openStore } from './store.mjs';
 import { parseHandle } from './members.mjs';
@@ -279,6 +281,8 @@ import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
 import { createMcpTester } from './mcpTest.mjs';
 import { ROLES, roleById, roleDiffers, roleOf } from './peopleRoles.mjs';
 import { savedChoices } from './claudeSettings.mjs';
+import logins from './public/logins.cjs';
+const { sameLogin } = logins;
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // Served from elsewhere in the repo: the desktop app's rule for what notifies, which the console in a browser runs too
@@ -410,6 +414,7 @@ const PULLS_FRESH_MS = 60_000;
 const MY_FILE_RE = /^\/api\/my\/files\/([a-z-]+)(\/reset)?$/;
 const MY_GITHUB_RE = /^\/api\/my\/github\/(identity|disconnect)$/;
 const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove|handoff)$/;
+const MY_SESSION_MACHINE_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/machine$/;
 const MY_PULL_REVIEW_RE = /^\/api\/my\/pulls\/([1-9][0-9]{0,8})\/review$/;
 const MY_TUNNEL_RE = /^\/api\/my\/tunnel-token(\/remove)?$/;
 const MY_CLI_REVOKE_RE = /^\/api\/my\/cli-tokens\/([0-9a-f]{16})\/revoke$/;
@@ -422,6 +427,7 @@ const ASSIGN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/assign$/;
 const SHARED_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(resume|delete|remove)$/;
 const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename|group)$/;
 const LIMIT_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(extend|limits)$/;
+const QA_LOG_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(qa|review)-log$/;
 const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|interrupt|answer|prompt|applog|diff|transcript)$/;
 // The agents started beside a private session's own (session/agents.mjs): the list, a start, and each one's Chat routes.
 const AGENTS_RE = /^\/api\/sessions\/([0-9a-f]{8})\/agents(?:\/(agent-[2-9])\/(transcript|send|interrupt|answer|prompt|stop))?$/;
@@ -1836,7 +1842,7 @@ export function createHandler({
    * My Woodshed's Resume, with its checks, for the page and for a session resuming one it started (sessionStarts.mjs).
    * @returns {Promise<{status: number, body: object}>}
    */
-  async function resumeMine(login, id, { herdrParent = false } = {}) {
+  async function resumeMine(login, id, { herdrParent = false, latestImage = false } = {}) {
     const resuming = fleet.find(id);
     // Whose it is before anything of it is read: someone else's private session answers as one that does not exist.
     if (!resuming || resuming.owner !== login) return { status: 409, body: { error: 'no session you can open with that id' } };
@@ -1852,7 +1858,7 @@ export function createHandler({
       return { status: 403, body: { error: `you can no longer start sessions on ${resuming.project}: you have no write access to its repo, or it is not one of this console's` } };
     }
     try {
-      return { status: 201, body: publicSession(await fleet.resumePrivate({ owner: login, id, background: true, herdrParent })) };
+      return { status: 201, body: publicSession(await fleet.resumePrivate({ owner: login, id, background: true, herdrParent, latestImage })) };
     } catch (err) {
       if (!err?.shown) throw err;
       return { status: err.status ?? 409, body: { error: err.message } };
@@ -1993,7 +1999,7 @@ export function createHandler({
           return reply(res, 200, { removed: actionMatch[1] });
         }
         if (actionMatch[2] === 'handoff') return await handOff(res, login, actionMatch[1], body);
-        const answer = await resumeMine(login, actionMatch[1], { herdrParent: body?.herdrParent === true });
+        const answer = await resumeMine(login, actionMatch[1], { herdrParent: body?.herdrParent === true, latestImage: body?.latestImage === true });
         return reply(res, answer.status, answer.body);
       }
       if (pathname === '/api/my/home/forget') {
@@ -3237,6 +3243,15 @@ export function createHandler({
       return reply(res, 200, viewPrefs.sessionView(user.login));
     }
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
+    const machineMatch = MY_SESSION_MACHINE_RE.exec(pathname);
+    if (machineMatch) {
+      try {
+        return reply(res, 200, await fleet.keptMachine({ owner: user.login, id: machineMatch[1] }));
+      } catch (err) {
+        if (!err?.shown) throw err;
+        return reply(res, 404, { error: err.message });
+      }
+    }
     if (pathname === '/api/my/projects') return reply(res, 200, await projectsView(user.login));
     if (pathname === '/api/my/codex-models') return reply(res, 200, codexModels ? await codexModels.list(user.login) : { models: BUILT_IN_CODEX_MODELS, source: 'built-in', note: null });
     if (pathname === '/api/my/grok-models') return reply(res, 200, grokModels ? await grokModels.list(user.login) : { models: [], source: null, note: 'type a model name, since this console reads no Grok Build models' });
@@ -3254,6 +3269,18 @@ export function createHandler({
       const allowed = asked && projectAccess ? await projectAccess.forStart(user.login, asked) : null;
       if (asked && projectAccess && !allowed) console.log('console: open pull requests of a project not open to the person, the default\'s instead', { login: user.login, project: String(asked).slice(0, 40) });
       return openPullsReply(res, projectAccess ? allowed?.name ?? null : asked);
+    }
+    const qaLogRead = QA_LOG_RE.exec(pathname);
+    if (qaLogRead) {
+      // The run log holds what claude and its tools printed, which can include a credential: only an admin and whoever
+      // started the run (or owns the session) read it. Anyone else who may open the session gets nothing.
+      const found = findFor(qaLogRead[1], user.login);
+      const logs = qaLogRead[2] === 'qa' ? (isQa(found ?? {}) ? found.qa : null) : (isReview(found ?? {}) ? found.review : null);
+      if (!found || !logs) return reply(res, 404, { error: `no such ${qaLogRead[2] === 'qa' ? 'QA' : 'review'} session` });
+      if (!isAdmin(user) && !(user.login && (sameLogin(found.startedBy, user.login) || sameLogin(found.owner, user.login)))) return reply(res, 403, { error: 'only an admin or whoever started the run reads its log' });
+      if (!logs.log) return reply(res, 404, { error: 'this session sent no run log' });
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }).end(logs.log);
+      return;
     }
     const qaVideo = QA_VIDEO_RE.exec(pathname);
     if (qaVideo) {

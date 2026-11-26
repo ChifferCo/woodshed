@@ -20,7 +20,7 @@ const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ nam
 
 function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null, reviewAgents = null, reviewGates = undefined, startableRepos = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
-  const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
+  const calls = { started: [], startOptions: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
   // When ECS began pulling each task's image, by ref.
   const pulls = {};
@@ -32,8 +32,9 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   const launcher = {
     kind: 'fake',
     refFor(id) { return `c-${id}`; },
-    async start(id, env) {
+    async start(id, env, ...options) {
       calls.started.push({ id, env });
+      calls.startOptions.push(options);
       if (fail.start) throw new Error(typeof fail.start === 'string' ? fail.start : 'aws ecs run-task failed: AccessDeniedException');
       alive.add(`c-${id}`);
       if (fail.startWaits) await fail.startWaits;
@@ -1292,6 +1293,39 @@ test('each run of a person\'s own session gets a start token, kept only as its h
   // Once it has seen production data it starts nothing, whatever token it holds.
   mine.taintedAt = new Date().toISOString();
   assert.equal(sessionForStartToken(again, fleet.sessions()), null);
+});
+
+test('Resume on the latest image asks the launcher for a new machine, that run alone, and only its owner reads the kept one', async () => {
+  const { fleet, calls, statuses, launcher } = setup();
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
+  assert.deepEqual(await fleet.keptMachine({ owner: 'joel', id: first.id }), { kept: false, outdated: false }, 'a launcher with no keptMachine keeps none');
+  const kept = new Map([[first.id, { outdated: true }]]);
+  launcher.keptMachine = async (id) => kept.get(id) ?? null;
+  assert.deepEqual(await fleet.keptMachine({ owner: 'joel', id: first.id }), { kept: false, outdated: false }, 'a running session\'s machine is not asked about');
+  statuses[first.id] = { state: 'working', branch: 'joel/fix' };
+  await fleet.tick();
+  await fleet.stop(first, 'stopped from the console', { by: 'joel' });
+  assert.deepEqual(await fleet.keptMachine({ owner: 'joel', id: first.id }), { kept: true, outdated: true });
+  await assert.rejects(fleet.keptMachine({ owner: 'mia', id: first.id }), /no session you can open/);
+
+  await fleet.resumePrivate({ owner: 'joel', id: first.id, latestImage: true });
+  assert.deepEqual(calls.startOptions.at(-1), [{ latestImage: true }], 'the launcher is told to leave an outdated machine');
+  assert.equal(first.latestImage, null, 'asked of that start alone, once the launcher made it');
+  const latestEnv = calls.started.at(-1).env;
+  await fleet.tick();
+  await fleet.stop(first, 'stopped from the console', { by: 'joel' });
+  await fleet.resumePrivate({ owner: 'joel', id: first.id });
+  assert.deepEqual(calls.startOptions.at(-1), [], 'a plain Resume keeps the machine again');
+  // The session itself starts as on any Resume: the option is the launcher's, and nothing of it reaches the container.
+  const plainEnv = calls.started.at(-1).env;
+  const tokens = ['SESSION_TOKEN', 'TERMINAL_TOKEN', 'WOODSHED_START_TOKEN'];
+  const without = (env) => Object.fromEntries(Object.entries(env).filter(([key]) => !tokens.includes(key)));
+  assert.deepEqual(without(latestEnv), without(plainEnv));
+
+  launcher.keptMachine = async () => { throw new Error('the pool did not answer'); };
+  await fleet.tick();
+  await fleet.stop(first, 'stopped from the console', { by: 'joel' });
+  assert.deepEqual(await fleet.keptMachine({ owner: 'joel', id: first.id }), { kept: false, outdated: false }, 'a launcher that failed offers nothing more');
 });
 
 test('Resume starts a private session whose start failed again, with the conversation it had before', async () => {

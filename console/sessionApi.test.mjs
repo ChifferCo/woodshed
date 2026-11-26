@@ -394,6 +394,44 @@ test('a QA session gets a read-only token, and sends its report once through /qa
   assert.deepEqual(finished, [{ id: 'aaaaaaaa', verdict, report: '## TC-1: a ❌', sha, costUsd: 2.25 }]);
 });
 
+test('a QA session sends its run log through /qa-log, as often as it likes and even after its report; nothing else, and no other session, can', async (t) => {
+  const qa = { id: 'aaaaaaaa', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main', conclusion: 'neutral' } };
+  const sessions = [qa, { id: 'bbbbbbbb', status: 'running', token: 'pr-token', kind: 'pr', number: 7 }];
+  const kept = [];
+  const fleet = { sessions: () => sessions, qaLog: (session, text) => kept.push({ id: session.id, text }) };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({ token: 'ghs', expiresAt: 0 }) } });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const send = (authorization, body, headers = {}) => request(port, { path: '/qa-log', authorization, body, headers });
+
+  assert.equal((await send('Bearer pr-token', 'x')).status, 404, 'only a QA session has a run log');
+  assert.equal((await send('Bearer qa-token', '## plan\nEnded: finished\n')).status, 200);
+  assert.equal((await send('Bearer qa-token', '## plan\nEnded: finished\n## test\nEnded: ran out of turns\n')).status, 200);
+  // Last: a body that says it is too big is refused before it is read, and leaves its connection waiting for the rest.
+  assert.equal((await send('Bearer qa-token', 'x', { 'content-length': String(1024 * 1024) })).status, 413);
+  assert.deepEqual(kept.map((k) => k.id), ['aaaaaaaa', 'aaaaaaaa']);
+  assert.match(kept[1].text, /ran out of turns/);
+});
+
+test('a review session sends its run log through /review-log, as a QA run does, and no other session can', async (t) => {
+  const review = { id: 'aaaaaaaa', status: 'running', token: 'rv-token', kind: 'pr', number: 7, review: { base: 'main' } };
+  const sessions = [review, { id: 'bbbbbbbb', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } }];
+  const kept = [];
+  const fleet = { sessions: () => sessions, reviewLog: (session, text) => kept.push({ id: session.id, text }) };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({ token: 'ghs', expiresAt: 0 }) } });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const send = (authorization, body) => request(port, { path: '/review-log', authorization, body });
+
+  assert.equal((await send('Bearer qa-token', 'x')).status, 404, 'a QA session has none to send here');
+  assert.equal((await send('Bearer rv-token', 'what the agents said')).status, 200);
+  assert.deepEqual(kept.map((k) => [k.id, k.text]), [['aaaaaaaa', 'what the agents said']]);
+});
+
 test('a QA session sends its WebM videos through /qa-video before its report; nothing else, and no other session, can', async (t) => {
   const qa = { id: 'aaaaaaaa', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } };
   const sessions = [qa, { id: 'bbbbbbbb', status: 'running', token: 'pr-token', kind: 'pr', number: 7 }];

@@ -170,7 +170,36 @@ const sessions = [
   session('bbbb2222', 26326, 'A session with no pull request yet', { prUrl: null }),
   // A finished QA session: it opened no pull request, and tested the one it was started on.
   session('9a9a9a9a', 26334, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '688cc2e', stopReason: 'QA finished: Pass: 6 test cases passed', qa: { conclusion: 'success' } }),
-  session('9b9b9b9b', 26335, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '688cc2e', stopReason: 'stopped by the console' }),
+  session('9b9b9b9b', 26335, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '688cc2e', stopReason: 'stopped by the console', qa: { log: `QA of pull request #26335 against main, session 9b9b9b9b
+
+## steps
+[qa 10:02:11] QA of pull request #26335 against main
+[qa 10:02:12] QA notes: .woodshed/qa.md
+[qa 10:02:13] Planning the tests
+[qa 10:05:40] Starting the app
+[qa 10:06:21] Running the tests at http://localhost:3999, recording the browser
+[qa 10:41:07] Run log sent to the console (status: 200)
+
+## plan
+Ended: finished (success)
+Ran: 22 turns, 31 tool calls, 207 s, $0.84
+Last said (1 of 1):
+  > Wrote .qa/plan/plan.md with 6 test cases.
+
+## test
+Ended: ran out of turns before it finished (error_max_turns)
+Ran: 200 turns, 311 tool calls, 2086 s, $6.12
+Tool errors: 3, the last 3:
+  - Error: page.click: Timeout 30000ms exceeded waiting for getByRole('button', { name: 'Save' })
+  - Error: page.click: Timeout 30000ms exceeded waiting for getByRole('button', { name: 'Save' })
+  - Error: net::ERR_CONNECTION_REFUSED at http://localhost:3999/settings
+Last said (3 of 87):
+  > The Save button is not on the page; retrying after a reload.
+  > Reload did not help. Trying the keyboard.
+  > Still no Save button. Checking the console for errors.
+
+No report.md was written.
+` } }),
   // A review the console runs on a pull request (pullRequests.review.runner: woodshed), started as its author with
   // nobody assigned, and one that finished, which is never kept, so it shows as stopped with no Resume. The rail keeps
   // both in its folded Reviews and QA zone, with no Take it.
@@ -187,7 +216,26 @@ const sessions = [
   session('9a9a0001', 26334, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '5eed334', stopReason: 'QA finished: Fail: 1 of 6 test cases failed', createdAt: earlier, startedAt: earlier, stoppedAt: earlier }),
   session('7f7f7f7f', 144, 'Review: feat(console): pin a session', {
     trigger: 'review', prUrl: null, stopReason: 'Review finished: APPROVE',
-    review: { base: 'main', sha: 'f00d144', heading: null, author: null, check: null, commentId: null, conclusion: 'APPROVE', reported: true },
+    review: { base: 'main', sha: 'f00d144', heading: null, author: null, check: null, commentId: null, conclusion: 'APPROVE', reported: true, log: `Review of pull request #144 against main, session 7f7f7f7f
+
+## steps
+[review 10:02:11] Review of pull request #144 against main
+[review 10:02:13] Reviewing the diff of example-org/example-repo with Claude Code and Codex
+[review 10:09:02] Codex ended (exit=0)
+[review 10:12:40] Waiting for Codex to finish
+
+## review
+Ended: finished (success)
+Ran: 31 turns, 58 tool calls, 640 s, $1.92
+Last said (1 of 14):
+  > The change reads right; one inline comment on the helper.
+
+## verdict
+Verdict: APPROVE
+
+## what the agents said
+[review 10:09:02] Codex: nothing to add beyond Claude Code's comment
+` },
   }),
   // Three pull requests, oldest first: its card shows a merged or closed one only while no newer one came after it.
   // Polling is off, so none has a state here and all three show.
