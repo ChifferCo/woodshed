@@ -1030,10 +1030,13 @@ export function createHandler({
   }
 
   // The Analytics page's report (analytics.mjs), with each person's display name. Admins only (ADMIN_API_RE).
-  async function analyticsReply(res, daysAsked) {
+  // Only the repos the viewer may open themselves count, as New session offers them (projectAccess.mjs): being an admin
+  // does not open a private repo they cannot read on GitHub.
+  async function analyticsReply(res, daysAsked, login) {
     if (!analytics) return reply(res, 404, { error: 'this console keeps no analytics' });
     const days = WINDOWS.includes(Number(daysAsked)) ? Number(daysAsked) : 30;
-    const report = await analytics.report({ days });
+    const repos = projectAccess ? (await projectAccess.startable(login)).map((p) => p.repo) : null;
+    const report = await analytics.report({ days, repos });
     const logins = [...report.people.map((p) => p.login), ...report.pulls.recent.map((p) => p.login), ...report.sessions.recent.map((s) => s.login)];
     return reply(res, 200, { ...report, windows: WINDOWS, names: namesFor([...new Set(logins.filter(Boolean))]) });
   }
@@ -3208,7 +3211,7 @@ export function createHandler({
     if (pathname === `${SLACK_SETUP_PATH}/channels`) return slackChannelsReply(res, { query: url.searchParams.get('q') });
     if (pathname === `${PROJECTS_PATH}/repos`) return repoChoicesReply(res);
     if (pathname === '/api/people') return peopleReply(res);
-    if (pathname === '/api/analytics') return analyticsReply(res, url.searchParams.get('days'));
+    if (pathname === '/api/analytics') return analyticsReply(res, url.searchParams.get('days'), user.login);
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
     if (pathname === '/api/sessions') return reply(res, 200, sessionsBody(user.login));
     if (pathname === '/api/my') {

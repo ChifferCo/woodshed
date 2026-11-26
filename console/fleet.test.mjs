@@ -1435,6 +1435,18 @@ test('Remove takes a private session, running or stopped, off the list with the 
   assert.deepEqual(store.state.usageKept.map((r) => [r.id, r.login, r.private, r.title]), [[mine.id, 'joel', true, null]],
     'the Analytics page still counts it, with no title');
 
+  // A session that saw production data keeps nothing past its removal, the automatic one after its taint included.
+  const tainted = await fleet.startPrivate({ owner: 'joel', prompt: 'Read prod' });
+  tainted.taintedAt = new Date().toISOString();
+  tainted.branch = 'woodshed/what-it-saw';
+  await fleet.removePrivateSession({ owner: 'joel', id: tainted.id });
+  assert.ok(!store.state.usageKept.some((r) => r.id === tainted.id), 'no record of a tainted session');
+
+  // Remove My Woodshed takes the records of those removed one by one before, and leaves shared ones.
+  store.state.usageKept.push({ id: 'shared01', login: 'joel', private: false, createdAt: new Date().toISOString() });
+  await fleet.removePrivate('joel');
+  assert.deepEqual(store.state.usageKept.map((r) => r.id), ['shared01']);
+
 });
 
 test('a Resume that lands while Remove deletes the home finds no session, so nothing runs off the list', async () => {

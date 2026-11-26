@@ -45,6 +45,24 @@ test('a pull request a session reported, or whose branch it worked on, is throug
   assert.deepEqual([cy.sessions, cy.other.opened, cy.share], [0, 1, 0], 'someone who works without Woodshed is on the page too');
 });
 
+test('a fork\'s pull request on a branch name a session used is not that session\'s', () => {
+  const records = [record({ id: 'aaaa0001', login: 'ana', branch: 'main-fix' })];
+  const pulls = [
+    pull({ number: 1, url: url(1), author: 'stranger', branch: 'main-fix', headRepo: 'stranger/r' }),
+    pull({ number: 2, url: url(2), author: 'ana', branch: 'main-fix', headRepo: REPO }),
+  ];
+  const r = analyticsReport({ records, pulls: [{ project: 'app', repo: REPO, pulls }], days: 30, now: NOW });
+  assert.deepEqual(r.pulls.recent.map((p) => [p.number, p.via, p.login]).sort(), [[1, 'other', 'stranger'], [2, 'woodshed', 'ana']]);
+});
+
+test('a tainted session is counted, but its branch, pull requests and title are not kept', () => {
+  const r = usageRecord({ id: 'dddd0001', createdAt: ago(1), owner: 'ana', taintedAt: ago(1), branch: 'woodshed/x', prUrl: url(3), title: 'x', kind: 'task' }, { name: 'app', repo: REPO });
+  assert.deepEqual([r.login, r.branch, r.prUrls, r.title], ['ana', null, [], null]);
+  const old = { usageKept: [] };
+  keepUsage(old, [record({ id: 'eeee0001', createdAt: ago(200) })], NOW);
+  assert.deepEqual(old.usageKept, [], 'a record already past 180 days is not kept');
+});
+
 test('merge risk is the check\'s tier, else the newest review session\'s on that pull request', () => {
   const records = [
     record({ id: 'aaaa0001', prUrls: [url(1), url(2)] }),
@@ -133,6 +151,10 @@ test('the report reads each repo once for five minutes, and a repo GitHub did no
   assert.equal(first.sessions.recent[0].project, 'app', 'a session on the default project names it');
   await analytics.report({ days: 30 });
   assert.equal(reads, 1);
+  // A viewer who can open only the other repo gets nothing of this one: its pull requests, sessions or links.
+  const theirs = await analytics.report({ days: 30, repos: ['o/web'] });
+  assert.deepEqual([theirs.projects, theirs.pulls.other.opened, theirs.sessions.work], [['web'], 0, 0]);
+  assert.equal(reads, 1, 'and its repo is not even read');
   now += 6 * 60_000;
   await analytics.report({ days: 30 });
   assert.equal(reads, 2);
@@ -149,8 +171,9 @@ test('/api/analytics is an admin\'s, and answers the window asked for with each 
   const loginOf = (cookie) => /woodshed_session=(\w+)/.exec(String(cookie))?.[1] ?? null;
   const auth = { enabled: () => true, available: () => true, sessionFor: async (c) => (members.isMember(loginOf(c)) ? { login: loginOf(c) } : null), visitorFor: async () => null };
   const asked = [];
-  const analytics = { report: async ({ days }) => { asked.push(days); return analyticsReport({ records: [record({ login: 'sam' })], pulls: [], days, now: Date.now() }); } };
-  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, analytics, people: { names: (logins) => Object.fromEntries([...logins].map((l) => [l, l.toUpperCase()])) } });
+  const analytics = { report: async ({ days, repos }) => { asked.push([days, repos]); return analyticsReport({ records: [record({ login: 'sam' })], pulls: [], days, now: Date.now() }); } };
+  const projectAccess = { startable: async (login) => (login === 'mia' ? [{ name: 'app', repo: REPO }] : []) };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, analytics, projectAccess, people: { names: (logins) => Object.fromEntries([...logins].map((l) => [l, l.toUpperCase()])) } });
   const server = http.createServer((req, res) => { handle(req, res); });
   await new Promise((resolve) => { server.listen(0, '127.0.0.1', resolve); });
   t.after(() => server.close());
@@ -161,6 +184,6 @@ test('/api/analytics is an admin\'s, and answers the window asked for with each 
   const body = await res.json();
   assert.deepEqual([body.days, body.windows, body.names.sam], [90, [7, 30, 90], 'SAM']);
   await get('/api/analytics?days=12345', 'mia');
-  assert.deepEqual(asked, [90, 30], 'a window not offered is 30 days');
+  assert.deepEqual(asked, [[90, [REPO]], [30, [REPO]]], 'a window not offered is 30 days, and only the repos the viewer may open');
   assert.equal((await get('/analytics', 'sam')).status, 200, 'the page itself loads, and its call says no');
 });

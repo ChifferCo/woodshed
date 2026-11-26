@@ -17,7 +17,7 @@ import { QA_RECORDING_DAYS, newRecordingSecret, opensPublicVideo, qaPublicVideoP
 import { reviewDoneComment, reviewEndedComment, reviewHeading, reviewRunningComment } from './reviewSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
-import { keepUsage, usageRecord } from './analytics.mjs';
+import { forgetUsage, keepUsage, usageRecord } from './analytics.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import { TAINT_MESSAGE } from './taint.mjs';
@@ -2206,8 +2206,9 @@ export function createFleet({
     if (!session || session.owner !== owner) throw shown('no session you can open with that id');
     await stopForRemoval(session, 'removed from the console');
     // Off the list before the delete is awaited, so a Resume meanwhile finds no session rather than starting one the
-    // list then drops, which tick would never watch. The Analytics page still counts it, with no title (analytics.mjs).
-    keepUsage(state, [usageRecord(session, projectFor(config, session))], now());
+    // list then drops, which tick would never watch. The Analytics page still counts it, with no title (analytics.mjs),
+    // unless it saw production data: nothing of a tainted session's outlives it.
+    if (!session.taintedAt) keepUsage(state, [usageRecord(session, projectFor(config, session))], now());
     state.sessions = state.sessions.filter((s) => s !== session);
     store.save();
     console.log('fleet: private session removed', { id, owner });
@@ -2250,8 +2251,10 @@ export function createFleet({
     await Promise.all([...live.map((s) => stop(s, 'My Woodshed removed')), ...interrupted.map(finishInterruptedStop)]);
     await Promise.all(theirs.map(dropAttachments));
     state.sessions = state.sessions.filter((s) => s.owner !== owner);
+    // Nor does the Analytics page keep any of them, those removed one by one before included.
+    const forgotten = forgetUsage(state, owner);
     store.save();
-    console.log('fleet: private sessions removed', { owner, stopped: live.length + interrupted.length, removed: theirs.length });
+    console.log('fleet: private sessions removed', { owner, stopped: live.length + interrupted.length, removed: theirs.length, usageForgotten: forgotten });
     return { stopped: live.length + interrupted.length, removed: theirs.length };
   }
 

@@ -3187,7 +3187,9 @@ Remove My Woodshed.
 ## Analytics
 
 Console → **Analytics** (`/analytics`, `public/analytics.js`, `analytics.mjs`) is how the team uses Woodshed, for
-whoever leads it: admins only, behind a hosting proxy its owners (`GET /api/analytics?days=7|30|90`). It is written for an
+whoever leads it: admins only, behind a hosting proxy its owners (`GET /api/analytics?days=7|30|90`). Each viewer sees
+only the repos they may open themselves, as New session offers them (`projectAccess.mjs`): a repo they cannot write to
+on GitHub gives the page nothing, not its pull requests, its sessions or a link to one. It is written for an
 engineering manager asking who has taken Woodshed up and who has not, and whether work through it goes as well as
 work without it, not for ranking people:
 
@@ -3211,8 +3213,11 @@ commit, else the review's `merge risk: <tier>` label, else the tier a review ses
 A My Woodshed session is counted, and its pull request listed (GitHub shows it to the repo's writers anyway), but its
 title and prompt never are: on the page it is "Private session". Sessions come from the console's list and from
 `usageKept` in `state.json`: a record of each session as it leaves the list (Remove, a deleted shared session's last
-day, a tainted session), with no prompt and a private one's title left out, kept 180 days. Remove My Woodshed keeps none
-of its person's. Pull requests are read from GitHub's search, each repo at most every 5 minutes and at most its newest
+day), with no prompt and a private one's title left out, kept 180 days. A session that saw production data keeps none:
+nothing it held outlives it, and while it is on the list it is counted with no branch, pull request or title. Remove My
+Woodshed takes every record of its person's My Woodshed sessions, those removed one by one before included; shared
+sessions they started stay, as the team's. A branch is matched only on the repo it was pushed to, so a fork's pull
+request on the same branch name is not the session's. Pull requests are read from GitHub's search, each repo at most every 5 minutes and at most its newest
 500 in the window: `analytics: pull requests not read` with the project and GitHub's error when a read fails, and the
 page names the repo it left out.
 

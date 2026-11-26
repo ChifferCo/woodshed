@@ -47,11 +47,14 @@ function personOf(session) {
  * @returns {object}
  */
 export function usageRecord(session, project = null) {
+  // A session that has seen production data keeps nothing it held past it (CLAUDE.md, "Production data"): its branch,
+  // which statusd reports, and its pull requests are left out with its title. It is still counted.
+  const tainted = Boolean(session.taintedAt);
   return {
     id: session.id, project: session.project ?? project?.name ?? null, repo: session.repo ?? project?.repo ?? null, kind: sessionKind(session),
     login: personOf(session), private: Boolean(session.owner), agent: session.options?.agent ?? 'claude',
-    createdAt: session.createdAt ?? null, title: session.owner ? null : String(session.title ?? '').slice(0, 200) || null,
-    branch: session.branch ?? null, prUrls: prUrlsOf(session), number: session.number ?? null,
+    createdAt: session.createdAt ?? null, title: session.owner || tainted ? null : String(session.title ?? '').slice(0, 200) || null,
+    branch: tainted ? null : session.branch ?? null, prUrls: tainted ? [] : prUrlsOf(session), number: session.number ?? null,
     tier: session.review?.tier ?? null, status: session.status ?? null,
   };
 }
@@ -66,9 +69,23 @@ export function keepUsage(state, records, now = Date.now()) {
   const kept = (state.usageKept ?? []).filter((r) => now - Date.parse(r.createdAt) < KEEP_MS);
   const ids = new Set(kept.map((r) => r.id));
   for (const record of records) {
-    if (record?.id && record.createdAt && !ids.has(record.id)) kept.push(record);
+    const fresh = now - Date.parse(record?.createdAt) < KEEP_MS;
+    if (record?.id && fresh && !ids.has(record.id)) kept.push(record);
   }
   state.usageKept = kept.slice(-KEEP_MAX);
+}
+
+/**
+ * Remove My Woodshed: the person's My Woodshed sessions leave the kept records too. Shared sessions they started are
+ * the team's, and stay.
+ * @param {object} state  store.state
+ * @param {string} login
+ * @returns {number}  how many records went
+ */
+export function forgetUsage(state, login) {
+  const before = state.usageKept?.length ?? 0;
+  state.usageKept = (state.usageKept ?? []).filter((r) => !(r.private && lower(r.login) === lower(login)));
+  return before - state.usageKept.length;
 }
 
 const median = (values) => {
@@ -137,7 +154,9 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
   for (const { project, repo, pulls: found } of pulls) {
     for (const pull of found) {
       if (!inWindow(pull.createdAt)) continue;
-      const session = byUrl.get(lower(pull.url)) ?? byBranch.get(`${lower(repo)}:${pull.branch}`) ?? null;
+      // A branch is a session's only on the repo it pushed to: a fork's pull request may reuse the name.
+      const ownBranch = !pull.headRepo || lower(pull.headRepo) === lower(repo);
+      const session = byUrl.get(lower(pull.url)) ?? (ownBranch ? byBranch.get(`${lower(repo)}:${pull.branch}`) : null) ?? null;
       // A bot's own pull request (Dependabot, Renovate) is nobody's work to count, unless a session opened it.
       if (!session && pull.bot) continue;
       const via = session ? 'woodshed' : 'other';
@@ -187,7 +206,7 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
       activeMembers: peopleRows.filter((p) => p.sessions && members.some((m) => lower(m) === lower(p.login))).length,
       recent: sessions.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, LIST_MAX).map((r) => ({
         id: r.id, createdAt: r.createdAt, login: r.login, project: r.project, private: r.private, agent: r.agent,
-        title: r.private ? null : r.title, prUrls: r.prUrls, status: r.status,
+        title: r.private ? null : r.title, prUrls: r.prUrls, status: r.status, kept: Boolean(r.kept),
       })),
     },
     pulls: {
@@ -210,6 +229,8 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
   const reads = new Map();
 
   async function projectPulls(project, since) {
+    // Yesterday's windows are never asked again: what is past its time and not being read goes.
+    for (const [old, entry] of reads) if (!entry.reading && now() - entry.at >= READ_MS) reads.delete(old);
     const key = `${project.name}\n${project.repo}\n${since}`;
     const held = reads.get(key);
     if (held && (held.reading || now() - held.at < READ_MS)) return held.reading ?? held.value;
@@ -233,12 +254,16 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
   }
 
   /**
-   * @param {{days: number}} opts  one of WINDOWS
+   * @param {{days: number, repos?: string[]|null}} opts  `days`: one of WINDOWS; `repos`: the repos the viewer may open
+   *   (projectAccess.mjs, startable), so a repo they cannot reach on GitHub gives nothing to the page, not its pull
+   *   requests, its sessions or a link to one; null for every repo (a console that cannot tell)
    */
-  async function report({ days }) {
+  async function report({ days, repos = null }) {
     const at = now();
     const since = new Date(at - days * DAY_MS).toISOString().slice(0, 10);
-    const projects = allProjects(config).filter((p) => p.repo);
+    const allowed = repos ? new Set(repos.map(lower)) : null;
+    const visible = (repo) => !allowed || allowed.has(lower(repo));
+    const projects = allProjects(config).filter((p) => p.repo && visible(p.repo));
     const failed = [];
     let truncated = false;
     const pulls = (await Promise.all(projects.map(async (project) => {
@@ -254,7 +279,11 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
     }))).filter(Boolean);
     const live = sessions();
     const liveIds = new Set(live.map((s) => s.id));
-    const records = [...live.map((s) => usageRecord(s, projectFor(config, s))), ...(state().usageKept ?? []).filter((r) => !liveIds.has(r.id))];
+    const urlRepo = (u) => /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+$/i.exec(u)?.[1] ?? null;
+    const records = [
+      ...live.map((s) => usageRecord(s, projectFor(config, s))),
+      ...(state().usageKept ?? []).filter((r) => !liveIds.has(r.id)).map((r) => ({ ...r, kept: true })),
+    ].filter((r) => visible(r.repo)).map((r) => ({ ...r, prUrls: (r.prUrls ?? []).filter((u) => visible(urlRepo(u))) }));
     return {
       ...analyticsReport({ records, pulls, members: members(), days, now: at }),
       projects: projects.map((p) => p.name), failed, truncated,

@@ -91,7 +91,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     });
     const chart = svg('svg', {
       viewBox: `0 0 ${W_} ${H_}`, preserveAspectRatio: 'none', class: 'trend-svg', role: 'img',
-      'aria-label': `${label}: ${trend.map((b, i) => `${day(b.start)} ${totals[i]}`).join(', ')}`,
+      'aria-label': `${label}: ${trend.map((b, i) => `${day(b.start)} ${series.length > 1 ? series.map((s) => `${b[s.key]} ${s.word}`).join(', ') : totals[i]}`).join('; ')}`,
     }, svg('line', { class: 'trend-base', x1: 0, x2: W_, y1: H_ - 0.5, y2: H_ - 0.5 }), bars);
     return h('div', { class: 'trend' },
       h('div', { class: 'trend-head' }, h('span', { class: 'figure-label' }, label),
@@ -180,7 +180,8 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
       h('td', { class: 'mono quiet' }, stamp(s.createdAt)),
       h('td', null, s.login ? W.person(s.login) : '—'),
       h('td', null, s.private ? h('span', { class: 'quiet', title: 'A My Woodshed session is its owner\'s: only that it ran is shown' }, 'Private session')
-        : h('a', { href: `/s/${s.id}` }, s.title || s.id)),
+        : s.kept ? h('span', { title: 'Taken off the console\'s list: only its record is kept' }, s.title || s.id)
+          : h('a', { href: `/s/${s.id}` }, s.title || s.id)),
       h('td', null, s.project ?? ''),
       h('td', null, AGENT_NAMES[s.agent] ?? s.agent),
       h('td', null, s.prUrls.length ? s.prUrls.map((url, i) => [i ? ' ' : null, h('a', { href: url, target: '_blank', rel: 'noopener' }, `#${url.split('/').pop()} ↗`)]) : h('span', { class: 'quiet' }, 'none'))));
@@ -188,7 +189,8 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
       list.length ? h('div', { class: 'table-scroll' }, h('table', { class: 'people-table analytics-table' },
         h('thead', null, h('tr', null, ['When', 'Who', 'Session', 'Project', 'Agent', 'Pull request'].map((t) => h('th', { scope: 'col' }, t)))),
         h('tbody', null, rows))) : h('p', { class: 'empty' }, 'No sessions in this window.'),
-      list.length > ROWS_SHOWN && h('p', { class: 'foot analytics-more' }, `The newest ${ROWS_SHOWN} of ${list.length} shown.`));
+      list.length > ROWS_SHOWN && h('p', { class: 'foot analytics-more' }, `The newest ${ROWS_SHOWN} of ${list.length} shown.`),
+      data.sessions.work > data.sessions.recent.length && h('p', { class: 'foot analytics-more' }, `This list and its filter cover the newest ${data.sessions.recent.length} of ${data.sessions.work} sessions; the counts above cover them all.`));
   }
 
   function pullMatches(p, show) {
@@ -225,7 +227,8 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
           h('th', { scope: 'col' }, 'Merge risk'),
           h('th', { scope: 'col', class: 'num' }, 'Lines'))),
         h('tbody', null, rows))) : h('p', { class: 'empty' }, 'No pull requests match.'),
-      list.length > ROWS_SHOWN && h('p', { class: 'foot analytics-more' }, `The newest ${ROWS_SHOWN} of ${list.length} shown.`));
+      list.length > ROWS_SHOWN && h('p', { class: 'foot analytics-more' }, `The newest ${ROWS_SHOWN} of ${list.length} shown.`),
+      data.pulls.woodshed.opened + data.pulls.other.opened > data.pulls.recent.length && h('p', { class: 'foot analytics-more' }, `This list and its filters cover the newest ${data.pulls.recent.length} of ${data.pulls.woodshed.opened + data.pulls.other.opened} pull requests; the counts above cover them all.`));
   }
 
   function notes() {
@@ -264,13 +267,19 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
       h('p', { class: 'foot' }, 'Lines changed are a rough size of each pull request, not a measure of anyone\'s work. A pull request opened by a bot is left out unless a session opened it.')));
   }
 
+  // Only the answer for the window picked last is drawn: an older read that lands after it is dropped.
+  let asking = 0;
   async function refresh() {
+    const mine = ++asking;
     loading = true;
     render();
     try {
-      data = await W.getJson(`/api/analytics?days=${days()}`);
+      const body = await W.getJson(`/api/analytics?days=${days()}`);
+      if (mine !== asking || life.ended) return;
+      data = body;
       loadError = null;
     } catch (err) {
+      if (mine !== asking || life.ended) return;
       loadError = err.message;
     }
     loading = false;

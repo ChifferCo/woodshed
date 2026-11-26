@@ -111,7 +111,7 @@ const recentPullsQuery = (withCheck) => `query RecentPulls($q: String!, $after: 
   search(type: ISSUE, query: $q, first: 100, after: $after) {
     issueCount pageInfo { hasNextPage endCursor }
     nodes { ... on PullRequest {
-      number url title createdAt mergedAt closedAt state isDraft additions deletions headRefName author { login __typename } labels(first: 20) { nodes { name } }
+      number url title createdAt mergedAt closedAt state isDraft additions deletions headRefName headRepository { nameWithOwner } author { login __typename } labels(first: 20) { nodes { name } }
       ${withCheck ? 'commits(last: 1) { nodes { commit { checkSuites(first: 20) { nodes { checkRuns(first: 3, filterBy: {checkName: $check}) { nodes { title } } } } } } }' : ''}
     } }
   } }`;
@@ -120,7 +120,7 @@ const recentPullsQuery = (withCheck) => `query RecentPulls($q: String!, $after: 
  * One pull request of the search, as analytics.mjs reads it.
  * @returns {{number: number, url: string, title: string, author: string|null, bot: boolean, createdAt: string,
  *   mergedAt: string|null, closedAt: string|null, state: 'open'|'draft'|'merged'|'closed', additions: number,
- *   deletions: number, branch: string, tier: 'Low'|'Medium'|'High'|null}}
+ *   deletions: number, branch: string, headRepo: string|null, tier: 'Low'|'Medium'|'High'|null}}
  */
 export function recentPullRow(node) {
   const titles = (node.commits?.nodes?.[0]?.commit?.checkSuites?.nodes ?? []).flatMap((suite) => suite?.checkRuns?.nodes ?? []).map((run) => run?.title ?? '');
@@ -131,7 +131,8 @@ export function recentPullRow(node) {
   return {
     number: node.number, url: node.url, title: String(node.title ?? '').slice(0, 300), author: node.author?.login ?? null,
     bot: node.author?.__typename === 'Bot', createdAt: node.createdAt, mergedAt: node.mergedAt ?? null, closedAt: node.closedAt ?? null,
-    state, additions: Number(node.additions) || 0, deletions: Number(node.deletions) || 0, branch: node.headRefName ?? '', tier,
+    state, additions: Number(node.additions) || 0, deletions: Number(node.deletions) || 0, branch: node.headRefName ?? '',
+    headRepo: node.headRepository?.nameWithOwner ?? null, tier,
   };
 }
 
