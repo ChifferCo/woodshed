@@ -194,26 +194,6 @@ Last said (3 of 87):
   > Still no Save button. Checking the console for errors.
 
 No report.md was written.
-`, summaryLog: `QA of pull request #26335 against main, session 9b9b9b9b
-
-## steps
-[qa 10:02:11] QA of pull request #26335 against main
-[qa 10:02:13] Planning the tests
-[qa 10:05:40] Starting the app
-[qa 10:06:21] Running the tests at http://localhost:3999, recording the browser
-
-## plan
-Ended: finished (success)
-Ran: 22 turns, 31 tool calls, 207 s, $0.84
-Said: 4 messages
-
-## test
-Ended: ran out of turns before it finished (error_max_turns)
-Ran: 200 turns, 311 tool calls, 2086 s, $6.12
-Tool errors: 3 (2 timeout, 1 connection refused)
-Said: 87 messages
-
-No report.md was written.
 ` } }),
   // A review the console runs on a pull request (pullRequests.review.runner: woodshed), started as its author with
   // nobody assigned, and one that finished, which is never kept, so it shows as stopped with no Resume. The rail keeps
@@ -250,21 +230,6 @@ Verdict: APPROVE
 
 ## what the agents said
 [review 10:09:02] Codex: nothing to add beyond Claude Code's comment
-`, summaryLog: `Review of pull request #144 against main, session 7f7f7f7f
-
-## steps
-[review 10:02:11] Review of pull request #144 against main
-[review 10:02:13] Reviewing the diff with Claude Code and Codex
-[review 10:09:02] Codex ended (exit=0)
-[review 10:12:40] Waiting for Codex to finish
-
-## review
-Ended: finished (success)
-Ran: 31 turns, 58 tool calls, 640 s, $1.92
-Said: 14 messages
-
-## verdict
-Verdict: APPROVE
 ` },
   }),
   // Three pull requests, oldest first: its card shows a merged or closed one only while no newer one came after it.

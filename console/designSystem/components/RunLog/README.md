@@ -7,4 +7,4 @@ each claude pass ended, for a run that sent no verdict.
 - Its words are the console's own (`## steps`, `## plan`, `## test`), never colored: a status is a word, so `Ended: ran
   out of turns` is in the text. While it loads it says `Loading…`; if it fails, one sentence says so.
 - Credentials are taken out before the log is kept (`shared/qa/runLog.mjs`, `redact`).
-- Above the panel, a `hint` line (`meta`, 12.5px) says `This is the summary…` when the reader is not an admin or whoever started the run.
+- Only an admin and whoever started the run get the fold; for anyone else it is not drawn, and the console answers its route 403.

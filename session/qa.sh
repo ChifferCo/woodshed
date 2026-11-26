@@ -146,47 +146,38 @@ screenLog() {
     && mv "$file.screened" "$file"
 }
 
-# The run log, in two tiers (shared/qa/runLog.mjs). The summary holds the steps this script took and, for each claude pass, how
-# it ended, its numbers and counts, and nothing claude or its tools printed: every console member who can open the session
-# reads it. The full log adds claude's last words and the tool errors' text, which a credential could be in, so only admins
-# and whoever started the run read it, and it is scrubbed by value, by pattern and by a model's second look (screenLog).
-# Both are sent after each pass too, so a session that is stopped before its report still leaves them.
+# The run log (shared/qa/runLog.mjs): the steps this script took, for each claude pass how it ended and what it last said, and
+# the tool errors' text, which a credential could be in. Only admins and whoever started the run read it, and it is scrubbed by
+# value, by pattern and, at the end of each pass, by a model's second look (screenLog). It is sent after each pass too, so a
+# session that is stopped before its report still leaves one.
 logBody() {
-  local text=$1
   echo "QA of pull request #$PR against $QA_BASE, session ${SESSION_ID:-unknown}"
   echo
   echo '## steps'
-  # The "Nothing to test" step quotes the planner's own words, and two steps name a file: only the full log has them.
-  if [ "$text" = full ]; then sed '/^$/d' "$DIR/logs/steps.log" 2>/dev/null; else sed -E '/^$/d; /Nothing to test:/d; s/^(.*Video not sent, [^:]*): .*$/\1/; s/^(.*QA notes): .*$/\1 present/; s/^(.*No still sent: ffmpeg made none) from .*$/\1/' "$DIR/logs/steps.log" 2>/dev/null; fi
+  sed '/^$/d' "$DIR/logs/steps.log" 2>/dev/null
   echo
-  local flag=''; [ "$text" = full ] || flag=--summary
-  if [ -f "$DIR/logs/plan.jsonl" ] || [ ! -f "$DIR/logs/plan-started" ]; then node "$RUN_LOG" $flag plan "$DIR/logs/plan.jsonl"; else printf '## plan\nStarted; its outcome is not known yet.\n'; fi
+  if [ -f "$DIR/logs/plan.jsonl" ] || [ ! -f "$DIR/logs/plan-started" ]; then node "$RUN_LOG" plan "$DIR/logs/plan.jsonl"; else printf '## plan\nStarted; its outcome is not known yet.\n'; fi
   echo
-  if [ -f "$DIR/logs/test.jsonl" ] || [ ! -f "$DIR/logs/test-started" ]; then node "$RUN_LOG" $flag test "$DIR/logs/test.jsonl"; else printf '## test\nStarted; its outcome is not known yet.\n'; fi
-  if [ "$text" = full ]; then
-    for f in SKIP NO_PLAN; do [ -f "$DIR/plan/$f.md" ] && { echo; echo "## plan/$f.md"; node "$RUN_LOG" --redact < "$DIR/plan/$f.md" | head -c 2000; }; done
-  elif [ -f "$DIR/plan/SKIP.md" ]; then
-    echo; echo '## plan'; echo 'The planner found nothing to test (its explanation is in the full log).'
-  fi
+  if [ -f "$DIR/logs/test.jsonl" ] || [ ! -f "$DIR/logs/test-started" ]; then node "$RUN_LOG" test "$DIR/logs/test.jsonl"; else printf '## test\nStarted; its outcome is not known yet.\n'; fi
+  for f in SKIP NO_PLAN; do [ -f "$DIR/plan/$f.md" ] && { echo; echo "## plan/$f.md"; node "$RUN_LOG" --redact < "$DIR/plan/$f.md" | head -c 2000; }; done
   [ -f "$DIR/report.md" ] || { echo; echo 'No report.md was written.'; }
 }
 
 postLog() {
-  local tier=$1 file=$2 code
+  local file=$1 code
   code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
     | curl -sS --max-time 10 -o /tmp/qa-log-reply.json -w '%{http_code}' -X POST -K - -H 'content-type: text/plain' \
-      --data-binary "@$file" "$WOODSHED_CONSOLE_URL/qa-log?tier=$tier") || code=000
-  echo "Run log ($tier) sent to the console (status: $code)"
+      --data-binary "@$file" "$WOODSHED_CONSOLE_URL/qa-log") || code=000
+  echo "Run log sent to the console (status: $code)"
 }
 
+# $1 `quick` is a checkpoint with no model screen to wait for (before the planner and as the tests start): scrubbed by pattern
+# and value alone, and says so. Without it the log also goes through the model's second look.
 sendLog() {
-  # Not scrubbed by value: it holds counts and fixed words, which the console checks line by line, and a short install secret
-  # that equals a count or a port would break a line it must accept.
-  logBody summary > "$DIR/logs/run-summary.log" 2>&1
-  postLog summary "$DIR/logs/run-summary.log"
-  logBody full 2>&1 | node "$RUN_LOG" --redact > "$DIR/logs/run.log"
-  screenLog "$DIR/logs/run.log"
-  postLog full "$DIR/logs/run.log"
+  logBody 2>&1 | node "$RUN_LOG" --redact > "$DIR/logs/run.log"
+  if [ "${1:-}" = quick ]; then printf '\n(A checkpoint: the model check for secrets has not run on this log yet.)\n' >> "$DIR/logs/run.log"
+  else screenLog "$DIR/logs/run.log"; fi
+  postLog "$DIR/logs/run.log"
 }
 
 sendReport() {
@@ -238,10 +229,9 @@ main() {
   gatherContext
 
   say "Planning the tests"
-  # A checkpoint before the planner, summary only (no model screen to wait for), so a run stopped while it plans still leaves its steps.
+  # A checkpoint before the planner, so a run stopped while it plans still leaves its steps.
   : > "$DIR/logs/plan-started"
-  logBody summary > "$DIR/logs/run-summary.log" 2>&1
-  postLog summary "$DIR/logs/run-summary.log"
+  sendLog quick
   runClaude "$DIR/plan-prompt.md" "$DIR/logs/plan.jsonl" 40 --allowedTools "Bash,Read,Write,Edit"
   sendLog
   if [ -f "$DIR/plan/SKIP.md" ]; then
@@ -266,7 +256,7 @@ main() {
   # A checkpoint, so a run stopped mid-test leaves a log that says the tests began.
   say "Test pass started; if the run is stopped now, its outcome is not known"
   : > "$DIR/logs/test-started"
-  sendLog
+  sendLog quick
   runClaude "$DIR/test-prompt.md" "$DIR/logs/test.jsonl" 200 --allowedTools "Bash,Read,Write,Edit,Glob,Grep,mcp__playwright" \
     --mcp-config "$DIR/mcp.json" --strict-mcp-config
   waitForBrowser

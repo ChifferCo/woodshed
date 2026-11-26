@@ -3227,15 +3227,14 @@ export function createHandler({
     }
     const qaLogRead = QA_LOG_RE.exec(pathname);
     if (qaLogRead) {
-      // Whoever may open the QA session reads its run log's summary (counts and fixed words). The full log, which holds
-      // what claude and its tools printed, is for an admin and whoever started the run (or owns the session).
+      // The run log holds what claude and its tools printed, which can include a credential: only an admin and whoever
+      // started the run (or owns the session) read it. Anyone else who may open the session gets nothing.
       const found = findFor(qaLogRead[1], user.login);
       const logs = qaLogRead[2] === 'qa' ? (isQa(found ?? {}) ? found.qa : null) : (isReview(found ?? {}) ? found.review : null);
       if (!found || !logs) return reply(res, 404, { error: `no such ${qaLogRead[2] === 'qa' ? 'QA' : 'review'} session` });
-      const full = (isAdmin(user) || (user.login && (found.startedBy === user.login || found.owner === user.login))) && logs.log;
-      const text = full ? logs.log : logs.summaryLog;
-      if (!text) return reply(res, 404, { error: 'this session sent no run log' });
-      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-qa-log-tier': full ? 'full' : 'summary' }).end(text);
+      if (!isAdmin(user) && !(user.login && (found.startedBy === user.login || found.owner === user.login))) return reply(res, 403, { error: 'only an admin or whoever started the run reads its log' });
+      if (!logs.log) return reply(res, 404, { error: 'this session sent no run log' });
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }).end(logs.log);
       return;
     }
     const qaVideo = QA_VIDEO_RE.exec(pathname);

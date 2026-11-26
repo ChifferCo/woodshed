@@ -109,34 +109,23 @@ test('a credential in a prefixed name, as an app prints its env file, is taken o
   assert.match(clean, /PORT=3000/);
 });
 
-test('the summary tier has counts and fixed words, and nothing claude or its tools printed', () => {
-  const stream = [said('registry said zzOpaque7788'), toolError('Timeout 30000ms exceeded; token zzOpaque7788'), toolError('net::ERR_CONNECTION_REFUSED'),
-    `stderr zzOpaque7788`, line({ type: 'result', subtype: 'error_max_turns', num_turns: 9, duration_ms: 5000, total_cost_usd: 1 })].join('\n');
-  const text = summarize('test', stream, { text: false });
-  assert.doesNotMatch(text, /zzOpaque7788|registry said|Timeout 30000/);
-  assert.match(text, /Ended: ran out of turns/);
-  assert.match(text, /Tool errors: 2 \(1 timeout, 1 connection refused\)/);
-  assert.match(text, /Said: 1 message\nOther output: 1 line/);
-  assert.match(summarize('test', stream), /zzOpaque7788|registry said/, 'the full tier keeps them');
-});
-
-test('a result event\'s odd fields never reach the verdict or the summary: counts are whole numbers, subtypes short words', () => {
+test('a result event\'s odd fields never reach the verdict or the log: counts are whole numbers, subtypes short words', () => {
   const stream = line({ type: 'result', subtype: 'error_max_turns', num_turns: 'PRIVATE-MARKER', duration_ms: 'x', total_cost_usd: 'y' });
   assert.equal(whyEnded('test', stream), 'the test pass ran out of turns before it finished');
   const lower = line({ type: 'result', subtype: 'opaque_registry_credential', num_turns: 3 });
-  assert.match(summarize('test', lower, { text: false }), /\(unknown\)/, 'a lowercase word that claude does not write is not printed');
-  assert.doesNotMatch(summarize('test', lower, { text: false }), /opaque_registry/);
+  assert.match(summarize('test', lower), /\(unknown\)/, 'a lowercase word that claude does not write is not printed');
+  assert.doesNotMatch(summarize('test', lower), /opaque_registry/);
   const odd = line({ type: 'result', subtype: 'PRIVATE-MARKER https://x', is_error: false, num_turns: 3 });
-  assert.doesNotMatch(summarize('test', odd, { text: false }), /PRIVATE/);
-  assert.match(summarize('test', odd, { text: false }), /\(unknown\)/);
+  assert.doesNotMatch(summarize('test', odd), /PRIVATE/);
+  assert.match(summarize('test', odd), /\(unknown\)/);
   const denied = line({ type: 'result', subtype: 'success', permission_denials: [{ tool_name: 'PRIVATE-MARKER x' }] });
-  assert.doesNotMatch(summarize('test', denied, { text: false }), /PRIVATE/);
+  assert.doesNotMatch(summarize('test', denied), /PRIVATE/);
 });
 
 test('a subtype that names something on the object prototype is not an ending', () => {
   for (const subtype of ['constructor', 'toString', '__proto__']) {
     const stream = line({ type: 'result', subtype, num_turns: 1 });
     assert.equal(whyEnded('test', stream), null);
-    assert.match(summarize('test', stream, { text: false }), /Ended: finished \(unknown\)/);
+    assert.match(summarize('test', stream), /Ended: finished \(unknown\)/);
   }
 });

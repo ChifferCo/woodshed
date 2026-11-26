@@ -2481,13 +2481,14 @@
             : `This QA session stopped before it sent a report, so ${W.ref(s)} has no QA result from it. Add the QA label to the pull request again to run QA again.`)
             : h('p', null, 'Work in progress is committed and pushed to the branch before a stop. Comment ', h('code', null, '/woodshed …'), ` on ${W.ref(s)} to start a new session on the same branch.`),
       h('dl', null, facts.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])),
-      (s.trigger === 'qa' && s.qa?.hasLog && qaRunLog(s, 'qa')) || (s.trigger === 'review' && s.review?.hasLog && qaRunLog(s, 'review')));
+      // Only an admin and whoever started the run read it; the console answers anyone else 403, so the fold is not drawn for them.
+      ((W.isAdmin() || W.sameLogin(s.startedBy, data.login) || W.sameLogin(s.owner, data.login))
+        && ((s.trigger === 'qa' && s.qa?.hasLog && qaRunLog(s, 'qa')) || (s.trigger === 'review' && s.review?.hasLog && qaRunLog(s, 'review')))));
   }
 
   // A QA or review run's log, read when it is opened: how each claude pass ended and what the run did, for a run with no verdict.
   function qaRunLog(s, kind) {
     const body = h('pre', { class: 'run-log' }, 'Loading…');
-    const note = h('p', { class: 'hint' });
     let loaded = false;
     const load = async () => {
       if (loaded) return;
@@ -2496,16 +2497,13 @@
         const res = await fetch(`/api/sessions/${s.id}/${kind}-log`, { cache: 'no-store' });
         if (!res.ok) loaded = false;
         body.textContent = res.ok ? await res.text() : `The run log was not read (${res.status}).`;
-        // The full text is for admins and whoever started the run: anyone else reads the summary, and is told so.
-        note.textContent = res.ok && res.headers.get('x-qa-log-tier') === 'summary'
-          ? 'This is the summary: how each pass ended and its counts. What claude said and what its tools printed is for admins and whoever started the run.' : '';
       } catch {
         loaded = false;
         body.textContent = 'The run log was not read: the console did not answer.';
       }
     };
     return h('details', { class: 'run-log-box', ontoggle: (e) => e.target.open && load() },
-      h('summary', null, 'Run log'), note, body);
+      h('summary', null, 'Run log'), body);
   }
 
   // A pause says which limit it hit, from the console's reason: `idle for 1 h` or `ran for 8 h`.

@@ -43,7 +43,7 @@ OPENCODE_REVIEW_HOME=${REVIEW_OPENCODE_HOME:-$HOME/.opencode-review}
 AGENT_MINUTES=${REVIEW_AGENT_MINUTES:-$CODEX_MINUTES}
 
 # Each step is kept as well as shown, for the run log the console keeps (sendLog). `sayDetail` is for what an agent's own output
-# said (an answer, an error): shown and kept in the full log only, never in the summary everyone who opens the session reads.
+# said (an answer, an error): shown and kept apart, and added to the log only after the model's secret screen (detailsBody).
 say() { printf '\n[review %s] %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$DIR/logs/steps.log" 2>/dev/null; }
 sayDetail() { printf '\n[review %s] %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$DIR/logs/details.log" 2>/dev/null; }
 
@@ -306,21 +306,17 @@ screenLog() {
     && mv "$file.screened" "$file"
 }
 
-# The run log, in two tiers, as a QA run's (session/qa.sh, console/reviewSummary.mjs): the summary is the steps and how claude's
-# pass ended, with counts and fixed words, and the verdict's word; the full log adds what the agents said and the steps' details,
-# scrubbed. The console keeps both for the session's page, the full one for admins and whoever started the review.
+# The run log (session/qa.sh's, console/README.md): the steps, how claude's pass ended and what it last said, and the verdict's
+# word. Only admins and whoever started the review read it, so one that ends with no verdict can say why.
 VERDICT_WORD=
 logBody() {
-  local text=$1 flag=''
-  [ "$text" = full ] || flag=--summary
   echo "Review of pull request #$PR against $REVIEW_BASE, session ${SESSION_ID:-unknown}"
   echo
   echo '## steps'
-  if [ "$text" = full ]; then sed '/^$/d' "$DIR/logs/steps.log" 2>/dev/null
-  else sed -E '/^$/d; s/(Reviewing the diff) of [^ ]+/\1/; s/(Could not write the review prompt) \(repo: .*\)(, so there is no review)/\1\2/' "$DIR/logs/steps.log" 2>/dev/null; fi
+  sed '/^$/d' "$DIR/logs/steps.log" 2>/dev/null
   if withClaude || [ -z "$(reviewers)" ]; then
     echo
-    if [ -f "$DIR/logs/review.jsonl" ]; then node "$RUN_LOG" $flag review "$DIR/logs/review.jsonl"
+    if [ -f "$DIR/logs/review.jsonl" ]; then node "$RUN_LOG" review "$DIR/logs/review.jsonl"
     elif [ -f "$DIR/logs/review-started" ]; then printf '## review\nStarted; its outcome is not known yet.\n'
     else printf '## review\nDid not run.\n'; fi
   fi
@@ -337,26 +333,23 @@ detailsBody() {
 }
 
 postLog() {
-  local tier=$1 file=$2 code
+  local file=$1 code
   code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
     | curl -sS --max-time 10 -o /tmp/review-log-reply.json -w '%{http_code}' -X POST -K - -H 'content-type: text/plain' \
-      --data-binary "@$file" "$WOODSHED_CONSOLE_URL/review-log?tier=$tier") || code=000
-  echo "Run log ($tier) sent to the console (status: $code)"
+      --data-binary "@$file" "$WOODSHED_CONSOLE_URL/review-log") || code=000
+  echo "Run log sent to the console (status: $code)"
 }
 
-# $1 `summary` to send only the summary (a checkpoint, with no model screen to wait for).
+# $1 `quick` is a checkpoint with no model screen to wait for: scrubbed by pattern and value alone, and says so.
 sendLog() {
-  # The summary is not scrubbed by value: it holds counts and fixed words, which the console checks line by line.
-  logBody summary > "$DIR/logs/run-summary.log" 2>&1
-  postLog summary "$DIR/logs/run-summary.log"
-  [ "${1:-}" = summary ] && return 0
-  logBody full 2>&1 | node "$RUN_LOG" --redact > "$DIR/logs/run.log"
+  logBody 2>&1 | node "$RUN_LOG" --redact > "$DIR/logs/run.log"
   # The screen is a claude call, through the console's Anthropic proxy: a review that did not choose Claude as a reviewer keeps
   # its other providers' diagnostics out of it, and its log is scrubbed by pattern alone.
-  if withClaude || [ -z "$(reviewers)" ]; then screenLog "$DIR/logs/run.log"
+  if [ "${1:-}" = quick ]; then printf '\n(A checkpoint: the model check for secrets has not run on this log yet.)\n' >> "$DIR/logs/run.log"
+  elif withClaude || [ -z "$(reviewers)" ]; then screenLog "$DIR/logs/run.log"
   else printf '\n(No model check for secrets: Claude is not one of this review'"'"'s reviewers, so its log was scrubbed by pattern only.)\n' >> "$DIR/logs/run.log"; fi
   detailsBody 2>&1 | node "$RUN_LOG" --redact >> "$DIR/logs/run.log"
-  postLog full "$DIR/logs/run.log"
+  postLog "$DIR/logs/run.log"
 }
 
 # Each reviewer's reason for no verdict, as one line for the console's log.
@@ -392,11 +385,11 @@ sendReport() {
   say "Verdict sent to the console (status: $code)"
 }
 
-# A checkpoint as the reviewers start, summary only (no model screen to wait for), so a review stopped while they work still
+# A checkpoint as the reviewers start (no model screen to wait for), so a review stopped while they work still
 # leaves its steps, the starting one included.
 checkpoint() {
   : > "$DIR/logs/review-started"
-  sendLog summary
+  sendLog quick
 }
 
 main() {

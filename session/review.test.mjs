@@ -6,7 +6,6 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { isolatedEnv } from '../test/isolatedEnv.mjs';
-import { reviewSummaryProblem } from '../console/reviewSummary.mjs';
 
 const HERE = import.meta.dirname;
 const REVIEW_SH = path.join(HERE, 'review.sh');
@@ -140,7 +139,7 @@ async function runReview(t, { committed = {}, origin = 'https://github.com/Acme/
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
       if (req.url.startsWith('/review-log')) {
-        logs.push({ tier: new URL(req.url, 'http://x').searchParams.get('tier'), type: req.headers['content-type'], auth: req.headers.authorization, text: body, reports: reports.length });
+        logs.push({ type: req.headers['content-type'], auth: req.headers.authorization, text: body, reports: reports.length });
         res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
         return;
       }
@@ -398,35 +397,20 @@ echo '{"type":"assistant","message":{"content":[{"type":"text","text":"registry 
 echo '{"type":"result","subtype":"error_max_turns","is_error":false,"num_turns":60,"total_cost_usd":2}'
 `;
 
-test('a review leaves a run log in two tiers: a summary the console accepts, and a full log, each before the verdict', async (t) => {
+test('a review leaves a run log before the reviewers finish and one with the verdict, each before the report', async (t) => {
   const { logs, reports } = await runReview(t);
-  const summary = logs.filter((l) => l.tier === 'summary');
-  const full = logs.filter((l) => l.tier === 'full');
-  assert.ok(summary.length >= 2 && full.length === 1, 'a summary before the reviewers start and one with the verdict, and one full log');
+  assert.ok(logs.length >= 2, 'a checkpoint as the reviewers start, and the log with the verdict');
   assert.deepEqual([logs[0].auth, logs[0].type], ['Bearer tok', 'text/plain']);
-  assert.match(summary[0].text, /Review of pull request #7 against main[\s\S]*## review\nStarted; its outcome is not known yet\.[\s\S]*Verdict: not yet/);
-  assert.match(summary.at(-1).text, /## review\nEnded: finished \(success\)[\s\S]*Verdict: APPROVE/);
-  for (const l of summary) assert.equal(reviewSummaryProblem(l.text, { number: 7, base: 'main' }), null, l.text);
+  assert.match(logs[0].text, /Review of pull request #7 against main[\s\S]*## review\nStarted; its outcome is not known yet\.[\s\S]*Verdict: not yet/);
+  assert.match(logs[0].text, /model check for secrets has not run on this log yet/, 'a checkpoint says it was not screened');
+  assert.match(logs.at(-1).text, /## review\nEnded: finished \(success\)[\s\S]*Verdict: APPROVE/);
   assert.ok(logs.every((l) => l.reports === 0), 'all before the report');
   assert.equal(reports.length, 1);
 });
 
-test('a review whose claude ran out of turns says so in its log and writes no verdict, and the summary holds none of what it said', async (t) => {
+test('a review whose claude ran out of turns says so in its log and writes no verdict', async (t) => {
   const { logs } = await runReview(t, { claude: REVIEW_FAKE_FAILING_CLAUDE });
-  const summary = logs.filter((l) => l.tier === 'summary').at(-1);
-  assert.match(summary.text, /Ended: ran out of turns before it finished \(error_max_turns\)[\s\S]*Verdict: none/);
-  assert.doesNotMatch(summary.text, /zzOpaque7788|registry said/);
-  assert.equal(reviewSummaryProblem(summary.text, { number: 7, base: 'main' }), null);
-  assert.match(logs.find((l) => l.tier === 'full').text, /registry said zzOpaque7788/, 'the full log, for admins and the starter, has it');
-});
-
-test('every summary a review sends is one the console accepts, with each reviewer', async (t) => {
-  for (const options of [{ agents: 'claude codex' }, { agents: 'codex' }, { agents: 'claude codex grok opencode', provider: 'openai' }, { origin: null }]) {
-    const { logs } = await runReview(t, options);
-    const summaries = logs.filter((l) => l.tier === 'summary');
-    assert.ok(summaries.length > 0, JSON.stringify(options));
-    for (const l of summaries) assert.equal(reviewSummaryProblem(l.text, { number: 7, base: 'main' }), null, `${JSON.stringify(options)}: ${l.text}`);
-  }
+  assert.match(logs.at(-1).text, /Ended: ran out of turns before it finished \(error_max_turns\)[\s\S]*registry said zzOpaque7788[\s\S]*Verdict: none/);
 });
 
 test('the model screen is a claude call, so a review that did not choose Claude never sends its other providers\' diagnostics to it', async (t) => {
@@ -441,22 +425,21 @@ test('the model screen is a claude call, so a review that did not choose Claude 
   const codexWithPrivateDiagnostic = FAKE_CODEX.replace("echo '{\"type\":\"turn.completed\"}'", "echo '{\"message\":\"@octo sign-in refused for PRIVATE-WORKSPACE-MARKER\"}'");
   const codexOnly = await runReview(t, { agents: 'codex', claude: REVIEW_FAKE_SCREEN_RECORDER, codex: codexWithPrivateDiagnostic });
   assert.equal(fs.existsSync(seen), false, 'claude was never called, not even as the screen');
-  assert.match(codexOnly.logs.find((l) => l.tier === 'full').text, /No model check for secrets: Claude is not one of this review's reviewers/);
+  assert.match(codexOnly.logs.at(-1).text, /No model check for secrets: Claude is not one of this review's reviewers/);
   const both = await runReview(t, { agents: 'claude codex', claude: REVIEW_FAKE_SCREEN_RECORDER, codex: codexWithPrivateDiagnostic });
   assert.ok(fs.existsSync(seen), 'with Claude among the reviewers, the screen runs');
   const prompts = fs.readFileSync(seen, 'utf8');
   assert.doesNotMatch(prompts, /PRIVATE-WORKSPACE-MARKER/, 'another provider\'s diagnostic is never in the screen\'s prompt');
-  assert.match(both.logs.find((l) => l.tier === 'full').text, /## what the agents said[\s\S]*PRIVATE-WORKSPACE-MARKER/, 'it is in the restricted log, after the screen');
-  assert.ok(both.logs.some((l) => l.tier === 'full'));
+  assert.match(both.logs.at(-1).text, /## what the agents said[\s\S]*PRIVATE-WORKSPACE-MARKER/, 'it is in the restricted log, after the screen');
 });
 
 test('a review whose branch commits a .review folder with a link in it follows none, and says the folder was removed', async (t) => {
   const { output, logs } = await runReview(t, { committed: { '.review/note.txt': 'planted' } });
   assert.match(output, /The pull request carries a \.review folder of its own/);
-  assert.match(logs.find((l) => l.tier === 'summary' && /carries a \.review folder/.test(l.text))?.text ?? '', /carries a \.review folder of its own/, 'the step reaches the run log');
+  assert.match(logs.find((l) => /carries a \.review folder/.test(l.text))?.text ?? '', /carries a \.review folder of its own/, 'the step reaches the run log');
 });
 
 test('a Codex-only review records its starting step before its first checkpoint', async (t) => {
   const { logs } = await runReview(t, { agents: 'codex' });
-  assert.match(logs[0].text, /Reviewing the diff with Codex/);
+  assert.match(logs[0].text, /Reviewing the diff of \S+ with Codex/);
 });

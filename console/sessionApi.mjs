@@ -87,8 +87,6 @@ import { isReviewAgentPath, reviewAgentTokenOf } from './reviewAgentProxy.mjs';
 import { MAX_ANSWER_CHARS, MAX_ISSUE_BODY_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
-import { summaryProblem } from './qaSummary.mjs';
-import { reviewSummaryProblem } from './reviewSummary.mjs';
 import { MAX_QA_LOG_BYTES, MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES, MAX_REPORT_CHARS, isWebm, parseQaReport } from './qaSessions.mjs';
 import { MAX_QA_POSTER_BYTES, isPng } from './qaRecordings.mjs';
 import { ACTIVE_STATUSES, START_STEPS, isAsk, isQa, isReview, runsCodex } from './sessions.mjs';
@@ -625,22 +623,22 @@ function qaReportReply(req, res, session, fleet) {
   });
 }
 
-// A QA session's run log (session/qa.sh), in two tiers (`?tier=summary`, else full; see fleet.qaLog): plain text, sent after each pass and before the report, and kept whole, the
+// A QA session's run log (session/qa.sh): plain text, sent after each pass and before the report, and kept whole, the
 // latest replacing the last, so a run that is stopped before its report still leaves why. Never refused for being late.
 async function qaLogReply(req, res, session, fleet) {
   return runLogReply(req, res, session, {
-    kind: 'QA', mine: isQa(session), save: fleet.qaLog?.bind(fleet), problem: (text) => summaryProblem(text, { number: session.number, base: session.qa?.base ?? '' }),
+    kind: 'QA', mine: isQa(session), save: fleet.qaLog?.bind(fleet),
   });
 }
 
-// A review session's run log, the same (session/review.sh, reviewSummary.mjs).
+// A review session's run log, the same (session/review.sh).
 async function reviewLogReply(req, res, session, fleet) {
   return runLogReply(req, res, session, {
-    kind: 'review', mine: isReview(session), save: fleet.reviewLog?.bind(fleet), problem: (text) => reviewSummaryProblem(text, { number: session.number, base: session.review?.base ?? '' }),
+    kind: 'review', mine: isReview(session), save: fleet.reviewLog?.bind(fleet),
   });
 }
 
-async function runLogReply(req, res, session, { kind, mine, save, problem }) {
+async function runLogReply(req, res, session, { kind, mine, save }) {
   if (!mine || !save) {
     req.resume();
     return reply(res, 404, { error: `only a ${kind} session has a run log to send` });
@@ -656,16 +654,8 @@ async function runLogReply(req, res, session, { kind, mine, save, problem }) {
     if (bytes > MAX_QA_LOG_BYTES) return reply(res, 413, { error: 'too large' });
     chunks.push(chunk);
   }
-  const tier = new URL(req.url || '/', 'http://x').searchParams.get('tier') === 'summary' ? 'summary' : 'full';
   const text = Buffer.concat(chunks).toString('utf8');
-  // The summary is read by everyone who can open the session and is posted by a process running beside the pull request's
-  // code: it is kept only if every line is one the run's own script writes (qaSummary.mjs, reviewSummary.mjs).
-  const why = tier === 'summary' ? problem(text) : null;
-  if (why) {
-    console.warn(`sessionApi: a ${kind} summary refused`, { sessionId: session.id, why });
-    return reply(res, 400, { error: `the summary has only the lines the run's script writes: ${why}` });
-  }
-  save(session, text, tier);
+  save(session, text);
   return reply(res, 200, { saved: true });
 }
 

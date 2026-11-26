@@ -2,9 +2,7 @@
 // reason a run ended with no verdict. Read from claude's `--output-format stream-json` stream, which session/qa.sh keeps
 // for each pass (plan.jsonl, test.jsonl): how the pass ended, how long it ran, what it last said and what failed.
 //
-//   node runLog.mjs [--summary] <phase> <stream.jsonl>   prints the pass's summary; --summary leaves out everything claude
-//                                                  or its tools printed, keeping counts and fixed categories (the tier
-//                                                  every console member who can open the session reads)
+//   node runLog.mjs <phase> <stream.jsonl>          prints the pass's summary
 //   node runLog.mjs --why <phase> <stream.jsonl>   prints one line saying how the pass ended, nothing when it ended well
 //   node runLog.mjs --redact                        copies stdin to stdout with credentials taken out (redact)
 import fs from 'node:fs';
@@ -126,24 +124,12 @@ export function whyEnded(phase, stream) {
   return null;
 }
 
-// What a tool error was, in a fixed word, for the summary tier: the text itself is never kept there.
-const CATEGORIES = [
-  ['timeout', /timeout|timed out|ETIMEDOUT/i], ['connection refused', /ECONNREFUSED|ERR_CONNECTION|connection refused/i],
-  ['not found', /not found|no such|ENOENT|404|strict mode violation|waiting for/i], ['permission denied', /permission|EACCES|denied|forbidden|401|403/i],
-  ['server error', /\b5\d\d\b|internal server error/i],
-];
-export function categoryOf(text) {
-  return CATEGORIES.find(([, re]) => re.test(text))?.[0] ?? 'other';
-}
-
 /**
  * @param {string} phase  `plan` or `test`
  * @param {string|null} stream  null when the pass never ran
- * @param {{text?: boolean}} [options]  `text: false` is the summary tier: how the pass ended, its numbers and counts, and
- *   nothing claude or its tools printed, so it holds nothing a credential could be in
  * @returns {string}  the pass as a short text for a person: how it ended, its numbers, its last words and its tool errors
  */
-export function summarize(phase, stream, { text: withText = true } = {}) {
+export function summarize(phase, stream) {
   if (stream == null) return `## ${phase}\nDid not run.\n`;
   const { result, said, tools, errors, other, turns } = readStream(stream);
   const lines = [`## ${phase}`];
@@ -153,8 +139,7 @@ export function summarize(phase, stream, { text: withText = true } = {}) {
     const ending = endingOf(result.subtype) ?? (result.is_error ? 'ended in an error' : 'finished');
     lines.push(`Ended: ${ending} (${subtypeOf(result.subtype)}${result.is_error ? ', is_error' : ''})`);
     if (Array.isArray(result.permission_denials) && result.permission_denials.length) {
-      // The tool names are in the full log only: the summary has counts and fixed words.
-      const names = withText ? [...new Set(result.permission_denials.map((d) => d.tool_name).filter((n) => typeof n === 'string' && /^[A-Za-z0-9_]{1,60}$/.test(n)))] : [];
+      const names = [...new Set(result.permission_denials.map((d) => d.tool_name).filter((n) => typeof n === 'string' && /^[A-Za-z0-9_]{1,60}$/.test(n)))];
       lines.push(`Permission denied: ${result.permission_denials.length} call${result.permission_denials.length === 1 ? '' : 's'}${names.length ? ` (${names.join(', ')})` : ''}`);
     }
   }
@@ -164,18 +149,9 @@ export function summarize(phase, stream, { text: withText = true } = {}) {
     Number.isFinite(result?.total_cost_usd) && result.total_cost_usd >= 0 && `$${result.total_cost_usd.toFixed(2)}`,
   ].filter(Boolean);
   lines.push(`Ran: ${numbers.join(', ')}`);
-  if (errors.length && !withText) {
-    const counts = {};
-    for (const e of errors) counts[categoryOf(e)] = (counts[categoryOf(e)] ?? 0) + 1;
-    lines.push(`Tool errors: ${errors.length} (${Object.entries(counts).map(([k, n]) => `${n} ${k}`).join(', ')})`);
-  } else if (errors.length) {
+  if (errors.length) {
     lines.push(`Tool errors: ${errors.length}, the last ${Math.min(ERROR_LINES, errors.length)}:`);
     for (const e of errors.slice(-ERROR_LINES)) lines.push(`  - ${clip(e, ERROR_CHARS)}`);
-  }
-  if (!withText) {
-    lines.push(`Said: ${said.length} message${said.length === 1 ? '' : 's'}`);
-    if (other.length) lines.push(`Other output: ${other.length} line${other.length === 1 ? '' : 's'}`);
-    return `${lines.join('\n')}\n`;
   }
   if (result?.result && result.is_error) lines.push(`Result: ${clip(oneLine(result.result), SAID_CHARS)}`);
   if (said.length) {
@@ -196,9 +172,8 @@ function main(argv) {
     process.stdout.write(redact(fs.readFileSync(0, 'utf8')));
     return;
   }
-  const summary = argv[0] === '--summary';
   const why = argv[0] === '--why';
-  const [phase, file] = why || summary ? argv.slice(1) : argv;
+  const [phase, file] = why ? argv.slice(1) : argv;
   if (!phase || !file) throw new Error('usage: runLog.mjs [--why] <phase> <stream.jsonl>');
   const stream = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
   if (why) {
@@ -206,7 +181,7 @@ function main(argv) {
     if (text) process.stdout.write(`${text}\n`);
     return;
   }
-  process.stdout.write(summarize(phase, stream, { text: !summary }));
+  process.stdout.write(summarize(phase, stream));
 }
 
 if (isMain(import.meta.url)) {

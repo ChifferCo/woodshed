@@ -1335,13 +1335,11 @@ Before any of them starts, it removes the whole `.review/` folder: a branch can 
 reviewer that writes none would leave to be reported as its own (the pane says `The pull request carries a .review
 folder of its own`).
 
-A review leaves a run log as a QA run does (`POST /review-log`, `?tier=summary` or full; `fleet: review run log kept`),
-so one that ends with no verdict says why. The **summary** is the steps, how claude's pass ended (turns, cost, tool errors
-by category) and the verdict's word, and the console keeps it only when every line is one `session/review.sh` writes
-(`reviewSummary.mjs`, the pull request's number and base branch checked against the session's). The **full log** adds what
-the agents said, scrubbed by value, by pattern and by a model's second look. An ended review session's page shows it under
-**Run log** (`GET /api/sessions/<id>/review-log`): the full log to an admin and whoever started the review, the summary to
-anyone else who may open the session. A review is stopped before its first checkpoint leaves none.
+A review leaves a run log as a QA run does (`POST /review-log`; `fleet: review run log kept`), so one that ends with no
+verdict says why: the steps, how claude's pass ended (turns, cost, tool errors), what the agents said, and the verdict's
+word, scrubbed by value, by pattern and by a model's second look. An ended review session's page shows it under **Run log**
+(`GET /api/sessions/<id>/review-log`) to an admin and whoever started the review, and to no one else. A review is stopped
+before its first checkpoint leaves none.
 Codex works as in a Codex session: it reads the checkout, runs what it likes (the container is the sandbox) and writes
 its verdict's files itself, in `.review/codex/`. It gets `REVIEW_CODEX_MINUTES` (20 by default), then is stopped, and
 Claude's verdict goes out alone. Codex alone sends its own verdict.
@@ -2905,20 +2903,16 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
    PNG) to `POST /qa-poster`, which the fleet keeps through `qaRecordings.mjs` (`qaVideo`, `qaPoster`) for 14 days,
    then the verdict, the report, the commit it tested and the cost to `POST /qa-report` (`qaSessions.mjs` checks it),
    once. A run log (`shared/qa/runLog.mjs`) goes to `POST /qa-log` after each pass and before the report, the latest
-   replacing the last, so a run stopped before its report still leaves why. It comes in two tiers, sent together
-   (`?tier=summary` or full) and kept on the session (`fleet: QA run log kept` with the `tier`):
-   - the **summary**: the steps the script took and, for each claude pass, how it ended, its turns, cost and counts, and
-     tool errors by fixed category (timeout, connection refused…). Nothing claude or its tools printed is in it, so
-     whoever may open the session reads it;
-   - the **full log**: also claude's last words and the tool errors' text, scrubbed by value (the session's own secret
-     variables and the install secrets), by pattern, and by a model's second look (`screenLog` in `session/qa.sh`, a
-     haiku call that names the lines holding a secret, which are blanked; `the model check for secrets did not run` in the
-     log when it could not). It is the run's own output, so it may still quote what the app printed: only an admin, and
-     whoever started the run (or owns the session), read it.
+   replacing the last, so a run stopped before its report still leaves why. It holds the steps the script took and, for each claude
+   pass, how it ended, its turns, cost and counts, claude's last words and the tool errors' text, scrubbed by value (the
+   session's own secret variables and the install secrets), by pattern, and by a model's second look (`screenLog` in
+   `session/qa.sh`, a haiku call that names the lines holding a secret, which are blanked; `the model check for secrets did
+   not run` in the log when it could not). A checkpoint taken before the planner and as the tests start skips the model's look
+   and says so. It is the run's own output, so it may still quote what the app printed: only an admin, and whoever started the
+   run (or owns the session), read it (`fleet: QA run log kept`).
 
-   An ended QA session's page shows it under **Run log** (`GET /api/sessions/<id>/qa-log`, which answers the full log to
-   those two and the summary to anyone else, saying which in `x-qa-log-tier`). A run with no report says in its verdict
-   why when a pass ran out of turns, was cut off or hit an error.
+   An ended QA session's page shows it under **Run log** (`GET /api/sessions/<id>/qa-log`, answered 403 to anyone else). A run
+   with no report says in its verdict why when a pass ran out of turns, was cut off or hit an error.
 5. The fleet writes the report into the QA comment, with the still linking to the first video at `/qa/<session id>/video/1` and a link to each
    (on a repo whose project file says `pullRequests.qa.recordings: public`, at `/qa-video/<session id>/<secret>/<n>.webm`,
    which plays with no sign-in: the session got its secret, `qa.share`, when it started, and pages never see it), posts the QA check on the commit tested with the verdict and the

@@ -168,14 +168,13 @@ test('a QA recording plays only for someone signed in who may open its session, 
   assert.deepEqual(served, [['video', { id: '0a1b2c3d', n: 1 }], ['poster', { id: '0a1b2c3d', secret }]]);
 });
 
-test('a QA run\'s log reads for anyone who may open its session as a summary, and in full only for an admin or whoever started it', async (t) => {
+test('a QA run\'s log reads only for an admin or whoever started it, and for anyone else who may open the session it is refused', async (t) => {
   const log = '## test\nEnded: ran out of turns\nLast said: PRIVATE-WORDS\n';
-  const summaryLog = '## test\nEnded: ran out of turns\nSaid: 1 message\n';
   const sessions = [
-    { id: '0a1b2c3d', status: 'stopped', kind: 'pr', number: 7, title: 'QA', startedBy: 'starter', qa: { base: 'main', log, summaryLog } },
+    { id: '0a1b2c3d', status: 'stopped', kind: 'pr', number: 7, title: 'QA', startedBy: 'starter', qa: { base: 'main', log } },
     { id: '0a1b2c3e', status: 'stopped', kind: 'pr', number: 7, title: 'QA', qa: { base: 'main' } },
     { id: '0a1b2c3f', status: 'stopped', kind: 'pr', number: 7, title: 'Work' },
-    { id: '0a1b2c40', status: 'stopped', kind: 'pr', number: 7, title: 'Theirs', owner: 'someone-else', qa: { base: 'main', log: 'SECRET', summaryLog: 'SECRET' } },
+    { id: '0a1b2c40', status: 'stopped', kind: 'pr', number: 7, title: 'Theirs', owner: 'someone-else', qa: { base: 'main', log: 'SECRET' } },
   ];
   const fleet = { sessions: () => sessions, find: (id) => sessions.find((x) => x.id === id) ?? null };
   const config = {
@@ -197,29 +196,28 @@ test('a QA run\'s log reads for anyone who may open its session as a summary, an
     http.get({ host: '127.0.0.1', port, path: `/api/sessions/${id}/qa-log`, headers: { host: `localhost:${port}`, ...headers } }, (res) => {
       let body = '';
       res.on('data', (c) => { body += c; });
-      res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], nosniff: res.headers['x-content-type-options'], tier: res.headers['x-qa-log-tier'], body }));
+      res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], nosniff: res.headers['x-content-type-options'], body }));
     }).on('error', reject);
   });
 
   const asAdmin = await read('0a1b2c3d', as('admin'));
-  assert.deepEqual([asAdmin.status, asAdmin.type, asAdmin.nosniff, asAdmin.tier, asAdmin.body], [200, 'text/plain; charset=utf-8', 'nosniff', 'full', log]);
-  assert.deepEqual([(await read('0a1b2c3d', as('starter'))).tier, (await read('0a1b2c3d', as('starter'))).body], ['full', log], 'whoever started the run');
+  assert.deepEqual([asAdmin.status, asAdmin.type, asAdmin.nosniff, asAdmin.body], [200, 'text/plain; charset=utf-8', 'nosniff', log]);
+  assert.equal((await read('0a1b2c3d', as('starter'))).body, log, 'whoever started the run');
   const plain = await read('0a1b2c3d', as('plain'));
-  assert.deepEqual([plain.status, plain.tier, plain.body], [200, 'summary', summaryLog]);
-  assert.ok(!plain.body.includes('PRIVATE-WORDS'), 'a member who is neither reads no text claude or its tools printed');
+  assert.deepEqual([plain.status, plain.body.includes('PRIVATE-WORDS')], [403, false], 'a member who is neither reads nothing of it');
   assert.equal((await read('0a1b2c3e', as('admin'))).status, 404, 'a QA session that sent no log');
-  // A review session's log is read the same way, at its own name: the full text for the starter, the summary for others.
-  sessions.push({ id: '0a1b2c41', status: 'stopped', kind: 'pr', number: 7, title: 'Review', startedBy: 'starter', review: { base: 'main', log, summaryLog } });
+  // A review session's log is read the same way, at its own name: the starter reads it, others do not.
+  sessions.push({ id: '0a1b2c41', status: 'stopped', kind: 'pr', number: 7, title: 'Review', startedBy: 'starter', review: { base: 'main', log } });
   const readReview = (id, headers) => new Promise((resolve, reject) => {
     http.get({ host: '127.0.0.1', port, path: `/api/sessions/${id}/review-log`, headers: { host: `localhost:${port}`, ...headers } }, (res) => {
       let body = '';
       res.on('data', (c) => { body += c; });
-      res.on('end', () => resolve({ status: res.statusCode, tier: res.headers['x-qa-log-tier'], body }));
+      res.on('end', () => resolve({ status: res.statusCode, body }));
     }).on('error', reject);
   });
-  assert.deepEqual([(await readReview('0a1b2c41', as('starter'))).tier, (await readReview('0a1b2c41', as('starter'))).body], ['full', log]);
+  assert.equal((await readReview('0a1b2c41', as('starter'))).body, log);
   const plainReview = await readReview('0a1b2c41', as('plain'));
-  assert.deepEqual([plainReview.tier, plainReview.body], ['summary', summaryLog]);
+  assert.deepEqual([plainReview.status, plainReview.body.includes('PRIVATE-WORDS')], [403, false]);
   assert.equal((await readReview('0a1b2c3d', as('admin'))).status, 404, 'a QA session is not read at the review name');
   assert.equal((await read('0a1b2c3f', as('admin'))).status, 404, 'a session that is not QA');
   const hidden = await read('0a1b2c40', as('plain'));

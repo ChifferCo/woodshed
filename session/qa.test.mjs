@@ -6,7 +6,6 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { isolatedEnv } from '../test/isolatedEnv.mjs';
-import { summaryProblem } from '../console/qaSummary.mjs';
 
 const HERE = import.meta.dirname;
 const QA_SH = path.join(HERE, 'qa.sh');
@@ -82,7 +81,7 @@ async function runQa(t, { skip = false, app = 'running', noReport = false, leak 
         return;
       }
       if (req.url.startsWith('/qa-log')) {
-        logs.push({ tier: new URL(req.url, 'http://x').searchParams.get('tier'), authorization: req.headers.authorization, type: req.headers['content-type'], text: body.toString('utf8'), reports: reports.length });
+        logs.push({ authorization: req.headers.authorization, type: req.headers['content-type'], text: body.toString('utf8'), reports: reports.length });
         res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
         return;
       }
@@ -151,14 +150,16 @@ test('an app that fails to start is not covered, and says so', async (t) => {
 });
 
 test('the run log reaches the console after each pass and with the report, and says how the passes ended', async (t) => {
-  let { logs } = await runQa(t);
-  assert.equal(logs.length, 9, 'a summary before the plan, then a summary and a full log after the plan, as the tests begin, after the tests, and as the run finishes');
-  logs = logs.filter((l) => l.tier === 'full');
+  const { logs } = await runQa(t);
+  assert.equal(logs.length, 5, 'before the plan, after the plan, as the tests begin, after the tests, and as the run finishes');
   assert.deepEqual([logs[0].authorization, logs[0].type], ['Bearer tok', 'text/plain']);
-  assert.deepEqual(logs.map((l) => l.reports), [0, 0, 0, 0], 'each before the report');
-  assert.match(logs[1].text, /Test pass started; if the run is stopped now/);
+  assert.deepEqual(logs.map((l) => l.reports), [0, 0, 0, 0, 0], 'each before the report');
+  assert.match(logs[0].text, /Planning the tests[\s\S]*## plan\nStarted; its outcome is not known yet\./, 'a run stopped while its planner works still says so');
+  assert.match(logs[0].text, /model check for secrets has not run on this log yet/, 'a checkpoint says it was not screened');
+  assert.match(logs[2].text, /Test pass started; if the run is stopped now/);
   assert.match(logs[3].text, /## steps[\s\S]*Planning the tests[\s\S]*Running the tests/);
   assert.match(logs[3].text, /## plan\nEnded: finished/);
+  assert.doesNotMatch(logs[3].text, /has not run on this log yet/, 'a pass\'s end is screened');
 });
 
 test('a test pass that runs out of turns with no report says so in the verdict and the log', async (t) => {
@@ -188,33 +189,4 @@ test('the model\'s secret screen blanks the lines it names, and a screen that ca
   assert.match(second.logs.at(-1).text, /\[line removed: the secret screen found a secret in it\]/);
   const failed = await runQa(t, { screen: 'fail' });
   assert.match(failed.logs.at(-1).text, /model check for secrets did not run/);
-});
-
-test('the summary tier never carries what a pass printed, even when the secret screen misses it, while the full log does', async (t) => {
-  const { logs } = await runQa(t, { opaque: true, screen: 'NONE' });
-  const summary = logs.filter((l) => l.tier === 'summary');
-  const full = logs.filter((l) => l.tier === 'full');
-  assert.ok(summary.length > 0 && full.length > 0);
-  for (const l of summary) assert.doesNotMatch(l.text, /zzOpaque7788/);
-  assert.match(full.at(-1).text, /zzOpaque7788/, 'the screen missed it: only the full log, for admins and the starter, has it');
-  const failed = await runQa(t, { opaque: true, screen: 'fail' });
-  for (const l of failed.logs.filter((x) => x.tier === 'summary')) assert.doesNotMatch(l.text, /zzOpaque7788/, 'a screen that cannot run leaves the summary safe');
-});
-
-test('every summary the script sends is one the console accepts, in each kind of run', async (t) => {
-  for (const options of [{}, { skip: true }, { noReport: true }, { app: 'failed' }, { opaque: true, leak: true }, { pin: true }, { notes: 'docs/qa-notes.md' }]) {
-    const { logs } = await runQa(t, options);
-    const summaries = logs.filter((l) => l.tier === 'summary');
-    assert.ok(summaries.length > 0);
-    for (const l of summaries) assert.equal(summaryProblem(l.text, { number: 7, base: 'stacked-base' }), null, `${JSON.stringify(options)}: ${l.text}`);
-  }
-});
-
-test('a run stopped while its planner works has left a summary that says the plan\'s outcome is not known', async (t) => {
-  const { logs } = await runQa(t);
-  const first = logs[0];
-  assert.equal(first.tier, 'summary');
-  assert.match(first.text, /Planning the tests[\s\S]*## plan\nStarted; its outcome is not known yet\./);
-  assert.equal(summaryProblem(first.text, { number: 7, base: 'stacked-base' }), null);
-  assert.equal(first.reports, 0);
 });

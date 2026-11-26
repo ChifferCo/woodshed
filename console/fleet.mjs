@@ -2542,25 +2542,22 @@ export function createFleet({
 
   /**
    * A QA run's log (POST /qa-log): how each of its claude passes ended and the steps the run took, kept on the session
-   * for the console's page to show (GET /api/sessions/<id>/qa-log) whether or not the run ever got to its report.
+   * for the console's page to show (GET /api/sessions/<id>/qa-log) whether or not the run ever got to its report. It holds
+   * what claude and its tools printed, so only an admin or the person who started the run reads it.
    * @param {object} session
    * @param {string} text
-   * @param {'summary'|'full'} [tier]
    */
-  function qaLog(session, text, tier = 'full') {
-    // The summary holds counts and fixed words only: whoever may open the session reads it. The full log holds what claude
-    // and its tools printed, which only an admin or the person who started the run reads (GET /api/sessions/<id>/qa-log).
-    update(session, { qa: { ...session.qa, [tier === 'summary' ? 'summaryLog' : 'log']: text } });
-    console.log('fleet: QA run log kept', { id: session.id, number: session.number, tier, bytes: Buffer.byteLength(text) });
+  function qaLog(session, text) {
+    update(session, { qa: { ...session.qa, log: text } });
+    console.log('fleet: QA run log kept', { id: session.id, number: session.number, bytes: Buffer.byteLength(text) });
   }
 
   /**
-   * A review run's log (POST /review-log), kept as a QA run's is (qaLog): a summary of counts and fixed words for whoever may
-   * open the session, and the full log for an admin and whoever started it.
+   * A review run's log (POST /review-log), kept and read as a QA run's is (qaLog).
    */
-  function reviewLog(session, text, tier = 'full') {
-    update(session, { review: { ...session.review, [tier === 'summary' ? 'summaryLog' : 'log']: text } });
-    console.log('fleet: review run log kept', { id: session.id, number: session.number, tier, bytes: Buffer.byteLength(text) });
+  function reviewLog(session, text) {
+    update(session, { review: { ...session.review, log: text } });
+    console.log('fleet: review run log kept', { id: session.id, number: session.number, bytes: Buffer.byteLength(text) });
   }
 
   /**
