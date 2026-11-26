@@ -624,6 +624,9 @@ ${DARK_PALETTE}
     /* The AI reviews tab: one box per review Claude Code or Codex posted, its
        parts and its findings, each with the follow-ups asked about it. */
     .aiintro { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 0 0 0.9rem; max-width: var(--prose-measure); }
+    .aibox .saidhead { flex-wrap: wrap; row-gap: 0.2rem; }
+    .aibox .saidhead :is(.verdictword, .aitag, .when, a) { white-space: nowrap; }
+    .aibox .saidhead > a { margin-left: auto; }
     .aitag {
       font: 600 9.5px/1.6 ui-monospace, monospace; letter-spacing: 0.04em; color: var(--muted);
       border: 1px solid var(--rule); border-radius: 3px; padding: 0 0.3rem; background: var(--panel);
@@ -1262,6 +1265,7 @@ ${DARK_PALETTE}
     .flash {
       background: var(--add-bg); color: var(--add); border-left: 3px solid var(--add);
       padding: 0.7rem 0.85rem; border-radius: 4px; margin-bottom: 1.25rem; font-size: 14px;
+      overflow-wrap: anywhere;
     }
     /* The card no longer clips, so the last child rounds its own bottom
        corners — without this the final diff row's --add-bg/--del-bg squares
@@ -4062,7 +4066,6 @@ ${DARK_PALETTE}
       var n = review.findings.length;
       head.appendChild(el('span', 'aitag', n + (n === 1 ? ' finding' : ' findings')));
       if (review.at) head.appendChild(el('span', 'when', fmtWhen(review.at)));
-      head.appendChild(el('span', 'grow'));
       if (review.url) head.appendChild(openOnGitHub(review.url, 'Open on GitHub'));
       foldable(head, review.id, open);
       box.appendChild(head);

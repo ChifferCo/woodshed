@@ -14,6 +14,9 @@
  .tag{font:600 9.5px/1.6 "Red Hat Mono",monospace;color:var(--meta);border:1px solid var(--line-soft);border-radius:3px;padding:0 5px;background:var(--ground)}
  .tag.old{color:var(--amber-ink);border-color:var(--amber-ink)}
  .grow{flex:1}.link{color:var(--slate);font-weight:500}
+ .review .head{flex-wrap:wrap;row-gap:3px}
+ .review .head :is(.verdict,.tag,.link){white-space:nowrap}
+ .review .head .link{margin-left:auto}
  .part{padding:9px 11px 3px;font-size:13.5px;line-height:1.55}
  .part+.part{border-top:1px dashed var(--line-soft)}
  .pwho{display:flex;gap:6px;align-items:center;font-weight:600;font-size:12px;margin-bottom:4px}
@@ -46,8 +49,8 @@
   <div class="title">3 of 3 test cases passed</div><div class="more">▸ Details</div></div>
 </div>
 <p class="intro">What Claude Code and Codex said about this pull request, newest first. Ask a follow-up on any finding, or on a review as a whole: the session’s agent checks the point against the code and answers here.</p>
-<div class="box">
- <div class="head"><span class="caret">▾</span><span class="who">Claude Code and Codex</span><span class="verdict bad">requests changes</span><span class="tag">latest commit</span><span class="tag">2 findings</span><span class="grow"></span><span class="link">Open on GitHub</span></div>
+<div class="box review">
+ <div class="head"><span class="caret">▾</span><span class="who">Claude Code and Codex</span><span class="verdict bad">requests changes</span><span class="tag">latest commit</span><span class="tag">2 findings</span><span class="link">Open on GitHub</span></div>
  <div class="part"><div class="pwho">Claude Code <span class="verdict good">approves</span></div><p>The retry policy is small and tested.</p></div>
  <div class="part"><div class="pwho">Codex <span class="verdict bad">requests changes</span></div><p>Nothing caps the total time a delivery can take.</p></div>
  <div class="finds"><h4>2 findings</h4>
@@ -62,4 +65,4 @@
    <div class="ask"><input placeholder="Ask a follow-up about this finding…"><button>Ask</button></div></div>
  </div>
 </div>
-<div class="box folded"><div class="head"><span class="caret">▸</span><span class="who">Claude Code</span><span class="verdict">comments</span><span class="tag">dismissed</span><span class="tag old">older commit 3f2c9a1</span><span class="tag">0 findings</span><span class="grow"></span><span class="link">Open on GitHub</span></div></div>
+<div class="box review folded"><div class="head"><span class="caret">▸</span><span class="who">Claude Code</span><span class="verdict">comments</span><span class="tag">dismissed</span><span class="tag old">older commit 3f2c9a1</span><span class="tag">0 findings</span><span class="link">Open on GitHub</span></div></div>
