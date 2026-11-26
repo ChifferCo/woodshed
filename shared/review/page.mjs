@@ -1104,7 +1104,7 @@ ${DARK_PALETTE}
       background: var(--sunk); border: 1px solid var(--rule);
       border-radius: 999px; padding: 0 0.42rem;
     }
-    .tabbar .right { margin-left: auto; display: flex; align-items: center; gap: 0.7rem; padding-bottom: 0.45rem; }
+    .tabbar .right { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 0.7rem; padding-bottom: 0.45rem; }
     .tally {
       font: 500 11.5px/1.6 ui-monospace, monospace; letter-spacing: 0.04em; color: var(--faint);
     }
@@ -1202,6 +1202,13 @@ ${DARK_PALETTE}
     }
     .sheet-x:hover { background: var(--sunk); color: var(--ink); filter: none; }
     .sheet-body { padding: 1rem; }
+    #conversationsSheet .sheet-body { max-height: 58vh; overflow: auto; overflow-wrap: anywhere; }
+    #conversationsList { list-style: none; padding: 0; margin: 0; }
+    #conversationsList li + li { border-top: 1px solid var(--rule); margin-top: 0.75rem; padding-top: 0.75rem; }
+    #conversationsList p { margin: 0.35rem 0; }
+    .conversation-meta { font-size: 12.5px; color: var(--muted); }
+    #conversationsStatus { margin: 0 0 0.7rem; }
+    #mergeConversations { margin-top: 0.7rem; }
     .sheet-body textarea {
       width: 100%; resize: vertical; padding: 0.55rem 0.65rem; font: inherit; font-size: 13.5px;
       line-height: 1.5; border: 1px solid var(--rule-strong); border-radius: 4px;
@@ -1632,12 +1639,27 @@ ${DARK_PALETTE}
       </div>
       <ul class="mergelist" id="mergeList"></ul>
       <div id="mergeBlock"></div>
+      <button type="button" class="quiet" id="mergeConversations">Unresolved conversations</button>
       <p class="sheet-where" id="mergeWhere"></p>
     </div>
     <div class="sheet-foot">
       <span class="grow" id="mergeErr"></span>
       <button type="button" class="quiet" id="mergeCancel">Cancel</button>
       <button type="button" class="go merge-pr" id="mergeGo" disabled>Squash and merge</button>
+    </div>
+  </dialog>
+  <dialog class="sheet" id="conversationsSheet" aria-labelledby="conversationsTitle">
+    <div class="sheet-head">
+      <b id="conversationsTitle">Unresolved conversations</b>
+      <button type="button" class="sheet-x" id="conversationsClose" aria-label="Close">&times;</button>
+    </div>
+    <div class="sheet-body">
+      <p id="conversationsStatus" role="status"></p>
+      <ul id="conversationsList"></ul>
+    </div>
+    <div class="sheet-foot">
+      <span class="grow" id="conversationsError" role="alert"></span>
+      <button type="button" class="go" id="resolveConversations" disabled>Resolve all</button>
     </div>
   </dialog>
   <div class="layout" id="layout">
@@ -2300,6 +2322,12 @@ ${DARK_PALETTE}
         submit.addEventListener('click', openSubmitSheet);
         var merge = mergeControl();
         if (merge && merge.tagName === 'BUTTON') submit.classList.add('quiet');
+        if (state.livePr.state === 'open' || state.livePr.state === 'draft') {
+          var conversations = el('button', 'submit-review quiet', 'Unresolved conversations');
+          conversations.type = 'button';
+          conversations.addEventListener('click', openConversations);
+          right.appendChild(conversations);
+        }
         right.appendChild(submit);
         if (merge) right.appendChild(merge);
       }
@@ -2574,6 +2602,88 @@ ${DARK_PALETTE}
       return hint;
     }
 
+    function openConversations() {
+      var sheet = document.getElementById('conversationsSheet');
+      var status = document.getElementById('conversationsStatus');
+      var problem = document.getElementById('conversationsError');
+      var go = document.getElementById('resolveConversations');
+      var close = document.getElementById('conversationsClose');
+      var list = document.getElementById('conversationsList');
+      var session = state.session;
+      var route = '/reviews/' + session + '/conversations';
+      var busy = false;
+
+      function closeSheet() { sheet.close(); }
+      close.onclick = closeSheet;
+      sheet.oncancel = function (event) { if (busy) event.preventDefault(); };
+      problem.textContent = '';
+      sheet.showModal();
+      load();
+
+      async function load() {
+        go.disabled = true;
+        go.textContent = 'Resolve all';
+        list.replaceChildren();
+        status.textContent = 'Reading conversations from GitHub…';
+        try {
+          var got = await api('GET', route);
+          if (!sheet.open || close.onclick !== closeSheet || state.session !== session) return;
+          var threads = got.threads;
+          var ids = threads.filter(function (t) { return t.canResolve; }).map(function (t) { return t.id; });
+          status.textContent = threads.length
+            ? threads.length + ' unresolved' + (ids.length < threads.length ? ' · ' + ids.length + ' you can resolve' : '')
+            : 'No unresolved conversations.';
+          threads.forEach(function (thread) {
+            var item = el('li');
+            var location = thread.path + (thread.line == null ? '' : ':' + thread.line);
+            var href = webUrl(thread.url);
+            var label = el(href ? 'a' : 'b', null, location);
+            if (href) {
+              label.href = href;
+              label.target = '_blank';
+              label.rel = 'noopener noreferrer';
+            }
+            item.appendChild(label);
+            item.appendChild(el('p', 'conversation-meta', thread.author
+              + (thread.outdated ? ' · Outdated' : '')
+              + (thread.canResolve ? '' : ' · You can’t resolve this conversation')));
+            var body = el('div', 'md');
+            renderMarkdown(body, thread.body || '');
+            item.appendChild(body);
+            list.appendChild(item);
+          });
+          go.disabled = !ids.length;
+          if (ids.length && ids.length < threads.length) go.textContent = 'Resolve ' + ids.length + ' of ' + threads.length;
+          go.onclick = function () { resolve(ids); };
+        } catch (err) {
+          if (!sheet.open || close.onclick !== closeSheet || state.session !== session) return;
+          status.textContent = '';
+          problem.textContent = err.message;
+        }
+      }
+
+      async function resolve(ids) {
+        if (busy || session !== state.session) return;
+        busy = true;
+        close.disabled = go.disabled = true;
+        go.textContent = 'Resolving…';
+        problem.textContent = '';
+        try {
+          await api('POST', route, { ids: ids });
+        } catch (err) {
+          problem.textContent = err.message;
+        }
+        // GitHub can apply some resolutions even when the request reports an error.
+        // Read the remaining conversations and current merge rules after every attempt.
+        await load();
+        busy = false;
+        close.disabled = false;
+        if (session !== state.session) return;
+        loadDraft().then(render).catch(function ignore() {});
+        if (document.getElementById('mergeSheet').open) readMergeSheet();
+      }
+    }
+
     function openMergeSheet() {
       var sheet = document.getElementById('mergeSheet');
       var go = document.getElementById('mergeGo');
@@ -2586,8 +2696,16 @@ ${DARK_PALETTE}
       list.replaceChildren(mergeItem('wait', 'Asking GitHub where this pull request stands\\u2026'));
       go.disabled = true;
       sheet.showModal();
+      readMergeSheet();
+    }
+
+    function readMergeSheet() {
+      var go = document.getElementById('mergeGo');
+      var list = document.getElementById('mergeList');
+      go.disabled = true;
       api('GET', '/reviews/' + state.session + '/merge')
         .then(function read(got) {
+          document.getElementById('mergeErr').textContent = '';
           describeMergeWay(got.readiness);
           renderMergeReadiness(got);
           go.disabled = !!got.blocker;
@@ -2647,6 +2765,7 @@ ${DARK_PALETTE}
       if (r.mergeState === 'DIRTY') list.appendChild(mergeItem('no', 'Conflicts with ' + r.baseRef));
       else if (r.mergeState === 'UNKNOWN') list.appendChild(mergeItem('wait', 'GitHub is still checking for conflicts with ' + r.baseRef));
       else list.appendChild(mergeItem('ok', 'No conflicts with ' + r.baseRef));
+      document.getElementById('mergeBlock').replaceChildren();
       if (got.blocker) showMergeBlock(got.blocker);
     }
 
@@ -6394,6 +6513,7 @@ ${DARK_PALETTE}
     document.getElementById('sheetClose').addEventListener('click', function close() {
       document.getElementById('submitSheet').close();
     });
+    document.getElementById('mergeConversations').addEventListener('click', openConversations);
     document.getElementById('mergeGo').addEventListener('click', mergePullRequest);
     document.getElementById('mergeCancel').addEventListener('click', function cancel() {
       document.getElementById('mergeSheet').close();

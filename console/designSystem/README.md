@@ -351,6 +351,10 @@ spinner, and opening one keeps the keyboard focus on it. The reader asks too: an
 for a follow-up, and the tree with one for a question of their own, each the ask panel's field and a quiet **Ask**
 button, never orange. A question they asked says "you asked" in `meta`.
 
+**Unresolved conversations** is a quiet Review toolbar and merge-sheet action. In the existing scrollable sheet,
+each thread shows its file, author and opening comment, with outdated threads labeled. The footer holds the primary
+**Resolve all** action and the result stays in the sheet.
+
 Its **AI reviews** tab (`components/AiReviews`) shows what Claude Code and Codex posted on the pull request, newest
 first, each a Discussion `saidbox` whose head is a keyboard disclosure, with each finding as a card and the follow-ups
 asked about it under it. A resolved or outdated finding is dashed and labelled, never faded, so its text keeps 4.5:1.
