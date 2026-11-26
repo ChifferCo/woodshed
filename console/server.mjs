@@ -125,8 +125,11 @@
 //   POST /api/sessions/<id>/delete  a shared session's conversation and databases, deleted now (a running one is stopped first)
 //   POST /api/sessions/<id>/remove  a shared session already deleted, off the list for everyone
 //   Admins only (members.mjs), with 403 for anyone else: /api/people*, /api/secrets*, /api/webhook*,
-//   /api/console-settings*, the API behind People, Secrets & webhooks, Webhook events and Console settings.
+//   /api/console-settings*, /api/analytics, the API behind People, Secrets & webhooks, Webhook events, Console settings
+//   and Analytics.
 //   GET  /api/webhook-events     what the console did with each queued webhook, and which sources are switched off
+//   GET  /api/analytics?days=7|30|90   the Analytics page: sessions started, pull requests through Woodshed and not, by
+//                                person, time to merge and merge risk (analytics.mjs)
 //   GET  /api/secrets            each secret's state (never a value) and the GitHub App's webhook settings
 //   GET/POST /api/secrets-manager  where this console keeps its secrets: {"kind": "local"|"aws", "prefix"}. Only where the
 //                                local provider has no WOODSHED_LOCAL_SECRETS_DIR (providers/local/secretSlot.mjs)
@@ -256,6 +259,7 @@ import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { QA_POSTER_RE, QA_PUBLIC_VIDEO_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
 import { CONNECTION_PATH } from './dbTunnel.mjs';
 import { checkGh } from './github.mjs';
+import { WINDOWS } from './analytics.mjs';
 import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
 import agentsRegistry from '../shared/agents.cjs';
 import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetup.mjs';
@@ -296,7 +300,7 @@ const staticPath = (file) => STATIC_ELSEWHERE[file] ?? path.join(PUBLIC_DIR, fil
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
 // The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
 export const MAX_MESSAGE_CHARS = 8000;
-const SETTINGS_SCRIPTS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+const SETTINGS_SCRIPTS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js', 'analytics.js'];
 const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminalPaste.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
@@ -329,6 +333,7 @@ const STATIC_FILES = {
   'attention.mjs': 'text/javascript; charset=utf-8',
   'session.js': 'text/javascript; charset=utf-8',
   'events.js': 'text/javascript; charset=utf-8',
+  'analytics.js': 'text/javascript; charset=utf-8',
   'secrets.js': 'text/javascript; charset=utf-8',
   'webhookSetup.js': 'text/javascript; charset=utf-8',
   'slackSetup.js': 'text/javascript; charset=utf-8',
@@ -387,7 +392,7 @@ const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 // A repo's settings page: its project's name, as Console settings' Repos card links it.
 const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
 // The console's own settings pages, served as one page with /settings (SETTINGS_SCRIPTS).
-const SETTINGS_PAGE_RE = new RegExp(`^/(?:events|secrets|people|console-settings)$|${REPO_SETTINGS_PAGE_RE.source}`);
+const SETTINGS_PAGE_RE = new RegExp(`^/(?:events|secrets|people|console-settings|analytics)$|${REPO_SETTINGS_PAGE_RE.source}`);
 const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove|reviews))?$/;
 // An agent that runs on its owner's own sign-in alone (shared/agents.cjs, OWN_SIGN_IN_AGENTS): any other id is a 404.
 const MY_AGENT_AUTH_RE = /^\/api\/my\/agent-auth\/([a-z]+)(?:\/(remove|reviews))?$/;
@@ -454,7 +459,7 @@ const REVIEWER_SETUP_PATH = '/api/setup/github/reviewer';
 const WEBHOOK_RE = /^\/api\/webhook\/(rotate|apply|url)$/;
 // The calls behind People, Secrets & webhooks, Webhook events and Console settings. Their pages load for anyone signed
 // in, and say what these calls answer.
-const ADMIN_API_RE = /^\/api\/(?:people|secrets|secrets-manager|webhook|console-settings|setup)(?:\/|$)|^\/api\/webhook-events$/;
+const ADMIN_API_RE = /^\/api\/(?:people|secrets|secrets-manager|webhook|console-settings|setup|analytics)(?:\/|$)|^\/api\/webhook-events$/;
 const APP_ID_RE = /^[0-9a-f]{8}$/;
 const APP_AUTH_PATH = '/__woodshed/auth';
 const APP_SHARE_PATH = '/__woodshed/share';
@@ -950,7 +955,7 @@ export function createHandler({
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
-  cli = null, reviewReadiness = null,
+  cli = null, reviewReadiness = null, analytics = null,
 }) {
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
@@ -1022,6 +1027,18 @@ export function createHandler({
     if (trusted) return user?.role === 'owner';
     const login = user?.login;
     return !auth?.enabled() || !login || !members || !members.hasAdmin() || members.isAdmin(login);
+  }
+
+  // The Analytics page's report (analytics.mjs), with each person's display name. Admins only (ADMIN_API_RE).
+  // Only the repos the viewer may open themselves count (projectAccess.mjs, visible): being an admin, or a hosting
+  // proxy's owner, does not open a private repo they cannot read on GitHub.
+  async function analyticsReply(res, daysAsked, login) {
+    if (!analytics) return reply(res, 404, { error: 'this console keeps no analytics' });
+    const days = WINDOWS.includes(Number(daysAsked)) ? Number(daysAsked) : 30;
+    const repos = projectAccess ? (await (projectAccess.visible ?? projectAccess.startable)(login)).map((p) => p.repo) : null;
+    const report = await analytics.report({ days, repos });
+    const logins = [...report.people.map((p) => p.login), ...report.pulls.recent.map((p) => p.login), ...report.sessions.recent.map((s) => s.login)];
+    return reply(res, 200, { ...report, windows: WINDOWS, names: namesFor([...new Set(logins.filter(Boolean))]) });
   }
 
   function cliRepoRole(login) {
@@ -3194,6 +3211,7 @@ export function createHandler({
     if (pathname === `${SLACK_SETUP_PATH}/channels`) return slackChannelsReply(res, { query: url.searchParams.get('q') });
     if (pathname === `${PROJECTS_PATH}/repos`) return repoChoicesReply(res);
     if (pathname === '/api/people') return peopleReply(res);
+    if (pathname === '/api/analytics') return analyticsReply(res, url.searchParams.get('days'), user.login);
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
     if (pathname === '/api/sessions') return reply(res, 200, sessionsBody(user.login));
     if (pathname === '/api/my') {

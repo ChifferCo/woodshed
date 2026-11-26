@@ -1,0 +1,26 @@
+<!-- @dsCard group="Cards" height=250 subtitle="A count over a window, under a group's figures: one series, or Woodshed's on the rest" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@300..900&family=Red+Hat+Mono:wght@300..700&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font:15px/1.5 "Red Hat Display",system-ui,sans-serif}
+ .box{border:1px solid var(--line);border-radius:8px;max-width:760px;padding:12px 14px}
+ .head{display:flex;align-items:baseline;gap:16px;margin-bottom:8px}
+ .l{font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--label)}
+ .leg{display:inline-flex;gap:14px;font-size:12.5px;color:var(--sub)}
+ .k{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+ .max,.axis{font:11.5px "Red Hat Mono",ui-monospace,monospace;color:var(--meta)}
+ .max{margin-left:auto}
+ .bars{display:flex;align-items:flex-end;gap:6px;height:120px;border-bottom:1px solid var(--line)}
+ .bar{flex:1;display:flex;flex-direction:column;gap:2px}
+ .w{background:var(--slate);border-radius:2px}.o{background:var(--idle-dot);border-radius:2px}
+ .axis{display:flex;justify-content:space-between;margin-top:4px}
+</style>
+<div class="box">
+ <div class="head"><span class="l">Pull requests merged</span><span class="leg"><span><i class="k w"></i>Through Woodshed</span><span><i class="k o"></i>Without</span></span><span class="max">max 22</span></div>
+ <div class="bars">
+  <div class="bar" title="From Oct 27: 6 through Woodshed, 12 without"><div class="o" style="height:65px"></div><div class="w" style="height:32px"></div></div>
+  <div class="bar" title="From Nov 3: 9 through Woodshed, 13 without"><div class="o" style="height:70px"></div><div class="w" style="height:48px"></div></div>
+  <div class="bar" title="From Nov 11: 12 through Woodshed, 8 without"><div class="o" style="height:43px"></div><div class="w" style="height:65px"></div></div>
+  <div class="bar" title="From Nov 19: 8 through Woodshed, 12 without"><div class="o" style="height:65px"></div><div class="w" style="height:43px"></div></div>
+ </div>
+ <div class="axis"><span>Oct 27</span><span>today</span></div>
+</div>

@@ -30,6 +30,7 @@ import { fileURLToPath } from 'node:url';
 import { currentName, envValue, isSettingName } from '../../shared/envNames.mjs';
 import { startDevAppsSession } from './devAppsSession.mjs';
 import { startDevChatSession } from './devChatSession.mjs';
+import { devAnalytics } from './devAnalytics.mjs';
 import { writeDevGh } from './devGh.mjs';
 import { enableReview } from '../../cli/projectReview.mjs';
 import { startDevReview } from './devReviewSession.mjs';
@@ -499,7 +500,10 @@ if (execPort) {
     endpoint: { host: '127.0.0.1', statusPort: execPort, termPort: execPort },
   }));
 }
-fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null, mcpServers, ...people }));
+// The Analytics page's made-up history: sessions taken off the list over 90 days, and the pull requests GitHub's search
+// answers with (devAnalytics.mjs).
+const analytics = devAnalytics(Date.now());
+fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null, mcpServers, usageKept: analytics.usageKept, ...people }));
 
 // The shell's own console settings, under either name (shared/envNames.mjs: a GitHub App, required sign-in, the ECS
 // launcher), would turn this back into the real console, so none of them are passed on, but hosted mode's
@@ -613,6 +617,7 @@ const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'), {
     ...(reviewOn ? { 'example-org/example-repo': process.env.DEV_CONSOLE_REVIEW_ON === 'default' ? 'version: 1\n' : REVIEW_ON_FILE } : {}),
   },
   mine: reviewOn ? { repo: 'example-org/example-repo', login: 'local' } : null,
+  recentPulls: analytics.pulls,
 });
 
 // A local secret store, as the local provider keeps one.

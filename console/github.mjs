@@ -103,6 +103,39 @@ const OPEN_PULLS_QUERY = `query OpenPulls($owner: String!, $name: String!) { rep
   }
 } }`;
 
+// The analytics page's read of a repo's pull requests opened since a day (analytics.mjs): a search, 100 at a time.
+// `$check` is the project file's merge risk check: its title on the head commit says the tier (`Low: …`). Else the
+// review's label says it (`merge risk: high`, fleet.mjs).
+const RECENT_PULLS_PAGES = 5;
+const recentPullsQuery = (withCheck) => `query RecentPulls($q: String!, $after: String${withCheck ? ', $check: String!' : ''}) {
+  search(type: ISSUE, query: $q, first: 100, after: $after) {
+    issueCount pageInfo { hasNextPage endCursor }
+    nodes { ... on PullRequest {
+      number url title createdAt mergedAt closedAt state isDraft additions deletions headRefName headRepository { nameWithOwner } author { login __typename } labels(first: 20) { nodes { name } }
+      ${withCheck ? 'commits(last: 1) { nodes { commit { checkSuites(first: 20) { nodes { checkRuns(first: 3, filterBy: {checkName: $check}) { nodes { title } } } } } } }' : ''}
+    } }
+  } }`;
+
+/**
+ * One pull request of the search, as analytics.mjs reads it.
+ * @returns {{number: number, url: string, title: string, author: string|null, bot: boolean, createdAt: string,
+ *   mergedAt: string|null, closedAt: string|null, state: 'open'|'draft'|'merged'|'closed', additions: number,
+ *   deletions: number, branch: string, headRepo: string|null, tier: 'Low'|'Medium'|'High'|null}}
+ */
+export function recentPullRow(node) {
+  const titles = (node.commits?.nodes?.[0]?.commit?.checkSuites?.nodes ?? []).flatMap((suite) => suite?.checkRuns?.nodes ?? []).map((run) => run?.title ?? '');
+  const labelled = (node.labels?.nodes ?? []).map((l) => /^merge risk: (low|medium|high)$/i.exec(l?.name ?? '')?.[1]).find(Boolean);
+  const tier = titles.map((t) => /^(Low|Medium|High):/.exec(t)?.[1]).find(Boolean)
+    ?? (labelled ? labelled[0].toUpperCase() + labelled.slice(1).toLowerCase() : null);
+  const state = node.state === 'MERGED' ? 'merged' : node.state === 'CLOSED' ? 'closed' : node.isDraft ? 'draft' : 'open';
+  return {
+    number: node.number, url: node.url, title: String(node.title ?? '').slice(0, 300), author: node.author?.login ?? null,
+    bot: node.author?.__typename === 'Bot', createdAt: node.createdAt, mergedAt: node.mergedAt ?? null, closedAt: node.closedAt ?? null,
+    state, additions: Number(node.additions) || 0, deletions: Number(node.deletions) || 0, branch: node.headRefName ?? '',
+    headRepo: node.headRepository?.nameWithOwner ?? null, tier,
+  };
+}
+
 const ISSUE_PROJECT_ITEMS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { issue(number: $number) { projectItems(first: 20) { nodes {
     id
@@ -390,6 +423,28 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
       return [...mine.map((i) => ({ i, why: 'yours' })), ...review.map((i) => ({ i, why: 'review' }))]
         .filter(({ i }) => i?.number && !seen.has(i.number) && seen.add(i.number))
         .map(({ i, why }) => pullRow(i, why));
+    },
+    /**
+     * The repo's pull requests opened on or after `since` (YYYY-MM-DD), newest first, at most 500 (recentPullRow).
+     * @param {{since: string, check?: string|null}} opts  `check`: the merge risk check's name, whose title gives a tier
+     * @returns {Promise<{pulls: ReturnType<typeof recentPullRow>[], total: number, truncated: boolean}>}
+     */
+    async recentPulls({ since, check = null }) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(since))) throw new Error('since must be a date');
+      const query = recentPullsQuery(Boolean(check));
+      const q = `repo:${currentRepo()} is:pr created:>=${since} sort:created-desc`;
+      const pulls = [];
+      let after = null;
+      let total = 0;
+      for (let page = 0; page < RECENT_PULLS_PAGES; page++) {
+        const answer = await ghApi(['graphql', '-f', `query=${query}`, '-f', `q=${q}`, ...(after ? ['-f', `after=${after}`] : []), ...(check ? ['-f', `check=${check}`] : [])]);
+        const found = answer?.data?.search;
+        total = found?.issueCount ?? total;
+        pulls.push(...(found?.nodes ?? []).filter((n) => n?.number && n.url).map(recentPullRow));
+        if (!found?.pageInfo?.hasNextPage) return { pulls, total, truncated: false };
+        after = found.pageInfo.endCursor;
+      }
+      return { pulls, total, truncated: total > pulls.length };
     },
     /**
      * @returns {Promise<{pulls: {number: number, title: string, branch: string, author: string|null, draft: boolean,

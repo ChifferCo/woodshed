@@ -1426,12 +1426,26 @@ test('Resume in the background answers before the container has an address', asy
 
 test('Remove takes a private session, running or stopped, off the list with the Claude home it kept, and only its owner\'s', async () => {
   const removedHomes = [];
-  const { fleet } = setup({ homes: { async remove(name) { removedHomes.push(name); } } });
+  const { fleet, store } = setup({ homes: { async remove(name) { removedHomes.push(name); } } });
   const mine = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
   await assert.rejects(fleet.removePrivateSession({ owner: 'mia', id: mine.id }), /no session you can open/);
   await fleet.removePrivateSession({ owner: 'joel', id: mine.id });
   assert.equal(fleet.find(mine.id), null);
   assert.deepEqual(removedHomes, [`joel/sessions/${mine.id}`]);
+  assert.deepEqual(store.state.usageKept.map((r) => [r.id, r.login, r.private, r.title]), [[mine.id, 'joel', true, null]],
+    'the Analytics page still counts it, with no title');
+
+  // A session that saw production data keeps nothing past its removal, the automatic one after its taint included.
+  const tainted = await fleet.startPrivate({ owner: 'joel', prompt: 'Read prod' });
+  tainted.taintedAt = new Date().toISOString();
+  tainted.branch = 'woodshed/what-it-saw';
+  await fleet.removePrivateSession({ owner: 'joel', id: tainted.id });
+  assert.ok(!store.state.usageKept.some((r) => r.id === tainted.id), 'no record of a tainted session');
+
+  // Remove My Woodshed takes the records of those removed one by one before, and leaves shared ones.
+  store.state.usageKept.push({ id: 'shared01', login: 'joel', private: false, createdAt: new Date().toISOString() });
+  await fleet.removePrivate('joel');
+  assert.deepEqual(store.state.usageKept.map((r) => r.id), ['shared01']);
 
 });
 
@@ -1824,6 +1838,7 @@ test('a deleted shared session leaves the list after the setting\'s days, counte
   ctx.advance(2 * 60_000);
   await ctx.fleet.tick();
   assert.deepEqual(ctx.fleet.sessions().map((s) => s.id), [kept.id], 'the deleted one goes; a kept one stays');
+  assert.deepEqual(ctx.store.state.usageKept.map((r) => r.id), [deleted.id], 'and the Analytics page keeps its record');
 });
 
 test('Remove takes a deleted shared session off the list, and refuses one that still keeps its data', async () => {
@@ -1840,6 +1855,11 @@ test('Remove takes a deleted shared session off the list, and refuses one that s
   await ctx.fleet.deleteShared(session, 'joel');
   ctx.fleet.removeShared(session, 'joel');
   assert.deepEqual(ctx.fleet.sessions().map((s) => s.id), [mine.id]);
+  const kept = ctx.store.state.usageKept.find((r) => r.id === session.id);
+  assert.deepEqual([kept?.login, kept?.private, kept?.title, kept?.kind], ['joel', false, 'x', 'work'], 'the Analytics page still counts it');
+  const { analyticsReport } = await import('./analytics.mjs');
+  const report = analyticsReport({ records: ctx.store.state.usageKept, pulls: [], days: 30, now: Date.parse(session.createdAt) + 60_000 });
+  assert.equal(report.sessions.work, 1);
 });
 
 test('a deleted session whose Claude home is still being deleted stays listed until it goes', async () => {
@@ -3432,6 +3452,7 @@ test('the merge risk is a label too, the other tiers taken off', async () => {
   const { fleet, calls } = reviewSetup();
   await fleet.reviewOnTag({ number: 7 });
   await fleet.reviewFinished(fleet.sessions()[0], { ...REVIEW_RESULT, mergeRisk: { tier: 'High', reason: 'Touches sign-in.', summary: 'HIGH' } });
+  assert.equal(fleet.sessions()[0].review.tier, 'High', 'kept on the session, for the Analytics page');
   assert.deepEqual(calls.labelsMade, [{ name: 'merge risk: high', color: 'd93f0b', description: 'Set by the AI review' }]);
   assert.deepEqual(calls.labeled, [{ number: 7, label: 'merge risk: high' }]);
   assert.deepEqual(calls.unlabeled.map((u) => u.label).sort(), ['merge risk: low', 'merge risk: medium']);

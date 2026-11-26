@@ -1,5 +1,6 @@
 // A `gh` for the dev console that answers the reads it can fake: the repo's open pull requests, for New session's
-// Work on list (github.mjs's OpenPulls query), with made-up ones; any repo's default branch, as `main`, which a start
+// Work on list (github.mjs's OpenPulls query), with made-up ones; the Analytics page's search (RecentPulls), with the
+// pull requests it is given; any repo's default branch, as `main`, which a start
 // reads (github.mjs's defaultBranch); made-up project files when it is given them; and,
 // with DEV_CONSOLE_MONGO_REPO=<owner/name>, that repo's project file as one that asks for a Mongo database, which the
 // dev console does not run (databaseGate.mjs's Needs setup card); and, with `mine`, that person's own open pull requests
@@ -29,7 +30,7 @@ const PULLS = [
  *   which repo the search finds (MINE below)
  * @returns {string} dir
  */
-export function writeDevGh(dir, { projectFiles = {}, mongoRepo = process.env.DEV_CONSOLE_MONGO_REPO || '', mine = null } = {}) {
+export function writeDevGh(dir, { projectFiles = {}, mongoRepo = process.env.DEV_CONSOLE_MONGO_REPO || '', mine = null, recentPulls = [] } = {}) {
   const now = Date.now();
   const nodes = PULLS.map(([number, title, headRefName, login, isDraft, hoursAgo]) => ({
     number, title, headRefName, isDraft, author: { login }, updatedAt: new Date(now - hoursAgo * HOUR).toISOString(),
@@ -37,6 +38,8 @@ export function writeDevGh(dir, { projectFiles = {}, mongoRepo = process.env.DEV
   const answer = JSON.stringify({ data: { repository: { pullRequests: { totalCount: nodes.length, nodes } } } });
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'open-pulls.json'), answer);
+  // The Analytics page's search (github.mjs, RecentPulls): every made-up pull request at once, for any repo and window.
+  fs.writeFileSync(path.join(dir, 'recent-pulls.json'), JSON.stringify({ data: { search: { issueCount: recentPulls.length, pageInfo: { hasNextPage: false, endCursor: null }, nodes: recentPulls } } }));
   const projectCases = Object.entries(projectFiles).map(([repo, text], i) => {
     const file = path.join(dir, `project-${i}.json`);
     fs.writeFileSync(file, JSON.stringify({ content: Buffer.from(text).toString('base64'), encoding: 'base64' }));
@@ -52,6 +55,7 @@ export function writeDevGh(dir, { projectFiles = {}, mongoRepo = process.env.DEV
 for arg in "$@"; do
   case "$arg" in
     "query=query OpenPulls"*) cat '${path.join(dir, 'open-pulls.json')}'; exit 0 ;;
+    "query=query RecentPulls"*) cat '${path.join(dir, 'recent-pulls.json')}'; exit 0 ;;
 ${projectCases}${mongoCase}${mineCases}    repos/*) if printf '%s' "$arg" | grep -Eq '^repos/[^/]+/[^/]+$'; then echo '{"default_branch":"main"}'; exit 0; fi ;;
   esac
 done

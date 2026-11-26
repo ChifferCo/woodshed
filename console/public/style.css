@@ -1413,6 +1413,37 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 .people-table .edit-row td { border-top: 0; padding-top: 0; }
 .people-table .role-head th { border-top: 1px solid var(--line-soft); padding-top: 10px; }
 .people-table .sign-ins { min-width: 160px; }
+/* The Analytics page (analytics.js): the people table's look for its tables, numbers right-aligned in mono, and its
+   trend bars (components/TrendBars): Woodshed's in slate on the others' in idle grey, a legend and tooltips saying the
+   numbers. */
+.analytics-page .set-group { max-width: none; margin-bottom: 8px; }
+.page.analytics-page:has(> .settings-side) { max-width: 1440px; }
+.analytics-table th, .analytics-table td { padding-left: 10px; padding-right: 10px; }
+.analytics-table .person, .analytics-table .link-btn { white-space: nowrap; }
+.analytics-table .num { text-align: right; white-space: nowrap; }
+.analytics-table td.num { font-family: var(--mono); font-size: 12.5px; }
+.analytics-table td.mono { white-space: nowrap; font-size: 12px; }
+.analytics-table .quiet, .analytics-page .quiet { color: var(--meta); }
+.analytics-table tr.is-picked td { background: var(--slate-tint); }
+/* meta is 4.1:1 on slate-tint: the picked row's quiet text is sub, 4.5:1 or better. */
+.analytics-table tr.is-picked .quiet { color: var(--sub); }
+.analytics-table .analytics-title { min-width: 260px; }
+.analytics-table .link-btn { padding: 0; border: 0; background: none; color: var(--slate); font: inherit; cursor: pointer; text-align: left; }
+.analytics-table .link-btn:hover { text-decoration: underline; }
+.analytics-bar { padding: 10px 14px; }
+.analytics-more { padding: 8px 14px; margin: 0; }
+.trend { padding: 12px 14px; border-top: 1px solid var(--line-soft); }
+.trend-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-bottom: 8px; }
+.trend-legend { display: inline-flex; gap: 14px; font-size: 12.5px; color: var(--sub); }
+.trend-key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.trend-max { margin-left: auto; font-size: 11.5px; color: var(--meta); }
+.trend-svg { display: block; width: 100%; height: 120px; overflow: visible; }
+.trend-bar.is-woodshed, .trend-key.is-woodshed { fill: var(--slate); background: var(--slate); }
+.trend-bar.is-other, .trend-key.is-other { fill: var(--idle-dot); background: var(--idle-dot); }
+.trend-hit { fill: transparent; }
+.trend-svg g:hover .trend-bar { opacity: 0.8; }
+.trend-base { stroke: var(--line); stroke-width: 1; }
+.trend-axis { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11.5px; color: var(--meta); }
 .sign-in-list { display: flex; flex-wrap: wrap; gap: 4px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .slack-line { display: flex; align-items: center; gap: 8px; margin-top: 2px; }

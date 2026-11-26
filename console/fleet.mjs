@@ -17,6 +17,7 @@ import { QA_RECORDING_DAYS, newRecordingSecret, opensPublicVideo, qaPublicVideoP
 import { reviewDoneComment, reviewEndedComment, reviewHeading, reviewRunningComment } from './reviewSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
+import { forgetUsage, keepUsage, usageRecord } from './analytics.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import { TAINT_MESSAGE } from './taint.mjs';
@@ -1488,6 +1489,8 @@ export function createFleet({
   }
 
   function dropRecord(session, why) {
+    // The Analytics page still counts it (analytics.mjs).
+    keepUsage(state, [usageRecord(session, projectFor(config, session))], now());
     state.sessions = state.sessions.filter((s) => s !== session);
     prCheckedAt.delete(session.id);
     store.save();
@@ -2203,7 +2206,9 @@ export function createFleet({
     if (!session || session.owner !== owner) throw shown('no session you can open with that id');
     await stopForRemoval(session, 'removed from the console');
     // Off the list before the delete is awaited, so a Resume meanwhile finds no session rather than starting one the
-    // list then drops, which tick would never watch.
+    // list then drops, which tick would never watch. The Analytics page still counts it, with no title (analytics.mjs),
+    // unless it saw production data: nothing of a tainted session's outlives it.
+    if (!session.taintedAt) keepUsage(state, [usageRecord(session, projectFor(config, session))], now());
     state.sessions = state.sessions.filter((s) => s !== session);
     store.save();
     console.log('fleet: private session removed', { id, owner });
@@ -2246,8 +2251,10 @@ export function createFleet({
     await Promise.all([...live.map((s) => stop(s, 'My Woodshed removed')), ...interrupted.map(finishInterruptedStop)]);
     await Promise.all(theirs.map(dropAttachments));
     state.sessions = state.sessions.filter((s) => s.owner !== owner);
+    // Nor does the Analytics page keep any of them, those removed one by one before included.
+    const forgotten = forgetUsage(state, owner);
     store.save();
-    console.log('fleet: private sessions removed', { owner, stopped: live.length + interrupted.length, removed: theirs.length });
+    console.log('fleet: private sessions removed', { owner, stopped: live.length + interrupted.length, removed: theirs.length, usageForgotten: forgotten });
     return { stopped: live.length + interrupted.length, removed: theirs.length };
   }
 
@@ -2942,7 +2949,7 @@ export function createFleet({
     }
     const held = hold && ours ? { sha, heading, summary, inlineComments, resolved } : null;
     // `posted`: GitHub took the verdict (or the console holds it for QA), which an ask for the same head stands on.
-    update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd, held, posted: Boolean(ours) } });
+    update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd, held, posted: Boolean(ours), tier: mergeRisk?.tier ?? null } });
     console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours, held: Boolean(held) });
     stop(session, conclusion ? `Review finished: ${conclusion}` : 'Review finished without a verdict')
       .catch((err) => console.warn('fleet: stopping a finished review session failed', { id: session.id, message: firstLine(err) }));
