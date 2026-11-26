@@ -3223,7 +3223,7 @@ work without it, not for ranking people:
   the merged ones went through Woodshed, the median time from opened to merged for each, and the merge risk of each
   kind, with a bar a week of those merged.
 - **Pull requests, more**: how many had a person review them (a user other than the author, not a pending or
-  dismissed review) and how many models reviewed each (the agents of Woodshed's own review sessions when there were
+  dismissed review; one with more than 100 reviews that shows none is "not known", not "no human") and how many models reviewed each (the agents of Woodshed's own review sessions when there were
   any, else the distinct review bots on GitHub), merge risk counted at every level (low, medium, high, not reviewed)
   for each kind, and bars of those opened each day and those merged.
 - **By repo**: pull requests for each repo, through Woodshed and without; a repo name filters the list below.
@@ -3251,7 +3251,7 @@ nothing it held outlives it, and while it is on the list it is counted with no b
 Woodshed takes every record of its person's My Woodshed sessions, those removed one by one before included; shared
 sessions they started stay, as the team's. A branch is matched only on the repo it was pushed to, so a fork's pull
 request on the same branch name is not the session's. Pull requests are read from GitHub's search, each repo at most every 5 minutes and at most its newest
-2,000 in the window: `analytics: pull requests not read` with the project and GitHub's error when a read fails, and the
+2,000 in the window (GitHub's search answers 1,000 at most, so a repo with more is read in date ranges, halved until each fits): `analytics: pull requests not read` with the project and GitHub's error when a read fails, and the
 page names the repo it left out.
 
 ## Settings

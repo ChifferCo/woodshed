@@ -1132,7 +1132,7 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.match(await getBody(port, '/static/dictation.js', as('octocat')), /W\.dictation = /);
   // The settings pages are one page: each address loads every settings page's script, so common.js moves between
   // them in place. My settings' Repo settings card draws its layers with the repo page's parts, loaded before both.
-  const SETTINGS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js', 'analytics.js'];
+  const SETTINGS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js', 'analyticsDays.js', 'analytics.js'];
   for (const page of ['/settings', '/console-settings', '/console-settings/repos/app', '/secrets', '/people', '/events']) {
     const settingsScripts = [...(await getBody(port, page, as('octocat'))).matchAll(/<script src="\/static\/([\w.]+)\?v=[0-9a-f]{12}"/g)].map((m) => m[1]);
     assert.deepEqual(settingsScripts.slice(-SETTINGS.length), SETTINGS, `${page} is the settings page`);

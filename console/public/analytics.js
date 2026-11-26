@@ -120,22 +120,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     }
     return out;
   }
-  // One bucket for each day from the window's start to now.
-  function dayBuckets() {
-    const start = Date.parse(data.since);
-    const count = days() + 1;
-    return Array.from({ length: count }, (_, i) => ({ start: new Date(start + i * 86_400_000).toISOString() }));
-  }
-  const localDay = (iso) => new Date(iso).toDateString();
-  function dayCounts(items, atOf, keyOf) {
-    const buckets = dayBuckets().map((b) => ({ start: b.start, key: localDay(b.start), a: 0, b: 0 }));
-    const byKey = new Map(buckets.map((b) => [b.key, b]));
-    for (const item of items) {
-      const bucket = byKey.get(localDay(atOf(item)));
-      if (bucket) bucket[keyOf(item)]++;
-    }
-    return buckets;
-  }
+  const dayCounts = (items, atOf, keyOf) => window.WoodshedAnalyticsDays.dayCounts(items, atOf, keyOf, data.since, data.until);
 
   // Bars over the window: a single series, or two stacked (components/TrendBars). A bar's numbers are in its tooltip and
   // the chart's label, never its colour alone. `buckets`: {start, a, b}; series name which of a and b they are.
@@ -185,12 +170,13 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
   }
 
   function stats(list) {
-    const out = { opened: list.length, merged: 0, open: 0, mergeHours: [], tiers: { Low: 0, Medium: 0, High: 0 }, human: 0, models: 0, modelled: 0, added: 0, removed: 0 };
+    const out = { opened: list.length, merged: 0, open: 0, mergeHours: [], tiers: { Low: 0, Medium: 0, High: 0 }, human: 0, humanUnknown: 0, models: 0, modelled: 0, added: 0, removed: 0 };
     for (const p of list) {
       if (p.state === 'merged') { out.merged++; if (p.mergeHours !== null) out.mergeHours.push(p.mergeHours); }
       if (p.state === 'open' || p.state === 'draft') out.open++;
       if (p.tier) out.tiers[p.tier]++;
       if (p.humanReviewers?.length) out.human++;
+      else if (p.humanUnknown) out.humanUnknown++;
       out.models += p.models?.length ?? 0;
       if (p.models?.length) out.modelled++;
       out.added += p.additions;
@@ -251,7 +237,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
         { label: 'Without Woodshed', icon: 'pr', tone: 'teal', value: n(o.opened), sub: `${n(o.merged)} merged · ${n(o.open)} open` },
         { label: 'Merged through Woodshed', icon: 'merge', tone: 'green', value: pct(mergedShare), sub: 'of all merged' },
         { label: 'Opened to merged', icon: 'clock', tone: 'amber', value: hours(median(w.mergeHours)), sub: `median through Woodshed, ${hours(median(o.mergeHours))} without` },
-        { label: 'Human reviewed', icon: 'human', tone: 'rose', value: all.opened ? pct(all.human / all.opened) : '—', sub: `${n(all.human)} of ${n(all.opened)} had a person review` },
+        { label: 'Human reviewed', icon: 'human', tone: 'rose', value: all.opened - all.humanUnknown ? pct(all.human / (all.opened - all.humanUnknown)) : '—', sub: `${n(all.human)} of ${n(all.opened - all.humanUnknown)} had a person review${all.humanUnknown ? ` · ${n(all.humanUnknown)} not known (over 100 reviews)` : ''}` },
         { label: 'Models per pull request', icon: 'model', tone: 'violet', value: all.opened ? (all.models / all.opened).toFixed(1) : '—', sub: `${n(all.modelled)} had at least one model review` },
       ]),
       h('div', { class: 'risk' },
@@ -350,8 +336,8 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     if (total <= shown[key]) return total > STEP ? h('p', { class: 'foot analytics-more' }, `All ${n(total)} shown.`) : null;
     return h('div', { class: 'analytics-more-bar' },
       h('span', { class: 'foot' }, `Showing ${n(shown[key])} of ${n(total)}.`),
-      h('button', { type: 'button', class: 'btn-quiet', onclick: () => { shown[key] += STEP; render(); } }, icon('plus'), `Show ${Math.min(STEP, total - shown[key])} more`),
-      h('button', { type: 'button', class: 'btn-quiet', onclick: () => { shown[key] = total; render(); } }, icon('chevron'), `Show all ${n(total)}`));
+      h('button', { type: 'button', class: 'analytics-btn', onclick: () => { shown[key] += STEP; render(); } }, icon('plus'), `Show ${Math.min(STEP, total - shown[key])} more`),
+      h('button', { type: 'button', class: 'analytics-btn', onclick: () => { shown[key] = total; render(); } }, icon('chevron'), `Show all ${n(total)}`));
   }
 
   function agentTag(id) {
@@ -381,7 +367,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     if (show === 'woodshed' || show === 'other') return p.via === show;
     if (show === 'risky') return p.tier === 'Medium' || p.tier === 'High';
     if (show === 'human') return p.humanReviewers?.length > 0;
-    if (show === 'nohuman') return !p.humanReviewers?.length;
+    if (show === 'nohuman') return !p.humanReviewers?.length && !p.humanUnknown;
     return true;
   }
   const STATE_PILL = { open: 'is-work', merged: 'is-ok', draft: '', closed: 'is-bad' };
@@ -391,7 +377,8 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     const people = p.humanReviewers ?? [];
     return people.length
       ? h('span', { class: 'reviewers', title: `Reviewed by ${people.map((l) => `@${l}`).join(', ')}` }, icon('human', 'green'), people.length === 1 ? W.person(people[0]) : `${people.length} people`)
-      : h('span', { class: 'quiet', title: 'No person reviewed it' }, 'No human');
+      : p.humanUnknown ? h('span', { class: 'quiet', title: 'More than 100 reviews: a person may be among those not read' }, 'Not known')
+        : h('span', { class: 'quiet', title: 'No person reviewed it' }, 'No human');
   }
   function modelsOf(p) {
     const models = p.models ?? [];
@@ -423,7 +410,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
       h('div', { class: 'analytics-bar' },
         h('div', { class: 'seg', role: 'group', 'aria-label': 'Show pull requests' }, PULL_FILTERS.map((f) =>
           h('button', { type: 'button', 'aria-pressed': String(f.id === show), onclick: () => pick('pulls', f.id, 'all') }, f.label))),
-        repo && h('button', { type: 'button', class: 'btn-quiet', onclick: () => pick('repo', null, null) }, `Repo: ${repo} ✕`)),
+        repo && h('button', { type: 'button', class: 'analytics-btn', onclick: () => pick('repo', null, null) }, `Repo: ${repo} ✕`)),
       list.length ? h('div', { class: 'table-scroll' }, h('table', { class: 'people-table analytics-table' },
         h('thead', null, h('tr', null,
           ['Opened', 'Pull request', 'Who', 'Through', 'State'].map((t) => h('th', { scope: 'col' }, t)),

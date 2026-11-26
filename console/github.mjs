@@ -107,7 +107,10 @@ const OPEN_PULLS_QUERY = `query OpenPulls($owner: String!, $name: String!) { rep
 // A review in a session labels each one with its merge risk (`merge risk: high`, fleet.mjs). The check run is asked
 // apart (checkTiers), for those with no label only: asking every pull request's head commit's check suites in the
 // search made GitHub answer 502 on a busy repo (measured on this one, 155 pull requests in a week).
-const RECENT_PULLS_PAGES = 20;
+// One search answers at most 1,000 results (10 pages of 100); a window with more is read in date ranges, up to 2,000 in all.
+const RECENT_PULLS_PAGES = 10;
+const RECENT_PULLS_SEARCH_MAX = 1000;
+const RECENT_PULLS_MAX = 2000;
 // checkTiers: a page of 25 with check suites took GitHub about 4 s on that repo, and 100 at a time failed.
 const CHECK_TIERS_PAGE = 25;
 const CHECK_RUNS_FIELDS = 'commits(last: 1) { nodes { commit { checkSuites(first: 20) { nodes { checkRuns(first: 3, filterBy: {checkName: $check}) { nodes { title } } } } } } }';
@@ -116,7 +119,7 @@ const RECENT_PULLS_QUERY = `query RecentPulls($q: String!, $after: String) {
     issueCount pageInfo { hasNextPage endCursor }
     nodes { ... on PullRequest {
       number url title createdAt mergedAt closedAt state isDraft additions deletions headRefName headRepository { nameWithOwner } author { login __typename } labels(first: 20) { nodes { name } }
-      reviews(first: 30) { nodes { state author { login __typename } } }
+      reviews(first: 100) { totalCount nodes { state author { login __typename } } }
     } }
   } }`;
 
@@ -132,7 +135,9 @@ function reviewersOf(node) {
     if (r.author.__typename === 'Bot') bots.add(login.replace(/\[bot\]$/, ''));
     else if (login.toLowerCase() !== author) human.add(login);
   }
-  return { humanReviewers: [...human], botReviewers: [...bots] };
+  // More reviews than were read: a person may be among the rest, so "none" is not known.
+  const partial = (node.reviews?.totalCount ?? 0) > (node.reviews?.nodes?.length ?? 0);
+  return { humanReviewers: [...human], botReviewers: [...bots], reviewsPartial: partial };
 }
 
 /**
@@ -140,7 +145,7 @@ function reviewersOf(node) {
  * @returns {{number: number, url: string, title: string, author: string|null, bot: boolean, createdAt: string,
  *   mergedAt: string|null, closedAt: string|null, state: 'open'|'draft'|'merged'|'closed', additions: number,
  *   deletions: number, branch: string, headRepo: string|null, tier: 'Low'|'Medium'|'High'|null,
- *   humanReviewers: string[], botReviewers: string[]}}
+ *   humanReviewers: string[], botReviewers: string[], reviewsPartial: boolean}}
  */
 export function recentPullRow(node) {
   const labelled = (node.labels?.nodes ?? []).map((l) => /^merge risk: (low|medium|high)$/i.exec(l?.name ?? '')?.[1]).find(Boolean);
@@ -479,18 +484,36 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
     async recentPulls({ since, repo = currentRepo() }) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(String(since))) throw new Error('since must be a date');
       if (!/^[\w.-]+\/[\w.-]+$/.test(String(repo))) throw new Error('repo must be owner/name');
-      const q = `repo:${repo} is:pr created:>=${since} sort:created-desc`;
-      const pulls = [];
-      let after = null;
-      let total = 0;
-      for (let page = 0; page < RECENT_PULLS_PAGES; page++) {
+      // GitHub's search returns at most 1,000 results for a query, so a window with more is cut into date ranges (halved
+      // until each has 1,000 or fewer, newest first) and read range by range, up to RECENT_PULLS_MAX in all.
+      const addDays = (date, d) => new Date(Date.parse(`${date}T00:00:00Z`) + d * 86_400_000).toISOString().slice(0, 10);
+      const dayCount = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+      const readPage = async (created, after) => {
+        const q = `repo:${repo} is:pr created:${created} sort:created-desc`;
         const answer = await ghApi(['graphql', '-f', `query=${RECENT_PULLS_QUERY}`, '-f', `q=${q}`, ...(after ? ['-f', `after=${after}`] : [])]);
         const found = answer?.data?.search;
-        total = found?.issueCount ?? total;
-        pulls.push(...(found?.nodes ?? []).filter((n) => n?.number && n.url).map(recentPullRow));
-        if (!found?.pageInfo?.hasNextPage) return { pulls, total, truncated: false };
-        after = found.pageInfo.endCursor;
-      }
+        return { rows: (found?.nodes ?? []).filter((n) => n?.number && n.url).map(recentPullRow), total: found?.issueCount ?? 0, next: found?.pageInfo?.hasNextPage ? found.pageInfo.endCursor : null };
+      };
+      const today = new Date().toISOString().slice(0, 10);
+      let total = 0;
+      const readSpan = async (from, to, whole) => {
+        const created = whole ? `>=${from}` : `${from}..${to}`;
+        let page = await readPage(created, null);
+        if (whole) total = page.total;
+        if (page.total > RECENT_PULLS_SEARCH_MAX && from < to) {
+          const left = addDays(from, Math.floor((dayCount(from, to) - 1) / 2));
+          const newer = await readSpan(addDays(left, 1), to, false);
+          if (newer.length >= RECENT_PULLS_MAX) return newer.slice(0, RECENT_PULLS_MAX);
+          return [...newer, ...(await readSpan(from, left, false))].slice(0, RECENT_PULLS_MAX);
+        }
+        const rows = [...page.rows];
+        for (let n = 1; n < RECENT_PULLS_PAGES && page.next && rows.length < RECENT_PULLS_MAX; n++) {
+          page = await readPage(created, page.next);
+          rows.push(...page.rows);
+        }
+        return rows;
+      };
+      const pulls = await readSpan(since, today >= since ? today : since, true);
       return { pulls, total, truncated: total > pulls.length };
     },
     /**

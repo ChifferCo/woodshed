@@ -378,6 +378,8 @@ No icon set. The console uses text glyphs (`▾ ▸ ✓ ✗ ⋯ ☆ ↗`) and 6p
 
 In Review's Files changed tab, Ask uses an outline Dictate button beside Explain or Send. It says Stop while listening, with a muted status line under the question.
 
+Analytics (`public/analytics.js`) is the other exception: small 16px line icons (`currentColor`, 1.4 stroke, drawn inline, never loaded) sit beside a figure's label, a chart's label, a person or repo name in a table and the Show more buttons. They are decoration: the words and numbers always say the same, so an icon is `aria-hidden` and never alone.
+
 ## Asking for one line of text
 
 - A name or an address the person types (Rename…, the payload URL) is asked in the console's own dialog

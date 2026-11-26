@@ -1760,7 +1760,7 @@ h1.title .pill { vertical-align: middle; font-family: "Red Hat Display", system-
 .analytics-table .link-btn .a-ico { margin-right: 6px; }
 .analytics-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
 .analytics-more-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 10px 14px; }
-.btn-quiet { display: inline-flex; align-items: center; gap: 2px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--ground); color: var(--slate); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
-.btn-quiet:hover { background: var(--slate-tint); } .btn-quiet .a-ico { margin-right: 4px; color: inherit; }
+.analytics-btn { display: inline-flex; align-items: center; gap: 2px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--ground); color: var(--slate); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.analytics-btn:hover { background: var(--slate-tint); } .analytics-btn .a-ico { margin-right: 4px; color: inherit; }
 .person-pick { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--sub); }
 .person-pick select { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--ground); color: var(--ink); }
