@@ -11,3 +11,7 @@ Analytics page (`console/public/analytics.js`) uses them under its figures.
 - A bar's numbers are in its tooltip (`From Nov 3: 9 through Woodshed, 4 without`) and the chart's `aria-label`; the
   colour never says them alone, and the legend names each series.
 - Never two scales on one chart: a second measure is a second chart.
+
+Analytics adds a colour per chart (still never a status colour or orange): sessions started in `proj-violet`, pull requests
+through Woodshed in `slate` or violet and without in `proj-teal`. The page's figures carry a 2px top rule, an icon and a
+value in one of the project colours; tier pills are green, amber and red; lines added are `add`, removed `del`.

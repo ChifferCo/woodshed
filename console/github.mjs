@@ -107,7 +107,7 @@ const OPEN_PULLS_QUERY = `query OpenPulls($owner: String!, $name: String!) { rep
 // A review in a session labels each one with its merge risk (`merge risk: high`, fleet.mjs). The check run is asked
 // apart (checkTiers), for those with no label only: asking every pull request's head commit's check suites in the
 // search made GitHub answer 502 on a busy repo (measured on this one, 155 pull requests in a week).
-const RECENT_PULLS_PAGES = 5;
+const RECENT_PULLS_PAGES = 20;
 // checkTiers: a page of 25 with check suites took GitHub about 4 s on that repo, and 100 at a time failed.
 const CHECK_TIERS_PAGE = 25;
 const CHECK_RUNS_FIELDS = 'commits(last: 1) { nodes { commit { checkSuites(first: 20) { nodes { checkRuns(first: 3, filterBy: {checkName: $check}) { nodes { title } } } } } } }';
@@ -116,14 +116,31 @@ const RECENT_PULLS_QUERY = `query RecentPulls($q: String!, $after: String) {
     issueCount pageInfo { hasNextPage endCursor }
     nodes { ... on PullRequest {
       number url title createdAt mergedAt closedAt state isDraft additions deletions headRefName headRepository { nameWithOwner } author { login __typename } labels(first: 20) { nodes { name } }
+      reviews(first: 30) { nodes { state author { login __typename } } }
     } }
   } }`;
+
+// Who reviewed: people (a review by a user other than the author, its state kept) and bots, by login. A pending or
+// dismissed review is nobody's yet.
+function reviewersOf(node) {
+  const human = new Set();
+  const bots = new Set();
+  const author = String(node.author?.login ?? '').toLowerCase();
+  for (const r of node.reviews?.nodes ?? []) {
+    const login = r?.author?.login;
+    if (!login || r.state === 'PENDING' || r.state === 'DISMISSED') continue;
+    if (r.author.__typename === 'Bot') bots.add(login.replace(/\[bot\]$/, ''));
+    else if (login.toLowerCase() !== author) human.add(login);
+  }
+  return { humanReviewers: [...human], botReviewers: [...bots] };
+}
 
 /**
  * One pull request of the search, as analytics.mjs reads it.
  * @returns {{number: number, url: string, title: string, author: string|null, bot: boolean, createdAt: string,
  *   mergedAt: string|null, closedAt: string|null, state: 'open'|'draft'|'merged'|'closed', additions: number,
- *   deletions: number, branch: string, headRepo: string|null, tier: 'Low'|'Medium'|'High'|null}}
+ *   deletions: number, branch: string, headRepo: string|null, tier: 'Low'|'Medium'|'High'|null,
+ *   humanReviewers: string[], botReviewers: string[]}}
  */
 export function recentPullRow(node) {
   const labelled = (node.labels?.nodes ?? []).map((l) => /^merge risk: (low|medium|high)$/i.exec(l?.name ?? '')?.[1]).find(Boolean);
@@ -133,7 +150,7 @@ export function recentPullRow(node) {
     number: node.number, url: node.url, title: String(node.title ?? '').slice(0, 300), author: node.author?.login ?? null,
     bot: node.author?.__typename === 'Bot', createdAt: node.createdAt, mergedAt: node.mergedAt ?? null, closedAt: node.closedAt ?? null,
     state, additions: Number(node.additions) || 0, deletions: Number(node.deletions) || 0, branch: node.headRefName ?? '',
-    headRepo: node.headRepository?.nameWithOwner ?? null, tier,
+    headRepo: node.headRepository?.nameWithOwner ?? null, tier, ...reviewersOf(node),
   };
 }
 
@@ -455,7 +472,7 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
       return tiers;
     },
     /**
-     * The repo's pull requests opened on or after `since` (YYYY-MM-DD), newest first, at most 500 (recentPullRow).
+     * The repo's pull requests opened on or after `since` (YYYY-MM-DD), newest first, at most 2000 (recentPullRow).
      * @param {{since: string, repo?: string}} opts  `repo`: bound by the caller, as for checkTiers
      * @returns {Promise<{pulls: ReturnType<typeof recentPullRow>[], total: number, truncated: boolean}>}
      */

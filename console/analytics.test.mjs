@@ -369,3 +369,39 @@ test('with GitHub sign-in, an admin who loses write access to the default repo s
   const after = await projects();
   assert.deepEqual(after, ['web'], 'the default repo is asked too, not taken as proved by the sign-in');
 });
+
+test('a pull request carries who reviewed it: people, and the models (Woodshed reviews first, else review bots)', () => {
+  const records = [
+    record({ id: 'bbbb0001', kind: 'review', repo: REPO, number: 1, tier: 'Low', reviewAgents: ['claude', 'codex'], createdAt: ago(2) }),
+  ];
+  const pulls = [{ project: 'app', repo: REPO, pulls: [
+    pull({ number: 1, url: url(1), humanReviewers: ['bo'], botReviewers: ['claude'] }),
+    pull({ number: 2, url: url(2), humanReviewers: [], botReviewers: ['copilot', 'claude'] }),
+  ] }];
+  const { pulls: { recent } } = analyticsReport({ records, pulls, days: 30, now: NOW });
+  const one = recent.find((p) => p.number === 1);
+  const two = recent.find((p) => p.number === 2);
+  assert.deepEqual(one.humanReviewers, ['bo']);
+  assert.deepEqual(one.models.sort(), ['claude', 'codex']);
+  assert.deepEqual(two.humanReviewers, []);
+  assert.deepEqual(two.models, ['copilot', 'claude']);
+  assert.equal(one.repo, REPO);
+});
+
+test('the lists are not cut at 500', () => {
+  const many = Array.from({ length: 600 }, (_, i) => pull({ number: i + 1, url: url(i + 1), createdAt: ago(1) }));
+  const records = Array.from({ length: 600 }, (_, i) => record({ id: `cccc${String(i).padStart(4, '0')}` }));
+  const r = analyticsReport({ records, pulls: [{ project: 'app', repo: REPO, pulls: many }], days: 30, now: NOW });
+  assert.equal(r.pulls.recent.length, 600);
+  assert.equal(r.sessions.recent.length, 600);
+});
+
+test('recentPullRow reads human and bot reviewers, not the author, pending or dismissed ones', () => {
+  const row = recentPullRow({ number: 1, url: url(1), author: { login: 'ana', __typename: 'User' }, reviews: { nodes: [
+    { state: 'APPROVED', author: { login: 'bo', __typename: 'User' } }, { state: 'COMMENTED', author: { login: 'ana', __typename: 'User' } },
+    { state: 'COMMENTED', author: { login: 'claude[bot]', __typename: 'Bot' } }, { state: 'DISMISSED', author: { login: 'cy', __typename: 'User' } },
+    { state: 'PENDING', author: { login: 'di', __typename: 'User' } },
+  ] } });
+  assert.deepEqual(row.humanReviewers, ['bo']);
+  assert.deepEqual(row.botReviewers, ['claude']);
+});
