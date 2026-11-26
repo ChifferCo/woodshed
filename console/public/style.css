@@ -830,7 +830,7 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .btn-danger { border: 1px solid var(--bad); background: transparent; color: var(--bad); }
 .pill.is-work { background: var(--slate-tint); color: var(--slate); }
 .pill.is-bad { background: var(--del-tint); color: var(--bad); }
-.pill:not(.is-ok):not(.is-warn):not(.is-work):not(.is-bad) { background: var(--stopped); color: var(--meta); }
+.pill:not(.is-ok):not(.is-warn):not(.is-work):not(.is-bad):not(.is-woodshed):not(.is-model) { background: var(--stopped); color: var(--meta); }
 .set-card.is-wide { max-width: 880px; }
 /* My settings: groups of rows that open in place (designSystem/components/SettingsRows). */
 .set-group { display: flex; flex-direction: column; gap: 6px; max-width: 780px; scroll-margin-top: 12px; }
