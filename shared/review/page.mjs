@@ -2307,7 +2307,7 @@ ${DARK_PALETTE}
         submit.addEventListener('click', openSubmitSheet);
         var merge = mergeControl();
         if (merge && merge.tagName === 'BUTTON') submit.classList.add('quiet');
-        if (state.livePr.state === 'open') {
+        if (state.livePr.state === 'open' || state.livePr.state === 'draft') {
           var conversations = el('button', 'submit-review quiet', 'Unresolved conversations');
           conversations.type = 'button';
           conversations.addEventListener('click', openConversations);
