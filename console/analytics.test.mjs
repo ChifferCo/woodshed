@@ -26,7 +26,7 @@ const pull = (fields) => ({
 test('a pull request a session reported, or whose branch it worked on, is through Woodshed and its person\'s, whoever GitHub says opened it', () => {
   const records = [
     record({ id: 'aaaa0001', login: 'ana', prUrls: [url(1)] }),
-    record({ id: 'aaaa0002', login: 'bo', branch: 'woodshed/bo-aaaa0002', private: true, title: null }),
+    record({ id: 'aaaa0002', login: 'bo', branch: 'woodshed/bo-aaaa0002', private: true, title: null, createdAt: ago(5) }),
   ];
   const pulls = [
     // A shared session's pull request opens as the App: still Ana's.
@@ -48,13 +48,27 @@ test('a pull request a session reported, or whose branch it worked on, is throug
 });
 
 test('a fork\'s pull request on a branch name a session used is not that session\'s', () => {
-  const records = [record({ id: 'aaaa0001', login: 'ana', branch: 'main-fix' })];
+  const records = [record({ id: 'aaaa0001', login: 'ana', branch: 'main-fix', createdAt: ago(5) })];
   const pulls = [
     pull({ number: 1, url: url(1), author: 'stranger', branch: 'main-fix', headRepo: 'stranger/r' }),
     pull({ number: 2, url: url(2), author: 'ana', branch: 'main-fix', headRepo: REPO }),
   ];
   const r = analyticsReport({ records, pulls: [{ project: 'app', repo: REPO, pulls }], days: 30, now: NOW });
   assert.deepEqual(r.pulls.recent.map((p) => [p.number, p.via, p.login]).sort(), [[1, 'other', 'stranger'], [2, 'woodshed', 'ana']]);
+});
+
+test('a session that ended on main, or a pull request older than the session, is not matched by the branch\'s name', () => {
+  const records = [
+    record({ id: 'aaaa0001', login: 'ana', branch: 'main', createdAt: ago(5) }),
+    record({ id: 'aaaa0002', login: 'bo', branch: 'patch-1', createdAt: ago(2) }),
+  ];
+  const pulls = [
+    pull({ number: 1, url: url(1), author: 'cy', branch: 'main', headRepo: REPO, createdAt: ago(1) }),
+    pull({ number: 2, url: url(2), author: 'dee', branch: 'patch-1', headRepo: REPO, createdAt: ago(4) }),
+    pull({ number: 3, url: url(3), author: 'bo', branch: 'patch-1', headRepo: REPO, createdAt: ago(1) }),
+  ];
+  const r = analyticsReport({ records, pulls: [{ project: 'app', repo: REPO, pulls }], days: 30, now: NOW });
+  assert.deepEqual(r.pulls.recent.map((p) => [p.number, p.via, p.login]).sort(), [[1, 'other', 'cy'], [2, 'other', 'dee'], [3, 'woodshed', 'bo']]);
 });
 
 test('a tainted session is counted, but its branch, pull requests and title are not kept', () => {

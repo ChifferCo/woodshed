@@ -1425,6 +1425,8 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 .analytics-table td.mono { white-space: nowrap; font-size: 12px; }
 .analytics-table .quiet, .analytics-page .quiet { color: var(--meta); }
 .analytics-table tr.is-picked td { background: var(--slate-tint); }
+/* meta is 4.1:1 on slate-tint: the picked row's quiet text is sub, 4.5:1 or better. */
+.analytics-table tr.is-picked .quiet { color: var(--sub); }
 .analytics-table .analytics-title { min-width: 260px; }
 .analytics-table .link-btn { padding: 0; border: 0; background: none; color: var(--slate); font: inherit; cursor: pointer; text-align: left; }
 .analytics-table .link-btn:hover { text-decoration: underline; }

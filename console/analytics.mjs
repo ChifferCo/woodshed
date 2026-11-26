@@ -24,6 +24,8 @@ const KEEP_MS = 180 * DAY_MS;
 const KEEP_MAX = 5000;
 const LIST_MAX = 500;
 const TIERS = ['Low', 'Medium', 'High'];
+// A session that ended on one of these was not working on a branch of its own: no pull request is its by the name.
+const SHARED_BRANCHES = new Set(['main', 'master', 'develop', 'development', 'trunk', 'staging', 'production']);
 
 /** Which kind of session it is, for the page's counts. */
 export function sessionKind(session) {
@@ -128,7 +130,7 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
     if (r.kind === 'review' && r.tier && r.number) reviewTier.set(`${lower(r.repo)}#${r.number}`, r.tier);
     if (r.kind !== 'work') continue;
     for (const url of r.prUrls ?? []) byUrl.set(lower(url), r);
-    if (r.branch && r.repo) byBranch.set(`${lower(r.repo)}:${r.branch}`, r);
+    if (r.branch && r.repo && !SHARED_BRANCHES.has(lower(r.branch))) byBranch.set(`${lower(r.repo)}:${r.branch}`, r);
   }
 
   const counts = { work: 0, private: 0, shared: 0, review: 0, qa: 0, ask: 0 };
@@ -155,8 +157,11 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
     for (const pull of found) {
       if (!inWindow(pull.createdAt)) continue;
       // A branch is a session's only on the repo it pushed to: a fork's pull request may reuse the name.
+      // And only one opened once the session had started: an older one on a common name (`patch-1`) is not its.
       const ownBranch = !pull.headRepo || lower(pull.headRepo) === lower(repo);
-      const session = byUrl.get(lower(pull.url)) ?? (ownBranch ? byBranch.get(`${lower(repo)}:${pull.branch}`) : null) ?? null;
+      const byName = ownBranch ? byBranch.get(`${lower(repo)}:${pull.branch}`) : null;
+      const named = byName && Date.parse(pull.createdAt) >= Date.parse(byName.createdAt) ? byName : null;
+      const session = byUrl.get(lower(pull.url)) ?? named ?? null;
       // A bot's own pull request (Dependabot, Renovate) is nobody's work to count, unless a session opened it.
       if (!session && pull.bot) continue;
       const via = session ? 'woodshed' : 'other';

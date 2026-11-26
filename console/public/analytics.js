@@ -21,7 +21,8 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
   const { group } = window.WoodshedSettingsRows.create({ render });
 
   const params = () => new URLSearchParams(window.location.search);
-  const days = () => Number(params().get('days')) || 30;
+  // A window the console does not offer (?days=31) is its 30 days, as /api/analytics answers it.
+  const days = () => ([7, 30, 90].includes(Number(params().get('days'))) ? Number(params().get('days')) : 30);
   const who = () => params().get('person') || null;
   const pullFilter = () => params().get('pulls') || 'all';
   function setParam(key, value, fallback) {
