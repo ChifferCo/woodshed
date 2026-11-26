@@ -84,8 +84,9 @@ if (fields.query.includes('reviewThreads')) {
     const id = fields[variable];
     const thread = state.pages.flat().find((t) => t.id === id);
     assert.ok(thread, 'the mutation must name a thread on this PR');
-    thread.isResolved = true;
     ids.push(id);
+    if (id === state.unconfirmed) continue;
+    thread.isResolved = true;
     data[alias] = { thread: { isResolved: true } };
   }
   state.mutations.push(ids);
@@ -151,4 +152,17 @@ console.log(JSON.stringify({ data }));
   const remaining = await call('GET');
   assert.equal(remaining.status, 200);
   assert.deepEqual(remaining.body.threads.map((thread) => thread.id), ['read-only', 'new-since-listing']);
+
+  // Reconnect and leave the final alias unconfirmed in a second batch.
+  const large = read();
+  const batch = Array.from({ length: 51 }, (_, i) => thread('batch-' + i));
+  const batchIds = batch.map((t) => t.id);
+  Object.assign(large, { disconnected: false, pages: [batch.slice(0, 50), batch.slice(50)], unconfirmed: batchIds.at(-1) });
+  save(large);
+  const partial = await call('POST', { ids: batchIds });
+  assert.equal(partial.status, 502);
+  assert.equal(partial.body.reason, 'unconfirmed-resolution');
+  assert.deepEqual(read().mutations.slice(1), [batchIds.slice(0, 50), batchIds.slice(50)]);
+  const afterPartial = await call('GET');
+  assert.deepEqual(afterPartial.body.threads.map((t) => t.id), [batchIds.at(-1)]);
 });

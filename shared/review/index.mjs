@@ -1384,7 +1384,7 @@ async function handleConversations(payload, res, ctx, session) {
   const ids = read.threads.filter((thread) => thread.canResolve && requested.has(thread.id)).map((thread) => thread.id);
   const result = await resolveReviewThreads(ids, env);
   ctx.log(result.ok ? 'review.conversations_resolved' : 'review.conversation_resolution_failed', {
-    reqId: ctx.reqId, session, pr: got.live.number, requested: ids.length,
+    reqId: ctx.reqId, session, pr: got.live.number, requested: ids.length, ...(result.ok ? {} : { reason: result.reason }),
   });
   return ctx.json(res, result.ok ? 200 : result.status, result);
 }

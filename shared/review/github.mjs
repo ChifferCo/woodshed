@@ -952,9 +952,12 @@ export async function resolveReviewThreads(ids, env) {
       query: `mutation(${variables}){${fields}}`, strings,
     }), { env, timeoutMs: GH_TIMEOUT_MS });
     const read = readGraphql(result);
-    if (!read.ok) return read;
+    if (!read.ok) {
+      const reason = result.timedOut ? 'timeout' : result.status !== 0 ? 'gh-failed' : 'invalid-graphql-response';
+      return { ...read, reason };
+    }
     if (keys.some((key) => read.data?.[key]?.thread?.isResolved !== true)) {
-      return { ok: false, status: 502, error: 'GitHub did not confirm every resolution' };
+      return { ok: false, status: 502, error: 'GitHub did not confirm every resolution', reason: 'unconfirmed-resolution' };
     }
   }
   return { ok: true };

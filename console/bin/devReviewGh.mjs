@@ -144,10 +144,10 @@ if (args[0] === 'api' && args[1] === 'graphql') {
   }
   if (q.includes('viewerCanResolve')) {
     const pr = other(fields.pr) || s;
-    const nodes = (pr.threads || []).map((t) => ({
+    const nodes = (pr.threads || []).map((t, i) => ({
       id: t.id, path: t.path, line: t.outdated ? null : t.line, originalLine: t.line,
       isResolved: !!t.resolved, isOutdated: !!t.outdated, viewerCanResolve: t.canResolve !== false,
-      comments: { nodes: [{ state: 'SUBMITTED', body: t.comments[0].body, url: urlOf(pr), author: { login: t.comments[0].author } }] },
+      comments: { nodes: [{ state: 'SUBMITTED', body: t.comments[0].body, url: urlOf(pr) + '#discussion_r' + (i + 1), author: { login: t.comments[0].author } }] },
     }));
     out({ data: { repository: { pullRequest: {
       state: pr.state || 'OPEN', reviewThreads: { nodes, pageInfo: { hasNextPage: false } },
