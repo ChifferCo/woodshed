@@ -1,4 +1,4 @@
-<!-- @dsCard group="Cards" height=250 subtitle="A count over a window, under a group's figures: one series, or Woodshed's on the rest" -->
+<!-- @dsCard group="Cards" height=330 subtitle="A count over a window, under a group's figures: one series, or Woodshed's on the rest" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@300..900&family=Red+Hat+Mono:wght@300..700&display=swap">
 <style>
  body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font:15px/1.5 "Red Hat Display",system-ui,sans-serif}
@@ -11,7 +11,11 @@
  .max{margin-left:auto}
  .bars{display:flex;align-items:flex-end;gap:6px;height:120px;border-bottom:1px solid var(--line)}
  .bar{flex:1;display:flex;flex-direction:column;gap:2px}
- .w{background:var(--slate);border-radius:2px}.o{background:var(--idle-dot);border-radius:2px}
+ .w{background:var(--slate);border-radius:2px}.o{background:var(--proj-teal);border-radius:2px}
+ .risk{display:flex;gap:2px;height:12px;border-radius:6px;overflow:hidden;margin-top:14px;background:var(--stopped)}
+ .risk i{display:block}.lo{background:var(--add)}.me{background:var(--amber)}.hi{background:var(--del)}.no{background:var(--idle-dot)}
+ .pl{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:999px}.lo2{background:var(--add-tint);color:var(--green)}.me2{background:var(--amber-tint);color:var(--amber-ink)}.hi2{background:var(--del-tint);color:var(--bad)}.no2{background:var(--stopped);color:var(--meta)}
+ .lines b{font-weight:600}.add{color:var(--add)}.del{color:var(--del)}
  .axis{display:flex;justify-content:space-between;margin-top:4px}
 </style>
 <div class="box">
@@ -23,4 +27,8 @@
   <div class="bar" title="From Nov 19: 8 through Woodshed, 12 without"><div class="o" style="height:65px"></div><div class="w" style="height:43px"></div></div>
  </div>
  <div class="axis"><span>Oct 27</span><span>today</span></div>
+ <div class="head" style="margin-top:14px"><span class="l">Merge risk, every level</span></div>
+ <div class="risk" role="img" aria-label="58 low, 54 medium, 16 high, 30 not reviewed"><i class="lo" style="flex:58"></i><i class="me" style="flex:54"></i><i class="hi" style="flex:16"></i><i class="no" style="flex:30"></i></div>
+ <div class="cnt" style="display:flex;gap:6px;margin-top:8px"><span class="pl lo2">58 low</span><span class="pl me2">54 medium</span><span class="pl hi2">16 high</span><span class="pl no2">30 not reviewed</span></div>
+ <p class="lines" style="font:12.5px 'Red Hat Mono',monospace"><b class="add">+26,254</b> <b class="del">−7,018</b></p>
 </div>
