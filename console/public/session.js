@@ -2928,6 +2928,14 @@
     return s.status === 'running' ? `${agentTermKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.stoppedBy}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}:${Boolean(s.qa?.hasLog)}:${Boolean(s.review?.hasLog)}:${W.isAdmin()}:${data?.login}`;
   }
 
+  function setReviewHidden(hidden) {
+    // The iframe stays mounted on tab and rail navigation, so hiding it does not stop its microphone.
+    if (hidden && !slots.review.hidden) {
+      slots.review.querySelector('iframe')?.contentWindow?.postMessage('woodshed:review-hidden', window.location.origin);
+    }
+    slots.review.hidden = hidden;
+  }
+
   let currentSession = null;
   function render() {
     if (!data) {
@@ -3009,7 +3017,7 @@
       renderKeyBar(null);
       messageBox.show(null);
       chat.show(null);
-      slots.review.hidden = true;
+      setReviewHidden(true);
       slots.applog.hidden = true;
       slots.diff.hidden = true;
       watchAppLog(null);
@@ -3045,10 +3053,7 @@
     chat.show(view === 'chat' ? chatView(s) : null);
     slots.body.hidden = view !== 'tui';
     slots.plain.hidden = tab !== 'terminal';
-    if (tab !== 'review' && !slots.review.hidden) {
-      slots.review.querySelector('iframe')?.contentWindow?.postMessage('woodshed:review-hidden', window.location.origin);
-    }
-    slots.review.hidden = tab !== 'review';
+    setReviewHidden(tab !== 'review');
     slots.applog.hidden = tab !== 'applog';
     slots.diff.hidden = tab !== 'diff';
     watchAppLog(s);
