@@ -426,22 +426,20 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
         .map(({ i, why }) => pullRow(i, why));
     },
     /**
-     * The repo's pull requests opened on or after `since` (YYYY-MM-DD), newest first, at most 500 (recentPullRow).
-     * @param {{since: string}} opts
-     * @returns {Promise<{pulls: ReturnType<typeof recentPullRow>[], total: number, truncated: boolean}>}
-     */
-    /**
-     * The merge risk check's tier on each pull request's head commit, for those the search found with no label.
+     * The merge risk check's tier on each pull request's head commit, for those the search found with no label. A batch
+     * GitHub fails is left out, and logged: the others' tiers stay.
      * @param {number[]} numbers
      * @param {string} check  the project file's `pullRequests.mergeRisk.check`
+     * @param {{repo?: string}} [opts]  the repo to read, bound by the caller: the default project's client otherwise
+     *   follows whichever repo is the default when it is called
      * @returns {Promise<Map<number, 'Low'|'Medium'|'High'>>}  only those with a tier
      */
-    async checkTiers(numbers, check) {
-      const [owner, name] = currentRepo().split('/');
+    async checkTiers(numbers, check, { repo = currentRepo() } = {}) {
+      const [owner, name] = repo.split('/');
       const pages = [];
       for (let i = 0; i < numbers.length; i += CHECK_TIERS_PAGE) pages.push(numbers.slice(i, i + CHECK_TIERS_PAGE));
       const tiers = new Map();
-      await Promise.all(pages.map(async (page) => {
+      const results = await Promise.allSettled(pages.map(async (page) => {
         const fields = page.map((n) => `pr${Number(n)}: pullRequest(number: ${Number(n)}) { number ${CHECK_RUNS_FIELDS} }`).join('\n');
         const query = `query($owner: String!, $name: String!, $check: String!) { repository(owner: $owner, name: $name) { ${fields} } }`;
         const answer = await ghApi(['graphql', '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `check=${check}`]);
@@ -451,11 +449,20 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
           if (pull?.number && tier) tiers.set(pull.number, tier);
         }
       }));
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length === results.length && failed.length) throw failed[0].reason;
+      if (failed.length) console.warn('github: some merge risk checks not read', { repo, batches: results.length, failed: failed.length, message: String(failed[0].reason?.message ?? failed[0].reason).split('\n').at(-1) });
       return tiers;
     },
-    async recentPulls({ since }) {
+    /**
+     * The repo's pull requests opened on or after `since` (YYYY-MM-DD), newest first, at most 500 (recentPullRow).
+     * @param {{since: string, repo?: string}} opts  `repo`: bound by the caller, as for checkTiers
+     * @returns {Promise<{pulls: ReturnType<typeof recentPullRow>[], total: number, truncated: boolean}>}
+     */
+    async recentPulls({ since, repo = currentRepo() }) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(String(since))) throw new Error('since must be a date');
-      const q = `repo:${currentRepo()} is:pr created:>=${since} sort:created-desc`;
+      if (!/^[\w.-]+\/[\w.-]+$/.test(String(repo))) throw new Error('repo must be owner/name');
+      const q = `repo:${repo} is:pr created:>=${since} sort:created-desc`;
       const pulls = [];
       let after = null;
       let total = 0;

@@ -258,14 +258,16 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
     const reading = (async () => {
       const gh = githubFor(project);
       if (!gh?.recentPulls) throw new Error('this console has no GitHub access for it');
-      const found = await gh.recentPulls({ since });
+      // Both reads name the repo the viewer was let see: the default project's client follows the default repo, which an
+      // admin may change between them, and a number on another repo is another pull request.
+      const found = await gh.recentPulls({ since, repo: project.repo });
       // A review that runs as a workflow posts its check and no label: those are asked apart, the newest first. A failure
       // there keeps what the labels said.
       const check = (await gatesOf(project.name).catch(() => null))?.mergeRisk?.check ?? null;
       const untiered = found.pulls.filter((p) => !p.tier).slice(0, CHECK_MAX).map((p) => p.number);
       if (!check || !untiered.length || !gh.checkTiers) return found;
       try {
-        const tiers = await gh.checkTiers(untiered, check);
+        const tiers = await gh.checkTiers(untiered, check, { repo: project.repo });
         return { ...found, pulls: found.pulls.map((p) => (tiers.has(p.number) ? { ...p, tier: tiers.get(p.number) } : p)) };
       } catch (err) {
         console.warn('analytics: merge risk checks not read, the labels only', { project: project.name, asked: untiered.length, message: ghSaid(err) });
