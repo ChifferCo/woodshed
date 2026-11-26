@@ -142,7 +142,9 @@ function main() {
   const cwd = payload.cwd || process.cwd();
   const repoDir = checkoutOf(cwd);
   if (!repoDir) return;
-  const changedFiles = changedFilesIn(cwd);
+  // From the checkout's top folder: from a subfolder, `git ls-files --others` lists only that folder's new files, so a
+  // project file the branch added and has not committed would not count as changed.
+  const changedFiles = changedFilesIn(repoDir);
   let project;
   try {
     project = loadProject(repoDir);

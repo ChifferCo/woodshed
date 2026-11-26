@@ -243,3 +243,30 @@ test('a project file that does not read is refused only when this branch changed
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /^Not opened: \.woodshed\/project\.yaml: has newerField, which is not a field/);
 });
+
+test('run from a subfolder, it still sees a new project file the branch has not committed', (t) => {
+  const script = fileURLToPath(new URL('./readyGate.mjs', import.meta.url));
+  const scratch = (prefix) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    return dir;
+  };
+  const repo = fixtureCheckout(scratch('readyGate-sub-'), { repo: 'acme/app' });
+  const home = scratch('readyGate-sub-home-');
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { stdio: 'ignore' });
+  fs.mkdirSync(path.join(repo, 'web'));
+  fs.writeFileSync(path.join(repo, 'web', 'page.tsx'), 'x');
+  git('add', 'web');
+  git('commit', '-q', '-m', 'base');
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  // The branch adds a project file that does not read, not even added to the index, and the hook runs from web/.
+  fs.mkdirSync(path.join(repo, '.woodshed'));
+  fs.writeFileSync(path.join(repo, '.woodshed', 'project.yaml'), 'version: 1\nsurprise: true\n');
+  const run = spawnSync('node', [script], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'gh pr create -t x -F b.md' }, cwd: path.join(repo, 'web') }),
+    env: { ...isolatedEnv(), HOME: home, DEFAULT_BRANCH: 'main' },
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /^Not opened: \.woodshed\/project\.yaml: has surprise, which is not a field/);
+});
