@@ -10,7 +10,7 @@
 // none of its person's.
 //
 // Pull requests come from GitHub: each project's repo searched for those opened in the window (github.mjs,
-// recentPulls), read again at most every READ_MS. One is through Woodshed when a session reported it or worked on its
+// recentPulls), read again in the background once it is REFRESH_MS old. One is through Woodshed when a session reported it or worked on its
 // branch, and is then that session's person's, whoever GitHub says opened it (a shared session's opens as the App).
 
 import { isAsk, isQa, isReview, prUrlsOf } from './sessions.mjs';
@@ -18,10 +18,10 @@ import { allProjects, projectFor } from './projects.mjs';
 
 export const WINDOWS = [7, 30, 90];
 const DAY_MS = 86_400_000;
-const READ_MS = 5 * 60_000;
-// A read is shown while a new one loads only while it is under this old; older, the viewer waits for the new one.
-const STALE_MS = 60 * 60_000;
-// After a failed refresh the last read is kept and no other read starts for this long.
+// The saved read is always shown, however old. A view past this age starts a new read in the background; the page says
+// what the data is as of, and has a button to read again before it.
+const REFRESH_MS = 60 * 60_000;
+// After a failed background refresh the last read is kept and no other starts on its own for this long.
 const RETRY_MS = 60_000;
 // Kept records older than this are dropped; the widest window is 90 days.
 const KEEP_MS = 180 * DAY_MS;
@@ -278,28 +278,43 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
     reads.set(key, { ...held, reading });
     const done = reading.then((value) => { reads.set(key, { at: now(), value }); return value; }, (err) => {
       // A failed read keeps the last one, if any.
-      if (held?.value) reads.set(key, { at: held.at, value: held.value, retryAt: now() + RETRY_MS });
+      if (held?.value) reads.set(key, { at: held.at, value: held.value, retryAt: now() + RETRY_MS, failed: true });
       else reads.delete(key);
       throw err;
     });
     return done;
   }
 
+  const keyOf = (project) => `${project.name}\n${project.repo}`;
+  const logRefreshFailed = (project) => (err) => console.warn('analytics: refresh failed, keeping the last read', { project: project.name, message: ghSaid(err) });
+
+  // The saved read at once, whatever its age. With none the viewer waits for the first. One past REFRESH_MS old starts a
+  // new read in the background, unless one is running or just failed.
   async function projectPulls(project) {
-    const key = `${project.name}\n${project.repo}`;
+    const key = keyOf(project);
     const held = reads.get(key);
-    // An old read is shown only while it is under STALE_MS old, on every path; past that the viewer waits for a new one.
-    const usable = Boolean(held?.value) && now() - held.at < STALE_MS;
-    if (held?.reading) return usable ? held.value : held.reading;
-    if (held && now() - held.at < READ_MS) return held.value;
-    if (usable && held.retryAt > now()) return held.value;
-    const read = startRead(project, key, held);
-    // Stale-while-revalidate: an old read is shown at once, the new one lands for the next view.
-    if (usable) {
-      read.catch((err) => console.warn('analytics: refresh failed, keeping the last read', { project: project.name, message: ghSaid(err) }));
-      return held.value;
+    if (!held?.value) await (held?.reading ?? startRead(project, key, held));
+    else if (!held.reading && now() - held.at >= REFRESH_MS && !(held.retryAt > now())) startRead(project, key, held).catch(logRefreshFailed(project));
+    const read = reads.get(key);
+    return { found: read.value, at: read.at, reading: Boolean(read.reading), failed: Boolean(read.failed) };
+  }
+
+  /**
+   * Reads the repos again now, in the background, for the button on the page: those not already being read.
+   * @param {{repos?: string[]|null}} opts  as for report
+   * @returns {number}  how many reads it started
+   */
+  function refresh({ repos = null } = {}) {
+    const allowed = repos ? new Set(repos.map(lower)) : null;
+    let started = 0;
+    for (const project of allProjects(config).filter((p) => p.repo && (!allowed || allowed.has(lower(p.repo))))) {
+      const key = keyOf(project);
+      const held = reads.get(key);
+      if (held?.reading) continue;
+      startRead(project, key, held).catch(logRefreshFailed(project));
+      started++;
     }
-    return read;
+    return started;
   }
 
   /**
@@ -313,10 +328,12 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
     const visible = (repo) => !allowed || allowed.has(lower(repo));
     const projects = allProjects(config).filter((p) => p.repo && visible(p.repo));
     const failed = [];
+    const reads_ = [];
     let truncated = false;
     const pulls = (await Promise.all(projects.map(async (project) => {
       try {
-        const found = await projectPulls(project);
+        const { found, ...read } = await projectPulls(project);
+        reads_.push(read);
         // Newest first: a cut-off list still covers this window when its oldest pull request is older than the window.
         const oldest = found.pulls.at(-1)?.createdAt;
         truncated ||= Boolean(found.truncated && (!oldest || Date.parse(oldest) >= at - days * DAY_MS));
@@ -337,8 +354,12 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
     return {
       ...analyticsReport({ records, pulls, members: members(), days, now: at }),
       projects: projects.map((p) => p.name), failed, truncated,
+      // What the pull request data is as of (the oldest repo's read), whether a read is running now, and whether the last
+      // background read failed, so the page can say so and offer to read again.
+      asOf: reads_.length ? new Date(Math.min(...reads_.map((r) => r.at))).toISOString() : null,
+      refreshing: reads_.some((r) => r.reading), refreshFailed: reads_.some((r) => r.failed),
     };
   }
 
-  return { report };
+  return { report, refresh };
 }

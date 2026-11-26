@@ -18,6 +18,8 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
   let data = null;
   let loadError = null;
   let loading = false;
+  let clickedRefresh = false;
+  let pollTimer = null;
   const { group } = window.WoodshedSettingsRows.create({ render });
 
   const params = () => new URLSearchParams(window.location.search);
@@ -240,6 +242,17 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     ];
   }
 
+  // What the pull request data is as of, and a button to read GitHub again, off while a read is running.
+  function freshness() {
+    if (!data?.asOf) return null;
+    const running = data.refreshing || clickedRefresh;
+    return h('p', { class: 'foot analytics-asof' },
+      `Pull requests as of ${stamp(data.asOf)}`,
+      !running && data.refreshFailed ? ' · the last refresh failed, showing the earlier read' : '',
+      ' ',
+      h('button', { type: 'button', class: 'btn btn-plain', disabled: running, onclick: refreshNow }, running ? 'Refreshing…' : 'Refresh'));
+  }
+
   function render() {
     const head = h('header', { class: 'page-head', id: 'analytics' },
       h('div', null,
@@ -247,6 +260,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
         h('p', { class: 'sub' }, 'How the team uses Woodshed: who starts sessions, and how their pull requests go.')));
     const windowSeg = h('div', { class: 'filters' },
       h('p', { class: 'foot' }, data ? `From ${day(data.since)} to today${loading ? ' · reading…' : ''}.` : ''),
+      freshness(),
       h('div', { class: 'seg', role: 'group', 'aria-label': 'Window' }, (data?.windows ?? [7, 30, 90]).map((d) =>
         h('button', { type: 'button', 'aria-pressed': String(d === days()), onclick: () => { setParam('days', d, 30); refresh(); } }, `${d} days`))));
     if (!data) {
@@ -287,6 +301,37 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     render();
   }
 
+  // The button: the console reads GitHub again in the background, and the page asks every few seconds until it is done.
+  async function refreshNow() {
+    clickedRefresh = true;
+    render();
+    try {
+      await W.postJson('/api/analytics/refresh', {});
+    } catch (err) {
+      clickedRefresh = false;
+      loadError = err.message;
+      render();
+      return;
+    }
+    await poll();
+  }
+  // Reads the page's data again while a refresh runs, so the new numbers and time appear by themselves.
+  async function poll() {
+    clearTimeout(pollTimer);
+    if (life.ended) return;
+    try {
+      const body = await W.getJson(`/api/analytics?days=${days()}`);
+      if (life.ended) return;
+      data = body;
+      loadError = null;
+    } catch (err) {
+      loadError = err.message;
+    }
+    if (data?.refreshing) pollTimer = setTimeout(poll, 3000);
+    else clickedRefresh = false;
+    render();
+  }
+
   render();
-  refresh();
+  refresh().then(() => { if (data?.refreshing) pollTimer = setTimeout(poll, 3000); });
 });
