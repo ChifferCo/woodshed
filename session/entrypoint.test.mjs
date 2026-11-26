@@ -644,11 +644,24 @@ test('a reader\'s message too long for one read still ends the start with its ER
   // A stand-in reader writing many `project:` lines, as a quoted key with escaped newlines makes the real one do.
   const run = spawnSync('bash', ['-c', [
     'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
-    'project() { for i in $(seq 1 200000); do echo "project: line $i"; done >&2; return 1; }',
+    'project() { for i in $(seq 1 200000); do echo "project: .woodshed/project.yaml: line $i"; done >&2; return 1; }',
     fn('readProjectFrom'), 'readProjectFrom from', 'echo "went on"',
   ].join('\n')], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: isolatedEnv({ PATH: process.env.PATH }) });
   assert.equal(run.status, 1, 'not 141, a pipe closed early');
-  assert.match(run.stdout, /ERROR: the project file could not be read: line 1\n/);
+  assert.match(run.stdout, /ERROR: the project file could not be read: \.woodshed\/project\.yaml: line 1\n/);
+});
+
+test('a start whose installation\'s project file does not read keeps that file\'s reason in the log, out of its status', () => {
+  // The status reaches a review's comment on the pull request; the installation's file and its path are not the repo's.
+  const run = spawnSync('bash', ['-c', [
+    'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
+    'project() { echo "project: the installation\'s project file /srv/files/acme/app.yaml: not read as YAML (line 3: token: s3cr3t)" >&2; return 1; }',
+    fn('readProjectFrom'), 'readProjectFrom from',
+  ].join('\n')], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH }) });
+  assert.equal(run.status, 1);
+  assert.match(run.stdout, /ERROR: the project file could not be read\n/);
+  assert.doesNotMatch(run.stdout, /installation|s3cr3t/);
+  assert.match(run.stderr, /the installation's project file/, 'still in the log');
 });
 
 test('a session starts only the services its project\'s env uses, and warns of a line whose variable is unset', (t) => {

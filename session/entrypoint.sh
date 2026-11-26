@@ -107,8 +107,9 @@ die() { log "ERROR: $*"; exit 1; }
 
 # The project file's first read (`project get from`), into the variable <name>. One that fails stops the start with the
 # reader's own reason in its ERROR (the field it refused, the YAML error): the console shows that line as a failed
-# start's status, and a session that never started leaves no log its person can read. The reader's whole message still
-# goes to the log.
+# start's status, and a session that never started leaves no log its person can read. Only a reason about the repo's own
+# file: the status reaches a review's comment on the pull request, and the installation's file is not the repo's to
+# show (its message names its path, and a YAML error quotes it). The reader's whole message still goes to the log.
 readProjectFrom() {
   local out status=0 errors why
   errors=$(mktemp)
@@ -117,7 +118,7 @@ readProjectFrom() {
     cat "$errors" >&2
     # One sed that stops at the first line, with no pipe after it: under pipefail, a `head` closing the pipe early on
     # a long message would end the assignment, and the start, before the ERROR below.
-    why=$(sed -n '/^project: /{s/^project: //;s/^\(.\{300\}\).*/\1/;p;q;}' "$errors")
+    why=$(sed -n '/^project: \.woodshed\/project\.yaml: /{s/^project: //;s/^\(.\{300\}\).*/\1/;p;q;}' "$errors")
     rm -f "$errors"
     die "the project file could not be read${why:+: $why}"
   fi
