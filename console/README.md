@@ -222,7 +222,8 @@ What the page does, from the shed's own review code:
   is kept under `/tmp/woodshed-review` for the session's life, and says when
   the checkout has moved since.
 - **Ask about a line** (its number), **or a file**: claude reads the code to
-  answer, in a few paragraphs.
+  answer, in a few paragraphs. **Dictate** adds speech to the editable question or follow-up on browsers
+  with speech recognition. Press **Stop** to finish dictating, then send the question when it is ready.
 - **Chat** beside it: one message at a time, with the conversation so far, the
   analysis and the files. It can only read; changes are made in the TUI tab.
 
@@ -442,7 +443,7 @@ with Enter, as the title's own rename does. `POST /api/my/sessions` still takes 
   listing their paths under the prompt as the shed does. They go with the
   session's Remove.
 
-**Dictate**, beside Attach files, speaks the prompt with the browser's speech recognition (`public/dictation.js`,
+**Dictate**, beside Attach files, speaks the prompt with the browser's speech recognition (`shared/dictation.mjs`,
 shared with the phone's message box): settled words go after what is typed, the line under the prompt shows the ones
 still settling, and **Stop**, or Start, keeps them. It is hidden where the browser has none (Firefox). Chrome and Edge
 send the audio to Google and Microsoft, Safari to Apple; the console sees only the text.

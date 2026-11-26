@@ -3045,6 +3045,9 @@
     chat.show(view === 'chat' ? chatView(s) : null);
     slots.body.hidden = view !== 'tui';
     slots.plain.hidden = tab !== 'terminal';
+    if (tab !== 'review' && !slots.review.hidden) {
+      slots.review.querySelector('iframe')?.contentWindow?.postMessage('woodshed:review-hidden', window.location.origin);
+    }
     slots.review.hidden = tab !== 'review';
     slots.applog.hidden = tab !== 'applog';
     slots.diff.hidden = tab !== 'diff';

@@ -19,7 +19,7 @@
 // TWO CONSTRAINTS ON EVERYTHING BELOW, both inherited from server.mjs:
 //
 //  1. No backticks and no ${ inside the template literal, except the deliberate
-//     interpolations of tokenizeLine and createAskState. A stray backtick
+//     interpolations of shared scripts and constants. A stray backtick
 //     corrupts the *client* script while the server still parses and serves
 //     200s — which is why install.sh re-parses the served page rather than just
 //     the source.
@@ -27,10 +27,13 @@
 //     string on this page comes from a PR title, a diff hunk or a model, i.e.
 //     from somewhere untrusted.
 
+import { readFileSync } from 'node:fs';
 import { tokenizeLine } from './highlight.mjs';
 import { createAskState } from './askState.mjs';
 import { layoutDiagram } from './diagram.mjs';
 import { MAX_ASK_DEPTH, MAX_USER_QUESTION } from './qa.mjs';
+
+const DICTATION_SCRIPT = readFileSync(new URL('../dictation.mjs', import.meta.url), 'utf8');
 
 // The dark palette, written once here and interpolated into both blocks that
 // need it — the device query and the explicit [data-theme="dark"] stamp. Two
@@ -1503,6 +1506,7 @@ ${DARK_PALETTE}
       background: var(--panel); color: var(--ink);
     }
     .askrow button { padding: 0.4rem 0.8rem; font-size: 13px; }
+    .asklistening { color: var(--muted); font-size: 13px; margin: 0.4rem 0 0; }
     .aska { font-size: 13.5px; line-height: 1.6; margin-bottom: 0.6rem; }
     .aska:empty { display: none; }
     .askq {
@@ -1665,6 +1669,8 @@ ${DARK_PALETTE}
   </button>
 
   <script>
+    ${DICTATION_SCRIPT}
+
     // Inlined from review/highlight.mjs so the tokenizer has exactly one
     // source of truth. It must be self-contained — see the note in that file.
     ${tokenizeLine.toString()}
@@ -2044,6 +2050,14 @@ ${DARK_PALETTE}
     // Every piece of ask-panel state, and the only place any of it lives. See
     // review/askState.mjs for why it is a module rather than four variables.
     var ask = createAskState();
+    var finishAskDictation = null;
+    window.addEventListener('message', function onReviewHidden(event) {
+      if (event.source === window.parent && event.origin === location.origin
+          && event.data === 'woodshed:review-hidden' && finishAskDictation) finishAskDictation();
+    });
+    document.addEventListener('visibilitychange', function onDictationVisibility() {
+      if (document.hidden && finishAskDictation) finishAskDictation();
+    });
     var pollTimer = null;
 
     function el(tag, cls, text) {
@@ -2127,6 +2141,7 @@ ${DARK_PALETTE}
     }
 
     function render() {
+      if (finishAskDictation) finishAskDictation();
       var content = document.getElementById('content');
       // Emptying the page collapses its height, and the browser clamps the
       // scroll to whatever is left — so pressing anything that re-renders
@@ -5496,29 +5511,82 @@ ${DARK_PALETTE}
       input.setAttribute('aria-label', (followUp ? 'Follow-up about ' : 'Question about ') + where);
       input.value = ask.draft(anchor);
       var go = el('button', null, followUp ? 'Send' : 'Explain');
+      var dictate = el('button', 'quiet', 'Dictate');
+      dictate.type = 'button';
+      var speech = window.Woodshed.dictation;
+      var listening = el('p', 'asklistening');
+      listening.setAttribute('role', 'status');
+      listening.hidden = true;
       row.appendChild(input);
+      if (speech.available) row.appendChild(dictate);
       row.appendChild(go);
       panel.appendChild(row);
+      panel.appendChild(listening);
+
+      var recognition = null;
+      function updateDictation() {
+        dictate.textContent = recognition ? 'Stop' : 'Dictate';
+        input.readOnly = Boolean(recognition);
+        go.disabled = Boolean(recognition);
+        listening.hidden = !recognition;
+      }
+
+      function saveDraft() {
+        ask.setDraft(anchor, input.value);
+      }
+
+      function endDictation() {
+        recognition = null;
+        finishAskDictation = null;
+        updateDictation();
+      }
+
+      function finish() {
+        var pending = recognition.abort();
+        if (pending) input.value = (input.value.trimEnd() + ' ' + pending).trimStart();
+        saveDraft();
+        endDictation();
+      }
+
+      dictate.addEventListener('click', function onDictate() {
+        if (recognition) {
+          recognition.stop();
+          return;
+        }
+        recognition = speech.dictate(input, {
+          heard: function showWords(pending) {
+            listening.textContent = pending ? 'Listening. ' + pending : 'Listening.';
+          },
+          changed: saveDraft,
+          ended: endDictation,
+          error: showFlash,
+        });
+        if (!recognition) return;
+        finishAskDictation = finish;
+        listening.textContent = 'Listening.';
+        updateDictation();
+      });
 
       // A run that is still going when the panel is rebuilt: say so rather
       // than showing an idle box that looks like nothing was asked.
       if (ask.isBusy(anchor)) {
+        dictate.disabled = true;
         go.disabled = true;
         input.disabled = true;
         out.appendChild(waitingRow());
       }
 
-      input.addEventListener('input', function onEdit() {
-        ask.setDraft(anchor, input.value);
-      });
+      input.addEventListener('input', saveDraft);
 
       function run() {
+        if (recognition) return;
         var asked = input.value.trim();
         if (!asked && followUp) return;
         // Sent before this turn is added, so the server sees only what came before it.
         var before = ask.thread(anchor);
         ask.setDraft(anchor, input.value);
         ask.setBusy(anchor, true);
+        dictate.disabled = true;
         go.disabled = true;
         input.disabled = true;
         var oldErr = out.querySelector('.askerr');

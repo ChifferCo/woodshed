@@ -292,6 +292,7 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // read as well (shared/agents.cjs). The console image copies each to the same place (Dockerfile).
 const STATIC_ELSEWHERE = {
   'attention.mjs': path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'desktop', 'attention.mjs'),
+  'dictation.js': fileURLToPath(new URL('../shared/dictation.mjs', import.meta.url)),
   'agents.cjs': path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'shared', 'agents.cjs'),
 };
 const staticPath = (file) => STATIC_ELSEWHERE[file] ?? path.join(PUBLIC_DIR, file);
