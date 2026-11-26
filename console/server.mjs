@@ -277,6 +277,8 @@ import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
 import { createMcpTester } from './mcpTest.mjs';
 import { ROLES, roleById, roleDiffers, roleOf } from './peopleRoles.mjs';
 import { savedChoices } from './claudeSettings.mjs';
+import logins from './public/logins.cjs';
+const { sameLogin } = logins;
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // Served from elsewhere in the repo: the desktop app's rule for what notifies, which the console in a browser runs too
