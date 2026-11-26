@@ -640,28 +640,44 @@ test('a project file that does not parse stops the start with the reader\'s reas
   assert.match(run.stderr, /^project: /m, 'the reader\'s whole message is still logged');
 });
 
-test('a reader\'s message too long for one read still ends the start with its ERROR, under pipefail', () => {
-  // A stand-in reader writing many `project:` lines, as a quoted key with escaped newlines makes the real one do.
-  const run = spawnSync('bash', ['-c', [
+test('a failed start shows the repo\'s own reason, never what the installation\'s files say, which the log keeps', (t) => {
+  // The real reader. The status reaches a review's comment on the pull request: the installation's paths stay out of it.
+  const scratch = (prefix) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    return dir;
+  };
+  const start = (repoDir, files) => spawnSync('bash', ['-c', [
     'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
-    'project() { for i in $(seq 1 200000); do echo "project: .woodshed/project.yaml: line $i"; done >&2; return 1; }',
-    fn('readProjectFrom'), 'readProjectFrom from', 'echo "went on"',
-  ].join('\n')], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: isolatedEnv({ PATH: process.env.PATH }) });
-  assert.equal(run.status, 1, 'not 141, a pipe closed early');
-  assert.match(run.stdout, /ERROR: the project file could not be read: \.woodshed\/project\.yaml: line 1\n/);
-});
+    'project() { node "$SHARED_DIR/project.mjs" "$@"; }', fn('readProjectFrom'), 'readProjectFrom from', 'echo "went on"',
+  ].join('\n')], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, WOODSHED_PROJECT_FILES_DIR: files }) });
+  const errorOf = (run) => run.stdout.trim().split('\n').findLast((line) => line.includes('ERROR: '));
 
-test('a start whose installation\'s project file does not read keeps that file\'s reason in the log, out of its status', () => {
-  // The status reaches a review's comment on the pull request; the installation's file and its path are not the repo's.
-  const run = spawnSync('bash', ['-c', [
-    'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
-    'project() { echo "project: the installation\'s project file /srv/files/acme/app.yaml: not read as YAML (line 3: token: s3cr3t)" >&2; return 1; }',
-    fn('readProjectFrom'), 'readProjectFrom from',
-  ].join('\n')], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH }) });
-  assert.equal(run.status, 1);
-  assert.match(run.stdout, /ERROR: the project file could not be read\n/);
-  assert.doesNotMatch(run.stdout, /installation|s3cr3t/);
-  assert.match(run.stderr, /the installation's project file/, 'still in the log');
+  // The repo's own file does not read, and the installation has two files for the repo, differing in case.
+  const repo = fixtureCheckout(scratch('woodshed-reason-'), { repo: 'acme/app' });
+  fs.mkdirSync(path.join(repo, '.woodshed'));
+  fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), 'version: 1\nsurprise: true\n');
+  const files = scratch('woodshed-reason-files-');
+  fs.mkdirSync(path.join(files, 'acme'));
+  fs.writeFileSync(path.join(files, 'acme', 'app.yaml'), fixtureProject());
+  fs.writeFileSync(path.join(files, 'acme', 'App.yaml'), fixtureProject());
+  const both = start(repo, files);
+  assert.equal(both.status, 1);
+  assert.doesNotMatch(both.stdout, /went on/);
+  assert.match(errorOf(both), /ERROR: the project file could not be read: \.woodshed\/project\.yaml: has surprise, which is not a field/);
+  assert.ok(!both.stdout.includes(files), 'no installation path in the status');
+  assert.ok(both.stderr.includes(files), 'the reader\'s own message, in the log');
+
+  // No file of the repo's own, and the installation's does not read: the status says no more than that.
+  const bare = fixtureCheckout(scratch('woodshed-reason-bare-'), { repo: 'acme/app' });
+  const broken = scratch('woodshed-reason-broken-');
+  fs.mkdirSync(path.join(broken, 'acme'));
+  fs.writeFileSync(path.join(broken, 'acme', 'app.yaml'), 'version: 1\nregistry: private.example/secret-image\n');
+  const installation = start(bare, broken);
+  assert.equal(installation.status, 1);
+  assert.match(errorOf(installation), /ERROR: the project file could not be read$/);
+  assert.doesNotMatch(installation.stdout, /private\.example|secret-image/);
+  assert.ok(installation.stderr.includes(broken), 'the reader\'s own message, in the log');
 });
 
 test('a session starts only the services its project\'s env uses, and warns of a line whose variable is unset', (t) => {
