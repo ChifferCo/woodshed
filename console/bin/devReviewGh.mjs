@@ -51,7 +51,7 @@ if (args[0] === 'pr' && args[1] === 'list') {
 if (args[0] === 'pr' && args[1] === 'view' && other(args[2])) out(otherView(other(args[2])));
 if (args[0] === 'pr' && args[1] === 'view') {
   out({ id: 'PR_dev', number: s.number, title: s.title, state: s.state, isDraft: false, reviewDecision: decision(), headRefOid: head(),
-    baseRefName: s.base, mergeStateStatus: 'CLEAN', statusCheckRollup: rollup() });
+    baseRefName: s.base, mergeStateStatus: s.threads.some((t) => !t.resolved) ? 'BLOCKED' : 'CLEAN', statusCheckRollup: rollup() });
 }
 if (args[0] === 'pr' && args[1] === 'review') {
   const state = args.includes('--approve') ? 'APPROVED' : args.includes('--request-changes') ? 'CHANGES_REQUESTED' : 'COMMENTED';
@@ -120,6 +120,35 @@ if (args[0] === 'api' && args[1] === 'graphql') {
     save();
     out({ data: {} });
   }
+  if (q.includes('viewerViewedState')) {
+    const o = other(fields.pr);
+    out({ data: { repository: { pullRequest: {
+      id: o ? 'PR_dev' + o.number : 'PR_dev', files: { nodes: [], pageInfo: { hasNextPage: false } },
+    } } } });
+  }
+  if (q.includes('resolveReviewThread')) {
+    const data = {};
+    for (const [key, id] of Object.entries(fields)) {
+      if (!/^id[0-9]+$/.test(key)) continue;
+      const thread = [s, ...s.others].flatMap((pr) => pr.threads || []).find((t) => t.id === id);
+      if (!thread || thread.canResolve === false) continue;
+      thread.resolved = true;
+      data[key] = { thread: { isResolved: true } };
+    }
+    save();
+    out({ data });
+  }
+  if (q.includes('viewerCanResolve')) {
+    const pr = other(fields.pr) || s;
+    const nodes = (pr.threads || []).map((t) => ({
+      id: t.id, path: t.path, line: t.outdated ? null : t.line, originalLine: t.line,
+      isResolved: !!t.resolved, isOutdated: !!t.outdated, viewerCanResolve: t.canResolve !== false,
+      comments: { nodes: [{ state: 'SUBMITTED', body: t.comments[0].body, url: urlOf(pr), author: { login: t.comments[0].author } }] },
+    }));
+    out({ data: { repository: { pullRequest: {
+      state: pr.state || 'OPEN', reviewThreads: { nodes, pageInfo: { hasNextPage: false } },
+    } } } });
+  }
   if (q.includes('reviewThreads') && other(fields.pr)) {
     const o = other(fields.pr);
     const pending = o.pending ? o.pending.comments : [];
@@ -147,7 +176,7 @@ if (args[0] === 'api' && args[1] === 'graphql') {
   if (q.includes('reviewThreads')) {
     const pendingThreads = (s.pending ? s.pending.comments : []).map((c) => ({ id: 'T' + c.id, path: c.path, diffSide: c.side, line: c.line, startLine: null, isResolved: false, isOutdated: false,
       comments: { pageInfo: { hasNextPage: false }, nodes: [{ id: c.id, fullDatabaseId: null, author: { login: s.login }, body: c.body, state: 'PENDING', url: null, createdAt: at(), viewerCanDelete: true, viewerDidAuthor: true }] } }));
-    const posted = s.threads.map((t) => ({ id: t.id, path: t.path, diffSide: t.side, line: t.line, originalLine: t.line, startLine: null, isResolved: !!t.resolved, isOutdated: false,
+    const posted = s.threads.map((t) => ({ id: t.id, path: t.path, diffSide: t.side, line: t.outdated ? null : t.line, originalLine: t.line, startLine: null, isResolved: !!t.resolved, isOutdated: !!t.outdated,
       comments: { pageInfo: { hasNextPage: false }, nodes: t.comments.map((c, i) => ({ id: c.id, fullDatabaseId: null, author: { login: c.author }, body: c.body, state: 'SUBMITTED', url: url, createdAt: c.at, viewerCanDelete: c.author === s.login, viewerDidAuthor: c.author === s.login, pullRequestReview: i === 0 && t.review ? { id: t.review } : null })) } }));
     out({ data: { repository: { pullRequest: {
       id: 'PR_dev', headRefOid: head(), baseRefName: s.base, body: s.body, bodyHTML: '', author: { login: s.login }, createdAt: s.createdAt, url,
@@ -194,6 +223,7 @@ export function writeDevReviewGh(dir, { repo, branch, base, slug, number, title,
     threads: [
       { id: 'PRRT_devai1', review: 'PRR_devai', path: 'src/webhooks/deliver.mjs', line: 14, side: 'RIGHT', comments: [{ id: 'PRRC_devai1', author: 'woodshed-reviewer', body: '**Codex:** Each attempt waits up to \`config.timeoutMs\` and then up to \`config.maxDelayMs\`, for \`maxRetries + 1\` attempts: a slow subscriber holds the worker for minutes. Cap the whole delivery, not only each wait.', at: now }, { id: 'PRRC_devai1r', author: 'octocat', body: 'The worker has its own deadline, I think?', at: now }] },
       { id: 'PRRT_devai2', review: 'PRR_devai', path: 'src/webhooks/retry.mjs', line: 3, side: 'RIGHT', comments: [{ id: 'PRRC_devai2', author: 'woodshed-reviewer', body: '**Claude Code:** 408 is retried. That is right for a proxy timing out, but a subscriber that answers 408 on purpose will be called five times.', at: now }] },
+      { id: 'PRRT_outdated', path: 'src/webhooks/legacy.mjs', line: 8, side: 'RIGHT', outdated: true, comments: [{ id: 'PRRC_outdated', author: 'octocat', body: 'Does the legacy sender still need this fallback?', at: now }] },
       { id: 'PRRT_dev1', path: 'src/webhooks/retry.mjs', line: 3, side: 'RIGHT', comments: [{ id: 'PRRC_dev1', author: 'octocat', body: 'Should 408 be here? Some proxies send it for a slow upload.', at: now }] },
     ],
     pending: null,

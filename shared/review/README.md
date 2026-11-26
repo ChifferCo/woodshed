@@ -295,16 +295,18 @@ and uses that same credential for the contents read.
   run resuming from its close handler would write a fresh artifact over the
   discard.
 
-- **Six routes write to GitHub. `POST /merge` is the one that cannot be
+- **Seven routes write to GitHub. `POST /merge` is the one that cannot be
   undone, and `/submit` is the loudest of the rest.** `/submit` was once
   the only one, and several comments in this tree still said so after the
-  others arrived — worth remembering when adding a seventh. The full set:
+  others arrived. The full set:
   `/submit` (an approval, a change request or a comment, with every draft
   comment attached), `/comments` in its `now` mode (a line comment, public
   immediately) and in its draft mode (a pending comment, private until
   submitted), `DELETE /comments` (removes one or the whole draft), `/viewed`
   (this account's per-file tick, which nobody else sees), `PATCH /title`
-  (renames the pull request) and `POST /merge` (squash-merges it, or adds it to the merge queue when its base branch has one). Everything else here reads: `gh pr view`,
+  (renames the pull request), `POST /conversations` (resolves the displayed threads the signed-in person can resolve)
+  and `POST /merge` (squash-merges it, or adds it to the merge queue when its base branch has one).
+  Everything else here reads: `gh pr view`,
   a `git diff` of the fetched base and head, and a `claude` run over a diff already on disk.
 
 - **A pull request's diff is computed here, not asked of GitHub.** `gh pr diff` names no commit, so a push between
@@ -332,6 +334,10 @@ and uses that same credential for the contents read.
   not argv, because Linux caps one argument at 128 KiB and a long review would
   otherwise fail as a spawn error.
 
+- **Unresolved conversations** is available in the Review toolbar and in the merge sheet. It reads all pages of
+  GitHub review threads, including outdated ones, and shows the first comment with a link to the conversation.
+  **Resolve all** acts on the displayed threads GitHub lets the signed-in person resolve. It refreshes the list and
+  any open merge checklist after the attempt.
 - **A merge is refused unless the pull request is still what this page
   showed.** Which write it is comes from GitHub, per pull request:
   `isMergeQueueEnabled` on a fresh read. A base branch with a merge queue

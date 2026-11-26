@@ -891,6 +891,70 @@ export function graphqlArgv({ query, strings = {}, numbers = {} }) {
   return args;
 }
 
+const UNRESOLVED_QUERY = `query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){
+  repository(owner:$owner,name:$repo){
+    pullRequest(number:$pr){
+      state
+      reviewThreads(first:100,after:$cursor){
+        pageInfo{ hasNextPage endCursor }
+        nodes{
+          id path line originalLine isResolved isOutdated viewerCanResolve
+          comments(first:1){ nodes{ state body url author{ login } } }
+        }
+      }
+    }
+  }
+}`;
+
+export async function fetchUnresolvedThreads({ pr, slug }) {
+  const [owner, repo] = slug.split('/');
+  const threads = [];
+  let cursor = null;
+  do {
+    const result = await run('gh', graphqlArgv({
+      query: UNRESOLVED_QUERY, strings: { owner, repo, cursor }, numbers: { pr },
+    }), { timeoutMs: GH_TIMEOUT_MS });
+    const read = readGraphql(result);
+    if (!read.ok) return read;
+    const pull = read.data?.repository?.pullRequest;
+    if (pull?.state !== 'OPEN') {
+      return { ok: false, status: 409, error: 'this pull request is no longer open' };
+    }
+    const { nodes, pageInfo } = pull.reviewThreads;
+    for (const thread of nodes) {
+      const comment = thread.comments.nodes[0];
+      if (thread.isResolved || !comment || comment.state === 'PENDING') continue;
+      threads.push({
+        id: thread.id, path: thread.path, line: thread.line ?? thread.originalLine,
+        outdated: thread.isOutdated, canResolve: thread.viewerCanResolve,
+        author: comment.author?.login || 'someone', body: comment.body, url: comment.url,
+      });
+    }
+    cursor = pageInfo.hasNextPage ? pageInfo.endCursor : null;
+  } while (cursor);
+  return { ok: true, threads };
+}
+
+// Send only IDs the caller matched against the current pull request. Aliases
+// keep the number of GitHub round trips small even for a long review.
+export async function resolveReviewThreads(ids) {
+  for (let start = 0; start < ids.length; start += 50) {
+    const strings = Object.fromEntries(ids.slice(start, start + 50).map((id, index) => ['id' + index, id]));
+    const keys = Object.keys(strings);
+    const variables = keys.map((key) => '$' + key + ':ID!').join(',');
+    const fields = keys.map((key) => `${key}:resolveReviewThread(input:{threadId:$${key}}){thread{isResolved}}`).join(' ');
+    const result = await run('gh', graphqlArgv({
+      query: `mutation(${variables}){${fields}}`, strings,
+    }), { timeoutMs: GH_TIMEOUT_MS });
+    const read = readGraphql(result);
+    if (!read.ok) return read;
+    if (keys.some((key) => read.data?.[key]?.thread?.isResolved !== true)) {
+      return { ok: false, status: 502, error: 'GitHub did not confirm every resolution' };
+    }
+  }
+  return { ok: true };
+}
+
 // The merge risk and QA checks on the head commit, by name, in a read of their own: a token GitHub refuses part of a
 // check suite to (an App it may not see) then costs the tab its two boxes, never the comments or a verdict, which
 // fetchReviewState reads. No App field is asked for, since that is what a restricted token was refused.
