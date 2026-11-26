@@ -4,6 +4,7 @@
 // few that name something (the pull request's number, its base branch) must name this session's.
 
 import { COUNT_LINES, escaped } from './qaSummary.mjs';
+import { isKnownReason } from '../shared/codeReview/failureReason.mjs';
 
 const AGENT = '(?:Claude Code|Codex|Grok Build|OpenCode)';
 const NAMES = `${AGENT}(?:(?:, | and )${AGENT})*`;
@@ -43,7 +44,8 @@ export function reviewSummaryProblem(text, { number, base }) {
   if (!lines.length || !heading.test(lines[0])) return 'its first line is not the run\'s heading';
   for (let i = 1; i < lines.length; i += 1) {
     const step = /^\[review \d\d:\d\d:\d\d\] (.*)$/.exec(lines[i]);
-    const fine = step ? steps.some((re) => re.test(step[1]))
+    const said = step && new RegExp(`^${AGENT} wrote no verdict: (.+)$`).exec(step[1]);
+    const fine = step ? steps.some((re) => re.test(step[1])) || !!(said && isKnownReason(said[1]))
       : HEADINGS.test(lines[i]) || VERDICT.test(lines[i]) || /^Started; its outcome is not known yet\.$/.test(lines[i]) || COUNT_LINES.some((re) => re.test(lines[i]));
     if (!fine) return `line ${i + 1} is not a line a summary has`;
   }

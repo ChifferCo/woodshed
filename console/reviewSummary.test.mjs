@@ -12,6 +12,7 @@ const GOOD = `Review of pull request #7 against main, session 0a1b2c3d
 [review 10:07:02] Codex ended (exit=0)
 [review 10:07:03] Grok Build took longer than 20 minutes and was stopped
 [review 10:07:03] Waiting for Codex and Grok Build to finish
+[review 10:07:04] Codex wrote no verdict: it ran past its time limit and was stopped
 
 ## review
 Ended: ran out of turns before it finished (error_max_turns)

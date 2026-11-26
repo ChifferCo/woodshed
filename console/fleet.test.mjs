@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sharedHomeName } from './homes.mjs';
 import { withDefaultReview } from './defaultReview.mjs';
+import { parseReviewReport } from './reviewSessions.mjs';
 
 import { sessionForStartToken, startTokenHash } from './sessionStarts.mjs';
 import { commentConsoleUrl, createFleet, failedComment, failureReason, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
@@ -3440,6 +3441,17 @@ test('a review that wrote no verdict submits nothing and stops the session', asy
   await fleet.reviewFinished(session, { conclusion: null, sha: 'a'.repeat(40), costUsd: null });
   assert.deepEqual([calls.reviews, calls.checks.filter((c) => c.name === 'Merge risk')], [[], []]);
   assert.deepEqual([session.review.reported, session.review.conclusion], [true, null]);
+});
+
+test('a review that wrote no verdict says why on the pull request, and only in the words the session\'s classifier makes', async () => {
+  const reason = 'its plan or API usage limit looks used up (check the plan or billing behind its sign-in)';
+  const { fleet, calls } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  const raw = JSON.stringify({ conclusion: null, sha: 'a'.repeat(40), why: `Codex: ${reason}; Grok Build: sk-SECRET123; Nobody: ${reason}` });
+  await fleet.reviewFinished(fleet.sessions()[0], parseReviewReport(raw));
+  const body = calls.comments.at(-1).body;
+  assert.ok(body.includes(`Codex: ${reason}`), 'the known reason reaches the comment');
+  assert.ok(!body.includes('SECRET') && !body.includes('Nobody'), 'text the classifier never makes is dropped');
 });
 
 test('a review session is not started for a pull request from a fork', async () => {

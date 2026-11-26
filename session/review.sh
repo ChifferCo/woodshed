@@ -59,8 +59,9 @@ runClaude() {
   "$SESSION_DIR/bin/claude" --model opus -p "$(cat "$DIR/review-prompt.md")" --max-turns 60 \
     --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(ls:*),Bash(wc:*),Read,Grep,Glob,Write,Edit" \
     --output-format stream-json --verbose 2>&1 | tee "$DIR/logs/review.jsonl" \
-    | jq -rR --unbuffered 'fromjson? | select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text' \
-    || true
+    | jq -rR --unbuffered 'fromjson? | select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text'
+  # claude's own status, for why it wrote no verdict (the pipeline's last command is jq).
+  echo "${PIPESTATUS[0]}" > "$DIR/logs/claude.exit"
   # How claude ended, so a review that stops early says why in the pane and the session's log.
   jq -rR 'fromjson? | select(.type == "result") | "subtype=\(.subtype) is_error=\(.is_error) turns=\(.num_turns // "?")"' \
     "$DIR/logs/review.jsonl" 2>/dev/null | tail -1 | while read -r ended; do sayDetail "Claude ended ($ended)"; done
@@ -147,6 +148,7 @@ runGrok() {
     > "$DIR/logs/grok.jsonl" 2>&1 < /dev/null
   code=$?
   [ "$code" = 124 ] && say "Grok Build took longer than $AGENT_MINUTES minutes and was stopped"
+  echo "$code" > "$DIR/logs/grok.exit"
   say "Grok Build ended (exit=$code)"
   sayRefusal "Grok Build" "$DIR/logs/grok.jsonl"
   return 0
@@ -176,6 +178,7 @@ runOpencode() {
     "$(agentPrompt OpenCode "$OPENCODE_DIR")" > "$DIR/logs/opencode.jsonl" 2>&1 < /dev/null
   code=$?
   [ "$code" = 124 ] && say "OpenCode took longer than $AGENT_MINUTES minutes and was stopped"
+  echo "$code" > "$DIR/logs/opencode.exit"
   say "OpenCode ended (exit=$code)"
   sayRefusal OpenCode "$DIR/logs/opencode.jsonl"
   return 0
@@ -247,6 +250,7 @@ runCodex() {
     code=$?
   fi
   [ "$code" = 124 ] && say "Codex took longer than $CODEX_MINUTES minutes and was stopped"
+  echo "$code" > "$DIR/logs/codex.exit"
   say "Codex ended (exit=$code)"
   # What the console refused, in the pane: an author's sign-in turned off or expired since the review started.
   grep -o '"message":"[^"]*sign-in[^"]*"' "$DIR/logs/codex.jsonl" 2>/dev/null | tail -1 | while read -r why; do sayDetail "Codex: $why"; done
@@ -355,13 +359,25 @@ sendLog() {
   postLog full "$DIR/logs/run.log"
 }
 
+# Each reviewer's reason for no verdict, as one line for the console's log.
+whyAll() {
+  local a
+  while read -r a; do [ -f "$(dirOf "$a")/why-no-verdict.txt" ] && printf '%s: %s; ' "$(productOf "$a")" "$(cat "$(dirOf "$a")/why-no-verdict.txt")"; done < <(reviewers)
+}
+
 sendReport() {
-  local verdict code body a pairs=()
-  while read -r a; do pairs+=("$a=$(dirOf "$a")"); done < <(reviewers)
+  local verdict code body a log pairs=()
+  while read -r a; do
+    pairs+=("$a=$(dirOf "$a")")
+    # Why a reviewer wrote no verdict, one fixed sentence (never its log's text), for the note on GitHub and the pane.
+    log=$DIR/logs/$a.jsonl; [ "$a" = claude ] && log=$DIR/logs/review.jsonl
+    node "$REVIEW" reason "$(dirOf "$a")" "$log" "$(cat "$DIR/logs/$a.exit" 2>/dev/null)" 2>/dev/null || true
+    [ -f "$(dirOf "$a")/why-no-verdict.txt" ] && say "$(productOf "$a") wrote no verdict: $(cat "$(dirOf "$a")/why-no-verdict.txt")"
+  done < <(reviewers)
   # No verdict still reports, with a null conclusion, so the console stops the session rather than leaving it idle.
   if [ "${#pairs[@]}" -gt 1 ]; then verdict=$(node "$REVIEW" merge "${pairs[@]}")
   elif [ "${#pairs[@]}" = 1 ] && ! withClaude; then a=${pairs[0]%%=*}; verdict=$(node "$REVIEW" verdict "${pairs[0]#*=}" "$a")
-  else verdict=$(node "$REVIEW" verdict "$DIR"); fi || { say "The reviewer wrote no verdict, so nothing is submitted"; verdict='{"conclusion":null}'; }
+  else verdict=$(node "$REVIEW" verdict "$DIR"); fi || { say "The reviewer wrote no verdict, so nothing is submitted"; verdict=$(jq -cn --arg why "$(whyAll)" '{conclusion: null, why: $why}'); }
   VERDICT_WORD=$(jq -r '.conclusion // "none" | select(. == "APPROVE" or . == "REQUEST_CHANGES" or . == "COMMENT" or . == "none")' <<< "$verdict" 2>/dev/null)
   sendLog
   cost_of() { [ -f "$1" ] && jq -rR 'fromjson? | select(.type == "result") | .total_cost_usd // empty' "$1" | tail -1; }

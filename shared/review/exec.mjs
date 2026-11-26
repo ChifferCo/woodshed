@@ -21,24 +21,25 @@ const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 /**
  * @param {string} file binary to run, resolved via PATH
  * @param {string[]} args argv, passed through without shell interpretation
- * @param {{cwd?: string, timeoutMs?: number, maxBytes?: number, env?: object}} [opts]
- * @returns {Promise<{status: number|null, stdout: string, stderr: string, timedOut: boolean}>}
+ * @param {{cwd?: string, timeoutMs?: number, maxBytes?: number, env?: object, binary?: boolean}} [opts]
+ * @returns {Promise<{status: number|null, stdout: string|Buffer, stderr: string, timedOut: boolean, truncated?: boolean}>}
  *   Never rejects for a non-zero exit; a failed spawn resolves with status null
  *   and the error in stderr, so callers have exactly one shape to handle.
  */
 export function run(file, args, opts = {}) {
-  const { cwd, timeoutMs = 60_000, maxBytes = DEFAULT_MAX_BYTES, env } = opts;
+  const { cwd, timeoutMs = 60_000, maxBytes = DEFAULT_MAX_BYTES, env, binary = false } = opts;
 
   return new Promise((resolve) => {
     let child;
     try {
       child = spawn(file, args, { cwd, env: env || process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (err) {
-      resolve({ status: null, stdout: '', stderr: String(err.message), timedOut: false });
+      resolve({ status: null, stdout: binary ? Buffer.alloc(0) : '', stderr: String(err.message), timedOut: false });
       return;
     }
 
     let stdout = '';
+    const chunks = [];
     let stderr = '';
     let stdoutBytes = 0;
     let settled = false;
@@ -54,19 +55,23 @@ export function run(file, args, opts = {}) {
       }, 5_000).unref();
     }, timeoutMs);
 
-    // Decode as a stream, not per chunk: a multi-byte character straddling a
-    // chunk boundary would otherwise become two U+FFFD, and for a patch that
-    // corruption is cached and then rendered as if it were the real diff.
-    child.stdout.setEncoding('utf-8');
+    // Decode text as a stream so a multi-byte character split across chunks
+    // survives. Binary stdout keeps the original bytes.
+    if (!binary) child.stdout.setEncoding('utf-8');
     child.stderr.setEncoding('utf-8');
 
     child.stdout.on('data', function onOut(chunk) {
-      // Byte length explicitly: `chunk` is a string now, and the cap is a
-      // memory bound, not a character count.
+      // Apply the memory cap in bytes for both text and binary output.
       stdoutBytes += Buffer.byteLength(chunk, 'utf-8');
       // Truncate rather than buffer without bound: a runaway command must not
       // be able to exhaust the shed's memory.
-      if (stdoutBytes <= maxBytes) stdout += chunk;
+      if (stdoutBytes <= maxBytes) {
+        if (binary) chunks.push(chunk);
+        else stdout += chunk;
+      } else if (binary) {
+        // Binary callers need the complete file, so stop reading once it is too large.
+        child.kill();
+      }
     });
     child.stderr.on('data', function onErr(chunk) {
       if (stderr.length < 64 * 1024) stderr += chunk;
@@ -76,7 +81,7 @@ export function run(file, args, opts = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ status, stdout, stderr, timedOut, truncated: stdoutBytes > maxBytes });
+      resolve({ status, stdout: binary ? Buffer.concat(chunks) : stdout, stderr, timedOut, truncated: stdoutBytes > maxBytes });
     }
 
     child.on('error', function onSpawnError(err) {
