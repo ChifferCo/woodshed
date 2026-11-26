@@ -1,5 +1,5 @@
-The Q&A tree is the review page's **Q&A** tab: questions a newcomer to the codebase asked about the change, each answered
-from the code, with the follow-ups an answer raised nested under it. A reader opens only the questions they have.
+The Q&A tree is the review page's **Q&A** tab: questions and answers generated from the
+reviewed code, with follow-ups nested under their answers. A reader opens only the questions they have.
 
 It is drawn by the review page (`shared/review/page.mjs`, `.qa-*`), the shed's own document, framed by the console's
 **Review** tab. That page has its own palette, so the tree uses the page's variables rather than `style.css`'s; the
@@ -16,8 +16,8 @@ preview shows it in the console's nearest tokens. The pairs: `--ink` is `ink`, `
 - No section head and no intro sentence: the tab's name says what it is. The tree opens with its tools row, **Open
   all**, **Close all** and **Ask again** as quiet buttons, set as far below the tab bar as the first section head on
   the other tabs. Never orange: asking again
-  is not the page's primary action. While a run is going, the line reads what it is doing ("Reading the code to answer
-  6 questions…") beside a spinner, and Ask again is not offered.
+  is not the page's primary action. While a run is going, the line reads what it is doing ("Reading the code and writing
+  questions and answers…") beside a spinner, and Ask again is not offered.
 - An empty or replaced Q&A says so in a sentence ("There is no Q&A for this diff yet.") with **Ask the questions**, a
   quiet button too. A failure says what went wrong, as every error does.
 - The reader asks their own. An open answer ends, after its follow-ups, with a one-line field ("Ask a follow-up about
