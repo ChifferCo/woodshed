@@ -53,7 +53,9 @@
 //   POST /api/my/github/disconnect
 //   POST /api/my/home/forget     deletes your saved Claude home: MCP logins, memory, transcripts
 //   POST /api/my/sessions/<id>/resume   a stopped private session again, claude's conversation and all; {"herdrParent": true}
-//                                       as a start's, for that run alone
+//                                       as a start's, for that run alone; {"latestImage": true} on a new machine from the
+//                                       repo's latest image, leaving the one its launcher kept for it, data and all
+//   GET  /api/my/sessions/<id>/machine  {kept, outdated}: whether its launcher keeps a machine for it, made from an older image
 //   POST /api/my/sessions/<id>/handoff  {"agent": "codex", "model"?, "effort"?, "permissionMode"?, "note"?: "...",
 //                                       "conversation"?: true}   a running private session's work into a new one run by
 //                                       that agent, on its branch, with its conversation attached; it stops (handoff.mjs)
@@ -410,6 +412,7 @@ const PULLS_FRESH_MS = 60_000;
 const MY_FILE_RE = /^\/api\/my\/files\/([a-z-]+)(\/reset)?$/;
 const MY_GITHUB_RE = /^\/api\/my\/github\/(identity|disconnect)$/;
 const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove|handoff)$/;
+const MY_SESSION_MACHINE_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/machine$/;
 const MY_PULL_REVIEW_RE = /^\/api\/my\/pulls\/([1-9][0-9]{0,8})\/review$/;
 const MY_TUNNEL_RE = /^\/api\/my\/tunnel-token(\/remove)?$/;
 const MY_CLI_REVOKE_RE = /^\/api\/my\/cli-tokens\/([0-9a-f]{16})\/revoke$/;
@@ -1837,7 +1840,7 @@ export function createHandler({
    * My Woodshed's Resume, with its checks, for the page and for a session resuming one it started (sessionStarts.mjs).
    * @returns {Promise<{status: number, body: object}>}
    */
-  async function resumeMine(login, id, { herdrParent = false } = {}) {
+  async function resumeMine(login, id, { herdrParent = false, latestImage = false } = {}) {
     const resuming = fleet.find(id);
     // Whose it is before anything of it is read: someone else's private session answers as one that does not exist.
     if (!resuming || resuming.owner !== login) return { status: 409, body: { error: 'no session you can open with that id' } };
@@ -1853,7 +1856,7 @@ export function createHandler({
       return { status: 403, body: { error: `you can no longer start sessions on ${resuming.project}: you have no write access to its repo, or it is not one of this console's` } };
     }
     try {
-      return { status: 201, body: publicSession(await fleet.resumePrivate({ owner: login, id, background: true, herdrParent })) };
+      return { status: 201, body: publicSession(await fleet.resumePrivate({ owner: login, id, background: true, herdrParent, latestImage })) };
     } catch (err) {
       if (!err?.shown) throw err;
       return { status: err.status ?? 409, body: { error: err.message } };
@@ -1994,7 +1997,7 @@ export function createHandler({
           return reply(res, 200, { removed: actionMatch[1] });
         }
         if (actionMatch[2] === 'handoff') return await handOff(res, login, actionMatch[1], body);
-        const answer = await resumeMine(login, actionMatch[1], { herdrParent: body?.herdrParent === true });
+        const answer = await resumeMine(login, actionMatch[1], { herdrParent: body?.herdrParent === true, latestImage: body?.latestImage === true });
         return reply(res, answer.status, answer.body);
       }
       if (pathname === '/api/my/home/forget') {
@@ -3209,6 +3212,15 @@ export function createHandler({
       return reply(res, 200, viewPrefs.sessionView(user.login));
     }
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
+    const machineMatch = MY_SESSION_MACHINE_RE.exec(pathname);
+    if (machineMatch) {
+      try {
+        return reply(res, 200, await fleet.keptMachine({ owner: user.login, id: machineMatch[1] }));
+      } catch (err) {
+        if (!err?.shown) throw err;
+        return reply(res, 404, { error: err.message });
+      }
+    }
     if (pathname === '/api/my/projects') return reply(res, 200, await projectsView(user.login));
     if (pathname === '/api/my/codex-models') return reply(res, 200, codexModels ? await codexModels.list(user.login) : { models: BUILT_IN_CODEX_MODELS, source: 'built-in', note: null });
     if (pathname === '/api/my/grok-models') return reply(res, 200, grokModels ? await grokModels.list(user.login) : { models: [], source: null, note: 'type a model name, since this console reads no Grok Build models' });

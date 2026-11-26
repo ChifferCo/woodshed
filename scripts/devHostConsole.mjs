@@ -5,7 +5,9 @@
 // calls GitHub: the account, its repos and its links are made up, and what is added lasts until the console stops.
 // DEV_CONSOLE_BLOCKED_REPO=<owner/name> also gives that repo a made-up blocker through the projectReadiness hook. Each
 // repo's settings page gets made-up groups of the program's own through the repoPage hook (settingsMarkup.mjs): their
-// forms post nowhere here.
+// forms post nowhere here. Its launcher keeps a made-up machine for /s/fa11ed01, made from an older image (a launcher's
+// keptMachine, providers/README.md), for its page's Resume on the latest image: the start that follows is the docker
+// launcher's own, told `latestImage`, which it logs.
 import { run } from '../providers/console.mjs';
 import { isMain } from '../shared/isMain.mjs';
 import { actions, button, figures, form, group, howTo, html, note, pill, row, sub, textArea, valueBox } from '../console/settingsMarkup.mjs';
@@ -89,4 +91,22 @@ export function devRepoPage() {
   ]}`;
 }
 
-if (isMain(import.meta.url)) run({ repos: devHostRepos(), projectReadiness: devReadiness(), repoPage: devRepoPage() });
+/** The provider's launcher, keeping a made-up outdated machine for `outdated`'s sessions until one resumes on the latest image. */
+export function devKeptMachines(provider, outdated = ['fa11ed01']) {
+  const kept = new Set(outdated);
+  const { launcher } = provider;
+  return {
+    ...provider,
+    launcher: Object.assign(Object.create(launcher), {
+      async keptMachine(sessionId) {
+        return kept.has(sessionId) ? { outdated: true } : null;
+      },
+      async start(sessionId, env, options = {}) {
+        if (options.latestImage && kept.delete(sessionId)) console.log('devKeptMachines: outdated machine left, a new one made', { sessionId });
+        return launcher.start(sessionId, env);
+      },
+    }),
+  };
+}
+
+if (isMain(import.meta.url)) run({ repos: devHostRepos(), projectReadiness: devReadiness(), repoPage: devRepoPage(), withProvider: devKeptMachines });
