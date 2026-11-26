@@ -725,10 +725,10 @@ async function newestRollout(codexHome, skip = null) {
  *   partial: older entries were left out, by the read or by the limit. unchanged: the newest record is still the
  *   one written at `since`, so the caller's entries stand
  */
-export async function readSessionTranscript({ agent, claudeDir, codexHome, home = os.homedir(), grokHome = path.join(home, '.grok'), conversation, root, limit = MAX_ENTRIES, since = null, writtenFrom = 0, resume = null, skip = null, file }) {
+export async function readSessionTranscript({ agent, claudeDir, codexHome, home = os.homedir(), grokHome = path.join(home, '.grok'), opencodeDb = openCodeDb(home), conversation, root, limit = MAX_ENTRIES, since = null, writtenFrom = 0, resume = null, skip = null, file }) {
   const max = Math.max(1, Math.min(MAX_ENTRIES, Math.trunc(Number(limit)) || MAX_ENTRIES));
   if (agent === 'opencode') {
-    const read = await readOpenCode({ dbFile: openCodeDb(home), root, since });
+    const read = await readOpenCode({ dbFile: opencodeDb, root, since });
     if (!read) return { agent, entries: [], partial: false, writtenAt: null };
     if (read.unchanged) return { agent, unchanged: true, writtenAt: read.writtenAt };
     return { agent, entries: capDiffs(read.entries.slice(-max)), partial: read.partial || read.entries.length > max, writtenAt: read.writtenAt };

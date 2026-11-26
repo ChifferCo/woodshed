@@ -179,7 +179,7 @@ argument). The pick is kept per session in the browser tab.
 **Stop** in the switch's menu ends one. An extra Codex agent runs on its owner's Codex sign-in, which the
 console sends with that start alone, or on the team's OpenAI key through the console's proxy, which the session may use
 only once the agent started (`fleet.allowAgent`), as a Codex session does. To start Grok Build, save your xAI API key or
-Grok Build login on My settings. Grok uses that sign-in and has its own Chat and TUI. A session's lockdown drops the
+Grok Build login on My settings. OpenCode uses the saved provider sign-ins from `opencode auth login`. Both agents have their own Chat and TUI. A session's lockdown drops the
 proxy access at once and cuts
 its calls on the way (`openaiProxy: calls cut at the lockdown`). A shared session, a question, a review and a QA run have none, nor a session
 that has seen production data: its lockdown stops them. They last while the session runs: a Resume starts its own

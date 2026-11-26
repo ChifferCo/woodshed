@@ -2320,23 +2320,23 @@ export function createHandler({
       } catch (err) {
         return reply(res, 400, { error: err.message });
       }
-      if (picked.agent === 'opencode') return reply(res, 400, { error: 'the agent must be claude, codex or grok' });
       const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
       if (prompt.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in the first message` });
       // A direct Anthropic call must use the owner's credential, not the session token used by the plan proxy.
       const primary = agentsRegistry.agent(agentsRegistry.agentOfSession(session));
-      let grokAuth = null;
-      if (picked.agent === 'grok' && (session.kind === 'ask' || ['review', 'qa', 'slack'].includes(session.trigger))) {
-        return reply(res, 409, { error: 'Grok Build starts only beside a private coding session' });
+      const extra = agentsRegistry.agent(picked.agent);
+      let agentAuth = null;
+      if (extra.signIn && (session.kind === 'ask' || ['review', 'qa', 'slack'].includes(session.trigger))) {
+        return reply(res, 409, { error: `${extra.product} starts only beside a private coding session` });
       }
-      if (picked.agent === 'grok' && primary.id !== 'grok') {
+      if (extra.signIn && primary.id !== extra.id) {
         try {
-          grokAuth = await userSettings?.agentAuth?.(session.owner, 'grok');
+          agentAuth = await userSettings?.agentAuth?.(session.owner, extra.id);
         } catch {
-          console.warn('console: Grok Build sign-in not read for an agent', { id: session.id });
-          return reply(res, 502, { error: 'the console could not read your Grok Build sign-in: try again' });
+          console.warn(`console: ${extra.product} sign-in not read for an agent`, { id: session.id });
+          return reply(res, 502, { error: `the console could not read your ${extra.product} sign-in: try again` });
         }
-        if (!grokAuth) return reply(res, 409, { error: 'save your Grok Build sign-in on My settings first' });
+        if (!agentAuth) return reply(res, 409, { error: `save your ${extra.product} sign-in on My settings first` });
         if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
       }
       const needsClaudeToken = picked.agent === 'claude' && !primary.teamCredential;
@@ -2373,7 +2373,7 @@ export function createHandler({
       return toStatusd(req, res, session, {
         // Older images refuse this route rather than ignoring the credential and launching on the session token.
         method: 'POST', path: needsClaudeToken ? '/agents/with-claude-token' : '/agents',
-        body: { ...picked, prompt, ...(claudeToken ? { claudeToken } : {}), ...(codexAuth ? { codexAuth } : {}), ...(grokAuth ? { grokAuth } : {}) },
+        body: { ...picked, prompt, ...(claudeToken ? { claudeToken } : {}), ...(codexAuth ? { codexAuth } : {}), ...(agentAuth ? { [`${extra.id}Auth`]: agentAuth } : {}) },
         onStatus: (code) => { if (code === 200 && !session.taintedAt && !fleet.isLocked?.(session)) fleet.allowAgent(session, picked.agent); },
       });
     }

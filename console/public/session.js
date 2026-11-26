@@ -296,9 +296,9 @@
     const C = W.agentChoices;
     const select = (options) => h('select', { class: 'field' }, options.map(([value, label, title]) => h('option', { value, title }, label)));
     const fill = (el, options) => el.replaceChildren(...options.map(([value, label, title]) => h('option', { value, title }, label)));
-    const agent = select(C.AGENTS.filter(([value]) => ['claude', 'codex', 'grok'].includes(value)));
+    const agent = select(C.AGENTS);
     const model = select(C.MODELS);
-    const grokModel = h('input', { class: 'field', type: 'text', 'aria-label': 'Model', placeholder: 'Default', hidden: true, disabled: true });
+    const customModel = h('input', { class: 'field', type: 'text', 'aria-label': 'Model', placeholder: 'Default', hidden: true, disabled: true });
     const effort = select(C.EFFORTS);
     const mode = select(C.MODES);
     const prompt = h('textarea', { class: 'field', rows: '3', placeholder: 'Optional: what it should do first. Leave it empty to write to it on the Chat tab.' });
@@ -314,11 +314,11 @@
     };
     function showAgent() {
       const codex = agent.value === 'codex';
-      const grok = agent.value === 'grok';
-      model.hidden = model.disabled = grok;
-      grokModel.hidden = grokModel.disabled = !grok;
-      if (!grok) fill(model, codex ? codexModels() : C.MODELS);
-      fill(effort, codex ? codexEfforts() : grok ? window.WoodshedAgents.agent('grok').efforts.map((value) => [value, value || 'default']) : C.EFFORTS);
+      const ownSignIn = window.WoodshedAgents.agent(agent.value).signIn;
+      model.hidden = model.disabled = Boolean(ownSignIn);
+      customModel.hidden = customModel.disabled = !ownSignIn;
+      if (!ownSignIn) fill(model, codex ? codexModels() : C.MODELS);
+      fill(effort, codex ? codexEfforts() : ownSignIn ? window.WoodshedAgents.agent(agent.value).efforts.map((value) => [value, value || 'default']) : C.EFFORTS);
       fill(mode, codex ? C.CODEX_MODES : C.MODES);
       if (codex && !catalog) {
         W.getJson('/api/my/codex-models').then((answer) => {
@@ -332,7 +332,10 @@
         }, () => {});
       }
     }
-    agent.addEventListener('change', showAgent);
+    agent.addEventListener('change', () => {
+      customModel.value = '';
+      showAgent();
+    });
     model.addEventListener('change', () => { if (agent.value === 'codex') fill(effort, codexEfforts()); });
     // The other agent first: a second opinion is the usual reason to start one.
     agent.value = W.agentOf(s) === 'codex' ? 'claude' : 'codex';
@@ -340,7 +343,7 @@
     const field = (label, control) => h('label', { class: 'field-label' }, h('span', null, label), control);
     const form = h('form', { method: 'dialog', class: 'agent-form' },
       h('p', { class: 'sub' }, 'It works in this session\'s checkout, beside the agents already in it. Use the agent switch in Chat or TUI to choose which agent you see.'),
-      h('div', { class: 'agent-grid' }, field('Agent', agent), field('Model', [model, grokModel]), field('Effort', effort), field('Permissions', mode)),
+      h('div', { class: 'agent-grid' }, field('Agent', agent), field('Model', [model, customModel]), field('Effort', effort), field('Permissions', mode)),
       field('First message', prompt),
       error,
       h('div', { class: 'dialog-actions' }, cancel, go));
@@ -354,7 +357,7 @@
       cancel.disabled = true;
       go.textContent = 'Starting…';
       error.hidden = true;
-      const pickedModel = agent.value === 'grok' ? grokModel.value.trim() : model.value;
+      const pickedModel = window.WoodshedAgents.agent(agent.value).signIn ? customModel.value.trim() : model.value;
       try {
         const answer = await W.postJson(`/api/sessions/${s.id}/agents`, {
           agent: agent.value, model: pickedModel, effort: effort.value, permissionMode: mode.value, prompt: prompt.value.trim(),

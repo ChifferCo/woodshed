@@ -244,14 +244,17 @@ exec '${process.execPath}' '${AGENT}' codex "\${CODEX_HOME:-$HOME/.codex}" "$PWD
     fs.writeFileSync(path.join(agentBin, 'grok'), `#!/bin/bash
 exec -a grok '${process.execPath}' '${AGENT}' grok "$(dirname "$GROK_HOME")" "$PWD" "$@"
 `, { mode: 0o755 });
-    const grokRules = path.join(root, 'grok-rules.md');
-    fs.writeFileSync(grokRules, '# Woodshed dev console rules\n');
+    fs.writeFileSync(path.join(agentBin, 'opencode'), `#!/bin/bash
+exec -a opencode '${process.execPath}' '${AGENT}' opencode "$HOME" "$PWD" "$@"
+`, { mode: 0o755 });
+    const agentRules = path.join(root, 'agent-rules.md');
+    fs.writeFileSync(agentRules, '# Woodshed dev console rules\n');
     fs.writeFileSync(path.join(root, 'agent-claude-flags'), '');
     fs.writeFileSync(path.join(root, 'codex-ready'), '');
     Object.assign(agentsEnv, {
       SESSION_KIND: 'private', WOODSHED_AGENT_BIN: agentBin, UPLOADS_DIR: path.join(root, 'uploads'),
       WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(root, 'agent-claude-flags'), WOODSHED_CODEX_READY_FILE: path.join(root, 'codex-ready'),
-      WOODSHED_AGENT_STATE_DIR: root, WOODSHED_GROK_RULES_FILE: grokRules,
+      WOODSHED_AGENT_STATE_DIR: root, WOODSHED_AGENT_RULES_FILE: agentRules,
     });
   }
   // The TUI tab, as a session serves it (startClaude in session/entrypoint.sh): ttyd running woodshed-attach, which

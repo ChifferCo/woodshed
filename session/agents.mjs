@@ -1,4 +1,4 @@
-// The agents a person starts beside a session's own (statusd's /agents): another Claude, Codex or Grok Build, with the model,
+// The agents a person starts beside a session's own (statusd's /agents): another Claude, Codex, Grok Build or OpenCode, with the model,
 // effort and permission mode they pick, in the same checkout, each in a terminal of its own (`agent-2`, `agent-3`, ...)
 // next to the session's `claude`: a tmux session, or where the session's agent runs in Herdr (its owner's Agent
 // terminal, agentPane.mjs), a Herdr terminal on the session's own core, which the owner's Herdr shows beside it. The page's Chat and TUI tabs switch between them: Chat reads each one's own record
@@ -11,6 +11,7 @@
 //   codex   the rollout its process holds open (/proc/<pid>/fd), since every codex in the session files its rollouts in
 //           the one $CODEX_HOME
 //   grok    its own named conversation and hook state file
+//   opencode  a SQLite database of its own
 // The session's own agent never reads theirs as its own: statusd skips every record one of these claimed (claimed()).
 //
 // Only in a private coding session, never once the session is tainted: they are not reopened on the console's proxy as
@@ -23,18 +24,18 @@ import path from 'node:path';
 
 import registry from '../shared/agents.cjs';
 import { hcPane, tmuxPane } from './agentPane.mjs';
-import { claudeState, codexState, grokState, herdrState, lastInterruptAt, openToolCalls, paneState, withHerdr } from './agentState.mjs';
+import { claudeState, codexState, grokState, opencodeState, herdrState, lastInterruptAt, openToolCalls, paneState, withHerdr } from './agentState.mjs';
 import { Refusal, answerApproval, answerQuestions, composerEmpty, composerText, draftInBox, readPrompt, typeMessage, typingSteps } from './panePrompt.mjs';
 import { createPaneLock } from './paneLock.mjs';
 import { readSessionTranscript } from './sessionTranscript.mjs';
 
 // Beside the session's own: four agents at most in one container, each in its own terminal.
 export const MAX_EXTRA_AGENTS = 3;
-export const AGENTS = Object.freeze(['claude', 'codex', 'grok']);
+export const AGENTS = registry.AGENT_IDS;
 // What New session offers (console/sessions.mjs sessionOptions checks a start against the same), and what goes into a
 // shell line: a model or an effort is a name, never anything a shell reads.
 export const NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-export const PERMISSION_MODES = { claude: ['auto', 'acceptEdits', 'plan', 'default'], codex: ['auto', 'plan', 'default'], grok: registry.agent('grok').permissionModes };
+export const PERMISSION_MODES = { claude: ['auto', 'acceptEdits', 'plan', 'default'], codex: ['auto', 'plan', 'default'], grok: registry.agent('grok').permissionModes, opencode: registry.agent('opencode').permissionModes };
 export const MAX_PROMPT_CHARS = 8000;
 // The ids, as tmux names their sessions and the TUI tab's URL names them (woodshed-attach checks the same).
 export const AGENT_ID_RE = /^agent-[2-9]$/;
@@ -49,13 +50,13 @@ const KEEP_IDS = 20;
 
 /**
  * What a start asks for, checked: the agent, its model, effort and permission mode, and the first message.
- * @returns {{agent: 'claude'|'codex'|'grok', model: string, effort: string, permissionMode: string, prompt: string}}
+ * @returns {{agent: 'claude'|'codex'|'grok'|'opencode', model: string, effort: string, permissionMode: string, prompt: string}}
  * @throws {Error & {status: 400}}
  */
 export function startOptions(body) {
   const bad = (message) => Object.assign(new Error(message), { status: 400 });
   const agent = body?.agent ?? 'claude';
-  if (!AGENTS.includes(agent)) throw bad('agent must be claude, codex or grok');
+  if (!AGENTS.includes(agent)) throw bad('agent must be claude, codex, grok or opencode');
   const name = (value, what) => {
     if (value === undefined || value === null || value === '') return '';
     if (typeof value !== 'string' || !NAME_RE.test(value)) throw bad(`${what} is not one a session takes`);
@@ -65,7 +66,7 @@ export function startOptions(body) {
   if (!PERMISSION_MODES[agent].includes(permissionMode)) throw bad(`${agent} has no permission mode ${String(permissionMode).slice(0, 40)}`);
   const prompt = body?.prompt ?? '';
   if (typeof prompt !== 'string' || prompt.length > MAX_PROMPT_CHARS) throw bad(`the first message must be text of at most ${MAX_PROMPT_CHARS} characters`);
-  if (agent === 'grok') {
+  if (registry.agent(agent).signIn) {
     const model = body?.model ?? '';
     const effort = body?.effort ?? '';
     if (typeof model !== 'string' || !registry.modelShapeOk(agent, model)) throw bad('the model is not one a session takes');
@@ -97,6 +98,10 @@ export function commandLine({ agent, model, effort, permissionMode }, { bin, cla
     if (permissionMode === 'acceptEdits' || permissionMode === 'plan') parts.push('--permission-mode', permissionMode);
     if (model) parts.push('--model', model);
     if (effort) parts.push('--effort', effort);
+  } else if (agent === 'opencode') {
+    if (permissionMode === 'auto') parts.push('--auto');
+    if (permissionMode === 'plan') parts.push('--agent', 'plan');
+    if (model) parts.push('--model', model);
   } else {
     // As codexFlags in entrypoint.sh: the container is the sandbox. Codex rejects added roots while read-only.
     if (permissionMode !== 'plan') parts.push('--add-dir', uploadsDir);
@@ -105,8 +110,12 @@ export function commandLine({ agent, model, effort, permissionMode }, { bin, cla
     if (model) parts.push('--model', model);
     if (effort) parts.push('-c', `model_reasoning_effort=\\"${effort}\\"`);
   }
-  // After `--`, which ends both CLIs' options: a message that starts with a dash (a pasted list) is the message.
-  if (promptFile) parts.push('--', `"$(cat ${promptFile})"`);
+  // Bind the message as a value even when its first character is a dash.
+  if (promptFile) {
+    const message = `"$(cat ${promptFile})"`;
+    if (agent === 'opencode') parts.push(`--prompt=${message}`);
+    else parts.push('--', message);
+  }
   return parts.join(' ');
 }
 
@@ -161,7 +170,7 @@ export async function openRollout(shellPid, codexHome, { descendants = descendan
  *   agents too (statusd's WOODSHED_TERMINAL)
  */
 export function createAgents({
-  run, repoDir, bin, claudeDir, codexHome, claudeFlagsFile, codexReady, claudeEnv = async () => ({ env: {} }), codexEnv = async () => ({ env: {} }), grokEnv, stateDir = '/tmp', uploadsDir = '/tmp/uploads',
+  run, repoDir, bin, claudeDir, codexHome, claudeFlagsFile, codexReady, claudeEnv = async () => ({ env: {} }), codexEnv = async () => ({ env: {} }), grokEnv, opencodeEnv, stateDir = '/tmp', uploadsDir = '/tmp/uploads',
   tainted = () => false, now = Date.now, openRollout: findRollout = openRollout, log = console, terminal = 'tmux', hcBin = 'hc',
 }) {
   // Where an agent runs: its tmux session, or its Herdr terminal. Either is made with a shell in the checkout, the agent
@@ -265,6 +274,10 @@ export function createAgents({
       await rolloutOf(a);
       return { ...withHerdr(herdr, codexState({ paneText: pane, now: now(), startedAt: a.startedAt })), pane, hook: null };
     }
+    if (a.agent === 'opencode') {
+      const agentOpen = await a.io.agentRunning().catch(() => null);
+      return { ...withHerdr(herdr, opencodeState({ paneText: pane, agentOpen, now: now(), startedAt: a.startedAt })), pane, hook: null };
+    }
     const hook = await readJson(a.stateFile);
     if (a.agent === 'grok') {
       const agentOpen = await a.io.agentRunning().catch(() => null);
@@ -327,7 +340,7 @@ export function createAgents({
         }
       },
       enter: () => a.io.keys('Enter'),
-      ...(a.agent !== 'grok' && { box: async (text = '') => composerText(await a.io.capture({ ansi: true, back: text.split('\n').length + 100 }), a.agent) }),
+      ...(!registry.agent(a.agent).signIn && { box: async (text = '') => composerText(await a.io.capture({ ansi: true, back: text.split('\n').length + 100 }), a.agent) }),
     };
   }
 
@@ -356,7 +369,7 @@ export function createAgents({
       if (a.io.typesText) {
         const colored = await a.io.capture({ ansi: true });
         if (!readPrompt(colored, a.agent)) {
-          const empty = a.agent === 'grok' ? draftInBox(colored, a.agent) === false : composerEmpty(colored, a.agent) === true;
+          const empty = registry.agent(a.agent).signIn ? draftInBox(colored, a.agent) === false : composerEmpty(colored, a.agent) === true;
           if (!empty) return;
         }
         done = await typeMessage(paneIo(a), message.text);
@@ -409,7 +422,7 @@ export function createAgents({
     const promptFile = options.prompt ? path.join(stateDir, `woodshed-${id}-prompt.md`) : null;
     await fs.rm(stateFile, { force: true });
     if (promptFile) await fs.writeFile(promptFile, `${options.prompt}\n`, { mode: 0o600 });
-    const conversation = options.agent === 'codex' ? null : randomUUID();
+    const conversation = ['claude', 'grok'].includes(options.agent) ? randomUUID() : null;
     const line = commandLine(options, { bin, claudeFlags, conversation, uploadsDir, promptFile });
     // Its own terminal, its hooks pointed at its own state file. A tmux one is kept after the agent exits, as the
     // session's is.
@@ -417,7 +430,7 @@ export function createAgents({
     if (tainted()) throw Object.assign(new Error('this session has seen production data: no other agent starts in it'), { status: 409 });
     await terms.make(id, agentEnv);
     const a = {
-      id, ...options, conversation, stateFile, cleanup, grokHome: env.GROK_HOME, startedAt: now(), io: terms.io(id, options.agent), lock: createPaneLock(),
+      id, ...options, conversation, stateFile, cleanup, grokHome: env.GROK_HOME, opencodeDb: env.OPENCODE_DB, startedAt: now(), io: terms.io(id, options.agent), lock: createPaneLock(),
       held: [], delivered: [], refused: [], leftInBox: null, lastSent: null, lastState: null, rollout: null, rolloutAt: 0,
     };
     if (a.agent === 'grok') claimedGrok.add(conversation);
@@ -451,6 +464,9 @@ export function createAgents({
     } else if (options.agent === 'grok') {
       if (!grokEnv) throw Object.assign(new Error('grok is not set up in this session'), { status: 409 });
       ({ env, undo = null } = await grokEnv(body?.grokAuth));
+    } else if (options.agent === 'opencode') {
+      if (!opencodeEnv) throw Object.assign(new Error('OpenCode is not set up in this session'), { status: 409 });
+      ({ env, undo, cleanup } = await opencodeEnv(body?.opencodeAuth, options));
     } else if (!(await codexReady())) {
       throw Object.assign(new Error('codex is not set up in this session: start a new session for it'), { status: 409 });
     } else {
@@ -517,6 +533,7 @@ export function createAgents({
         : a.agent === 'claude' ? transcriptOf(a, await readJson(a.stateFile)) : undefined;
       return readSessionTranscript({
         agent: a.agent, claudeDir, codexHome, root: repoDir, file,
+        ...(a.agent === 'opencode' && { opencodeDb: a.opencodeDb }),
         ...(a.agent === 'grok' && { grokHome: a.grokHome, conversation: a.conversation }),
         ...(limit ? { limit } : {}), ...(since !== undefined && since !== null ? { since } : {}),
       });
@@ -559,6 +576,7 @@ export function createAgents({
       const io = {
         capture: () => a.io.capture(), keys: async (...keys) => { await a.io.keys(...keys); },
         agent: a.agent,
+        ...(a.io.colours && { colored: () => a.io.capture({ ansi: true }) }),
         ...(a.io.typesText && { literal: (value) => a.io.literal(value) }),
       };
       try {

@@ -3098,9 +3098,15 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   };
   let hasClaude = false;
   let hasGrok = false;
+  let hasOpencode = false;
+  const opencodeAuth = JSON.stringify({ openai: { type: 'api', key: 'dummy-owner-opencode-key' } });
   const userSettings = {
     claudeToken: async () => hasClaude ? 'dummy-owner-claude-token' : null,
-    agentAuth: async (owner, agent) => hasGrok && owner === 'local' && agent === 'grok' ? 'xai-dummy-owner-grok-key' : null,
+    agentAuth: async (owner, agent) => {
+      if (owner !== 'local') return null;
+      if (agent === 'grok' && hasGrok) return 'xai-dummy-owner-grok-key';
+      return agent === 'opencode' && hasOpencode ? opencodeAuth : null;
+    },
   };
   const server = http.createServer(createHandler({ config, fleet, userSettings }));
   const port = await listen(server);
@@ -3120,7 +3126,7 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   const missingGrok = await call('/api/sessions/0a1b2c3d/agents', { agent: 'grok' });
   assert.equal(missingGrok.status, 409);
   assert.match((await missingGrok.json()).error, /save your Grok Build sign-in on My settings/);
-  assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'opencode', model: 'openai/gpt-5' })).status, 400);
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'opencode', model: 'openai/gpt-5' })).status, 409);
   const missingClaude = await call('/api/sessions/3d4e5f6a/agents', { agent: 'claude' });
   assert.equal(missingClaude.status, 409);
   assert.match((await missingClaude.json()).error, /save your Claude token on My settings/);
@@ -3151,6 +3157,11 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   assert.equal(JSON.parse(asked.at(-1).body).grokAuth, 'xai-dummy-owner-grok-key');
   assert.equal((await call('/api/sessions/3d4e5f6a/agents', { agent: 'grok' })).status, 200);
   assert.equal(JSON.parse(asked.at(-1).body).grokAuth, undefined, 'a Grok session already has its owner’s sign-in');
+  hasOpencode = true;
+  const options = { agent: 'opencode', model: 'openai/gpt-5', effort: 'high', permissionMode: 'plan' };
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', options)).status, 200);
+  assert.deepEqual(JSON.parse(asked.at(-1).body), { ...options, prompt: '', opencodeAuth });
+  assert.deepEqual(allowed.at(-1), ['0a1b2c3d', 'opencode']);
 });
 
 test('a Codex agent beside claude is started with its owner\'s sign-in, and allowed the team key only once it started', async (t) => {
