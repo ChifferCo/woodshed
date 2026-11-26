@@ -1661,6 +1661,9 @@ h1.title .pill { vertical-align: middle; font-family: "Red Hat Display", system-
 .chat-needs-error { flex: 1 1 100%; order: 4; margin: 0; color: var(--bad); }
 .chat-needs-actions { flex: none; display: flex; gap: 6px; margin-left: auto; }
 .chat-needs-actions .chat-answer { margin-left: 0; }
+/* A stopped session's kept conversation: in the composer's place, how it ended and its Resume, on the stopped ground. */
+.chat-status.is-ended { flex-wrap: wrap; gap: 12px; padding: 10px 10px 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--stopped); }
+.chat-ended-text { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
 .chat-composer { display: flex; flex-direction: column; gap: 6px; padding: 10px 8px 8px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--ground); }
 .chat-composer:focus-within { border-color: var(--amber); }
 .chat-field { min-height: 44px; margin: 0; padding: 0 6px 0 0; resize: none; border: 0; outline: none; background: none; color: var(--ink); font: 15px/22px "Red Hat Display", system-ui, sans-serif; }

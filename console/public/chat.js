@@ -103,7 +103,9 @@
     });
   }
 
-  function createChat({ openTerminal, openDiff }) {
+  // ended(s): what the foot shows in place of the composer for a session that is not running, whose Chat reads the
+  // conversation it kept at its last save (shared/savedConversation.mjs): how it ended and its Resume.
+  function createChat({ openTerminal, openDiff, ended: endedFoot = () => null }) {
     let session = null;
     // The last answer for the shown session: { id, agent, entries, partial, writtenAt }.
     let record = null;
@@ -174,8 +176,10 @@
       return last?.kind === 'ask' && !last.answered && !last.declined;
     };
     const ownRecord = () => (record?.id === session?.id ? record : null);
+    // Not running: the conversation the console kept at its last save, read once, with nothing to send to.
+    const ended = () => Boolean(session) && session.status !== 'running';
     // A record that ends on claude's open question is a turn waiting on the person, whatever its hooks said last.
-    const working = () => !T.endedByStop(ownRecord()) && !asking()
+    const working = () => !ended() && !T.endedByStop(ownRecord()) && !asking()
       && (session?.state === 'working' || (session?.state !== 'needs-you' && T.midTurn(ownRecord(), settledAt)));
 
     function changed() {
@@ -432,7 +436,7 @@
       const sent = answers.get(key);
       const live = open && T.canAnswer(item) && sent?.state !== 'sending' && sent?.state !== 'sent';
       const chosen = picks.get(key) ?? [];
-      const said = item.answered ? 'Answered' : item.declined ? 'Not answered'
+      const said = item.answered ? 'Answered' : item.declined || ended() ? 'Not answered'
         : sent?.state === 'sending' ? 'Sending your answers…' : sent?.state === 'sent' ? `Sent, waiting for ${agent()}` : 'Waiting for your answer';
       const pick = (qi, oi) => {
         const next = [...chosen];
@@ -515,13 +519,16 @@
 
     function messageNodes() {
       const nodes = [];
-      if (readError && !record) return [h('p', { class: 'chat-empty' }, `Could not read the conversation: ${readError}`)];
+      if (readError && !record) {
+        return [h('p', { class: 'chat-empty' }, ended() ? `Nothing to show: ${readError}.` : `Could not read the conversation: ${readError}`)];
+      }
       if (!record) return [h('p', { class: 'chat-empty' }, h('span', { class: 'spin', 'aria-hidden': 'true' }), 'Reading the conversation…')];
       const waiting = T.stillPending(pendingOf(session.id), record.entries);
       pending.set(session.id, waiting);
       const list = T.items(record.entries);
       if (record.partial) nodes.push(h('p', { class: 'chat-note' }, 'Older messages are left out: this shows the newest of a long conversation.'));
-      if (!list.length && !waiting.length) {
+      if (!list.length && !waiting.length && ended()) nodes.push(h('p', { class: 'chat-empty' }, 'No messages were saved from this session.'));
+      else if (!list.length && !waiting.length) {
         nodes.push(h('div', { class: 'chat-empty' },
           h('b', null, `No messages with ${agent()} yet`),
           h('span', null, 'Write one below. What it does shows here as it works; its terminal is on the TUI tab.')));
@@ -535,7 +542,7 @@
         if (item.kind === 'user') nodes.push(h('div', { class: 'chat-user' }, h('div', { class: 'chat-bubble' }, item.text)));
         else if (item.kind === 'assistant') nodes.push(h('div', { class: 'chat-said' }, markdownNodes(item.text)));
         else if (item.kind === 'note') nodes.push(h('p', { class: 'chat-note' }, item.text));
-        else if (item.kind === 'ask') nodes.push(askCard(item, i === lastAsk && i === list.length - 1));
+        else if (item.kind === 'ask') nodes.push(askCard(item, !ended() && i === lastAsk && i === list.length - 1));
         else {
           nodes.push(workLog(item, live && i === list.length - 1));
           if (changes.has(item.key)) nodes.push(turnDiff(changes.get(item.key), live && i > lastTurn));
@@ -562,6 +569,11 @@
     // Over the composer: what the agent is doing, as a word. Yellow only when it waits on the person.
     function drawStatus() {
       if (!session) return;
+      if (ended()) {
+        status.className = 'chat-status is-ended';
+        status.replaceChildren(...[endedFoot(session, ownRecord())].flat().filter(Boolean));
+        return;
+      }
       const state = session.state;
       // Answered from here: the agent has it, and the console's state follows a few seconds later.
       if (state === 'needs-you' && !asking() && answered?.id === session.id) {
@@ -633,7 +645,7 @@
     // Needs you (show), not after the thread's read, and again with each read of the thread while it stays so. Never
     // while the agent works.
     async function readPrompt(id) {
-      if (id !== session?.id) return;
+      if (id !== session?.id || ended()) return;
       if (session.state !== 'needs-you' || asking()) {
         if (prompt) {
           prompt = null;
@@ -675,7 +687,14 @@
         if (id !== session?.id) return;
         readError = null;
         current = true;
-        if (answer.unchanged && record?.id === id) return;
+        if (answer.unchanged && record?.id === id) {
+          // A stopped session's copy is the record the page already has: only when it was kept is new.
+          if (answer.savedAt && record.savedAt !== answer.savedAt) {
+            record = { ...record, savedAt: answer.savedAt };
+            drawStatus();
+          }
+          return;
+        }
         record = { id, ...answer };
         kept.keep(keyOf(session), record);
         drawThread(false);
@@ -693,13 +712,18 @@
 
     function schedule(ms) {
       clearTimeout(timer);
-      if (!session) return;
+      // A stopped session's conversation changes only with its next run, which shows it afresh: it is read once, and
+      // again only when asked (the page coming back into view).
+      if (!session || (ended() && ms === undefined)) return;
       const busy = working() || pendingOf(session.id).length > 0;
       timer = setTimeout(() => (document.hidden ? schedule() : read()), ms ?? (busy ? FAST_MS : SLOW_MS));
     }
     document.addEventListener('visibilitychange', () => { if (!document.hidden && session) schedule(0); });
 
-    /** @param {object|null} s  the running session whose Chat tab shows, or null when it is not shown */
+    /**
+     * @param {object|null} s  the session whose Chat tab shows, or null when it is not shown: a running one, or one that
+     *   ended with a conversation kept (session.js, viewOf), shown read-only
+     */
     function show(s) {
       el.hidden = !s;
       if (!s) {
@@ -724,7 +748,9 @@
       const moved = s.id !== session?.id;
       const was = session?.state;
       const wasBox = session?.boxText === true;
+      const wasEnded = ended();
       session = s;
+      composer.hidden = ended();
       // A message of the page's left in the agent's box unsent, as the console says: its bubble says so, and goes once
       // the box is empty again.
       // What the console says of the messages it held, each by the page's id: sent, or sitting in the agent's box.
@@ -761,7 +787,12 @@
         drawThread(true);
         drawComposer();
         schedule(0);
-        if (!narrow.matches) setTimeout(() => { if (session?.id === s.id && !el.hidden) field.focus({ preventScroll: true }); }, 0);
+        if (!narrow.matches && !ended()) setTimeout(() => { if (session?.id === s.id && !el.hidden) field.focus({ preventScroll: true }); }, 0);
+      } else if (wasEnded !== ended()) {
+        // Stopped while shown, or the record of a stopped one running again: read as the other kind now.
+        drawThread(false);
+        drawComposer();
+        schedule(0);
       } else if (was !== s.state) {
         // The state moved (a turn ended, or started): the live work log and the status line follow, and the thread is
         // read at once, so a reply lands as the turn ends rather than a slow tick later.

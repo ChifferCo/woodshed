@@ -7,12 +7,20 @@
 //   s3://<bucket>/<login>/claude-home.tar.gz                        what their next new session starts from
 //   s3://<bucket>/<login>/sessions/<session id>/claude-home.tar.gz  that session's, for its Resume
 //   s3://<bucket>/_sessions/<session id>/claude-home.tar.gz
+//   s3://<bucket>/<login>/sessions/<session id>/conversation.json   that session's conversation, as its Chat draws it
+//   s3://<bucket>/_sessions/<session id>/conversation.json
 //
 // A session streams it in on stop and out on start, through the session API (sessionApi.mjs). The archive
 // passes through the console without being held whole in memory.
+//
+// The conversation beside a session's home is the one its Chat shows while it is stopped or paused
+// (shared/savedConversation.mjs): small JSON, written whole, and deleted with the home (each store's `remove`).
 
 import { Transform } from 'node:stream';
 
+import logins from './public/logins.cjs';
+
+const { loginKey } = logins;
 
 export const MAX_HOME_BYTES = 200 * 1024 * 1024;
 
@@ -24,6 +32,16 @@ export function sharedHomeName(id) {
 /** @returns {string}  a private session's own home, beside its owner's */
 export function privateSessionHomeName(login, id) {
   return `${login}/sessions/${id}`;
+}
+
+/** @returns {string}  where a session's own home is kept, private or shared */
+export function sessionHomeName(session) {
+  return session.owner ? privateSessionHomeName(session.owner, session.id) : sharedHomeName(session.id);
+}
+
+/** @returns {string}  the key of the conversation kept beside a home (putText, getText), by the home's name */
+export function conversationKey(homeName) {
+  return `${loginKey(homeName)}/conversation.json`;
 }
 
 /** @returns {Transform}  a pass-through that fails once more than `max` bytes went by */

@@ -2,7 +2,7 @@
 // reaches, at the names console/homes.mjs gives them. A home streams through the console without being held whole.
 import { spawn } from 'node:child_process';
 
-import { byteLimit, MAX_HOME_BYTES } from '../../console/homes.mjs';
+import { byteLimit, conversationKey, MAX_HOME_BYTES } from '../../console/homes.mjs';
 import logins from '../../console/public/logins.cjs';
 
 const { loginKey } = logins;
@@ -65,8 +65,11 @@ export function createHomeStore({ bucket, aws, spawnImpl = spawn }) {
     return { stream: child.stdout, bytes: head?.ContentLength ?? 0 };
   }
 
+  // With the conversation kept beside it (console/homes.mjs), in one call.
   async function remove(login) {
-    await aws(['s3api', 'delete-object', '--bucket', bucket, '--key', key(login)]);
+    const objects = [{ Key: conversationKey(login) }, { Key: key(login) }];
+    const deleted = await aws(['s3api', 'delete-objects', '--bucket', bucket, '--delete', JSON.stringify({ Objects: objects, Quiet: true })]);
+    if (deleted?.Errors?.length) throw new Error(`S3 did not delete the home: ${deleted.Errors[0].Code}`);
     console.log('homes: deleted', { login });
   }
 
@@ -85,8 +88,10 @@ export function createHomeStore({ bucket, aws, spawnImpl = spawn }) {
       // S3 answers 200 with the keys it could not delete listed, not an error.
       if (deleted?.Errors?.length) throw new Error(`S3 did not delete ${deleted.Errors.length} session homes: ${deleted.Errors[0].Code}`);
     }
-    console.log('homes: session homes deleted', { login, count: keys.length });
-    return keys.length;
+    // The homes, not the conversations beside them, which the prefix took too.
+    const count = keys.filter((k) => k.endsWith('/claude-home.tar.gz')).length;
+    console.log('homes: session homes deleted', { login, count });
+    return count;
   }
 
   /** Inside S3: nothing passes through the console. */

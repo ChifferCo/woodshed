@@ -357,6 +357,19 @@ export function createFleet({
     store.save();
   }
 
+  // A session's conversation kept beside its home (sessionApi.mjs, /conversation): the page shows it on Chat while the
+  // session is stopped. The mark goes with the home (cleanUp), or with every home of the owner's (forgetConversations).
+  function conversationSaved(session, savedAt) {
+    update(session, { conversationSavedAt: savedAt });
+  }
+
+  /** Forget my Claude home and Remove My Woodshed delete every one of the owner's session homes, conversations too. */
+  function forgetConversations(owner) {
+    const theirs = state.sessions.filter((s) => s.owner === owner && s.conversationSavedAt);
+    for (const s of theirs) s.conversationSavedAt = null;
+    if (theirs.length) store.save();
+  }
+
   function find(id) {
     return state.sessions.find((s) => s.id === id) ?? null;
   }
@@ -1392,7 +1405,7 @@ export function createFleet({
   // Its databases go on the sweep after this; the branch stays on GitHub. A home that cannot be deleted now is
   // tried again on a later tick.
   async function cleanUp(session, why) {
-    update(session, { kept: false, cleanedAt: nowIso(), deletesAt: null, homeDeletePending: Boolean(homes) });
+    update(session, { kept: false, cleanedAt: nowIso(), deletesAt: null, homeDeletePending: Boolean(homes), conversationSavedAt: null });
     prCheckedAt.delete(session.id);
     console.log('fleet: kept session cleaned up', { id: session.id, why });
     await deleteHome(session);
@@ -3355,7 +3368,7 @@ export function createFleet({
 
   return {
     noteMessage, noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
-    createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, keptMachine, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    createSession, conversationSaved, forgetConversations, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, keptMachine, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaLog, reviewLog, qaVideo, qaPoster, publicQaVideo, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

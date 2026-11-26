@@ -4815,3 +4815,28 @@ test('a message between two sessions is kept on both, newest first, the last 20,
   assert.match(child.messages[0].text, /^x24 /);
   assert.equal(child.messages[0].text.length, 200);
 });
+
+test('a session is marked when its conversation is kept, and the mark goes with its home or every home of its owner\'s', async () => {
+  const removed = [];
+  const homes = { async remove(name) { removed.push(name); } };
+  const ctx = setup({ homes });
+  await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [shared] = ctx.fleet.sessions();
+  ctx.statuses[shared.id] = { state: 'done' };
+  await ctx.fleet.tick();
+  await ctx.fleet.stop(shared, 'test');
+  const mine = await ctx.fleet.startPrivate({ owner: 'joel', prompt: 'mine' });
+  const theirs = await ctx.fleet.startPrivate({ owner: 'mia', prompt: 'theirs' });
+  for (const s of [shared, mine, theirs]) ctx.fleet.conversationSaved(s, '2026-11-25T10:00:00.000Z');
+  assert.ok([shared, mine, theirs].every((s) => s.conversationSavedAt === '2026-11-25T10:00:00.000Z'));
+  assert.ok(ctx.store.state.sessions.find((s) => s.id === mine.id).conversationSavedAt, 'kept in the state');
+
+  ctx.fleet.forgetConversations('joel');
+  assert.equal(mine.conversationSavedAt, null, 'Forget my Claude home took it');
+  assert.equal(theirs.conversationSavedAt, '2026-11-25T10:00:00.000Z', 'a teammate\'s stays');
+  assert.equal(shared.conversationSavedAt, '2026-11-25T10:00:00.000Z', 'a shared session is nobody\'s home to forget');
+
+  await ctx.fleet.deleteShared(shared, 'joel');
+  assert.equal(shared.conversationSavedAt, null, 'deleted with its home');
+  assert.ok(removed.includes(`_sessions/${shared.id}`));
+});
