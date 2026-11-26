@@ -1838,6 +1838,7 @@ test('a deleted shared session leaves the list after the setting\'s days, counte
   ctx.advance(2 * 60_000);
   await ctx.fleet.tick();
   assert.deepEqual(ctx.fleet.sessions().map((s) => s.id), [kept.id], 'the deleted one goes; a kept one stays');
+  assert.deepEqual(ctx.store.state.usageKept.map((r) => r.id), [deleted.id], 'and the Analytics page keeps its record');
 });
 
 test('Remove takes a deleted shared session off the list, and refuses one that still keeps its data', async () => {
@@ -1854,6 +1855,11 @@ test('Remove takes a deleted shared session off the list, and refuses one that s
   await ctx.fleet.deleteShared(session, 'joel');
   ctx.fleet.removeShared(session, 'joel');
   assert.deepEqual(ctx.fleet.sessions().map((s) => s.id), [mine.id]);
+  const kept = ctx.store.state.usageKept.find((r) => r.id === session.id);
+  assert.deepEqual([kept?.login, kept?.private, kept?.title, kept?.kind], ['joel', false, 'x', 'work'], 'the Analytics page still counts it');
+  const { analyticsReport } = await import('./analytics.mjs');
+  const report = analyticsReport({ records: ctx.store.state.usageKept, pulls: [], days: 30, now: Date.parse(session.createdAt) + 60_000 });
+  assert.equal(report.sessions.work, 1);
 });
 
 test('a deleted session whose Claude home is still being deleted stays listed until it goes', async () => {

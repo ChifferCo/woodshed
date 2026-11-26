@@ -179,6 +179,8 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
         project, number: pull.number, url: pull.url, title: pull.title, login, via, state: pull.state, createdAt: pull.createdAt,
         mergedAt: pull.mergedAt, mergeHours: pull.mergedAt ? hoursBetween(pull.createdAt, pull.mergedAt) : null, tier,
         additions: pull.additions, deletions: pull.deletions, sessionId: session?.id ?? null,
+        // A page to open only for a shared session still on the list: a kept one is gone, a private one its owner's.
+        sessionLink: session && !session.kept && !session.private ? session.id : null,
       });
     }
   }

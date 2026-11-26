@@ -3188,8 +3188,10 @@ Remove My Woodshed.
 
 Console → **Analytics** (`/analytics`, `public/analytics.js`, `analytics.mjs`) is how the team uses Woodshed, for
 whoever leads it: admins only, behind a hosting proxy its owners (`GET /api/analytics?days=7|30|90`). Each viewer sees
-only the repos they may open themselves, as New session offers them (`projectAccess.mjs`): a repo they cannot write to
-on GitHub gives the page nothing, not its pull requests, its sessions or a link to one. It is written for an
+only the repos they may open themselves (`projectAccess.mjs`, `visible`): a repo they cannot write to on GitHub gives the
+page nothing, not its pull requests, its sessions or a link to one. With GitHub sign-in those are the repos New session
+offers them. Behind a hosting proxy the host's role says nothing of a repo, so GitHub is asked about each, the default
+one included, and a repo it does not answer for is left out. It is written for an
 engineering manager asking who has taken Woodshed up and who has not, and whether work through it goes as well as
 work without it, not for ranking people:
 

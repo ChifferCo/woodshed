@@ -559,7 +559,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     token: tokens ? async () => (await tokens.console.token()).token : null,
   }) : null;
   // Behind a hosting proxy nobody's write access is asked: the host says who is in.
-  projectAccess = createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) });
+  projectAccess = createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()), hosted: () => Boolean(trusted) });
   const handle = createHandler({
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,

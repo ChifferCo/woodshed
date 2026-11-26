@@ -5,6 +5,8 @@ import test from 'node:test';
 import { analyticsReport, createAnalytics, keepUsage, usageRecord } from './analytics.mjs';
 import { createGitHub, recentPullRow } from './github.mjs';
 import { createHandler } from './server.mjs';
+import { createProjectAccess } from './projectAccess.mjs';
+import { IDENTITY_HEADER, createTrustedIdentity, signIdentity } from './trustedIdentity.mjs';
 
 const NOW = Date.parse('2026-11-26T12:00:00.000Z');
 const DAY = 86_400_000;
@@ -186,4 +188,50 @@ test('/api/analytics is an admin\'s, and answers the window asked for with each 
   await get('/api/analytics?days=12345', 'mia');
   assert.deepEqual(asked, [[90, [REPO]], [30, [REPO]]], 'a window not offered is 30 days, and only the repos the viewer may open');
   assert.equal((await get('/analytics', 'sam')).status, 200, 'the page itself loads, and its call says no');
+});
+
+test('behind a hosting proxy an owner sees only the repos GitHub says they write to, the default one included', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const SECRET = 'the-hosts-identity-secret-0123456789abcdef';
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+    projects: [{ name: 'app', repo: 'o/app', default: true }, { name: 'secret', repo: 'o/secret' }, { name: 'down', repo: 'o/down' }],
+  };
+  // ana writes to o/app only; GitHub fails for o/down; nobody's write to o/secret.
+  const writes = { 'o/app': ['ana-owner', 'bo-owner'], 'o/secret': ['bo-owner'] };
+  const asked = [];
+  const githubFor = (project) => ({
+    async canWrite(login) {
+      asked.push(`${login} ${project.repo}`);
+      if (project.repo === 'o/down') throw new Error('HTTP 502');
+      return (writes[project.repo] ?? []).includes(login);
+    },
+    async recentPulls() { return { pulls: [pull({ number: 1, url: `https://github.com/${project.repo}/pull/1`, author: 'cy', title: `in ${project.repo}` })], total: 1, truncated: false }; },
+  });
+  const sessions = config.projects.map((p, i) => ({ id: `ffff000${i}`, project: p.name, repo: p.repo, createdAt: new Date(Date.now() - DAY).toISOString(), startedBy: 'cy', title: `on ${p.repo}`, kind: 'issue', prUrl: `https://github.com/${p.repo}/pull/1` }));
+  const analytics = createAnalytics({ config, sessions: () => sessions, state: () => ({}), githubFor });
+  // The real check, hosted as installation.mjs makes it: nobody signs in with GitHub here.
+  const projectAccess = createProjectAccess({ config, githubFor, signIn: () => false, hosted: () => true });
+  const handle = createHandler({ config, fleet: { sessions: () => sessions, find: () => null }, trusted: createTrustedIdentity({ secret: SECRET }), analytics, projectAccess });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => { server.listen(0, '127.0.0.1', resolve); });
+  t.after(() => server.close());
+  const as = async (login) => {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/api/analytics`, {
+      headers: { [IDENTITY_HEADER]: signIdentity({ secret: SECRET, login, role: 'owner', exp: Date.now() + 60_000 }) },
+    });
+    return { status: res.status, body: await res.json() };
+  };
+  const ana = await as('ana-owner');
+  assert.equal(ana.status, 200);
+  assert.deepEqual(ana.body.projects, ['app']);
+  const anaText = JSON.stringify(ana.body);
+  assert.ok(!anaText.includes('o/secret') && !anaText.includes('o/down'), 'nothing of a repo they cannot write to, or one GitHub did not answer for');
+  assert.deepEqual([ana.body.pulls.woodshed.opened, ana.body.sessions.work], [1, 1]);
+  const bo = await as('bo-owner');
+  assert.deepEqual(bo.body.projects, ['app', 'secret'], 'someone who writes to both sees both');
+  assert.ok(asked.includes('ana-owner o/app'), 'the default repo is asked too: no sign-in proved it');
+  const nobody = await as('dee-owner');
+  assert.deepEqual([nobody.body.projects, nobody.body.sessions.work, nobody.body.pulls.recent.length], [[], 0, 0]);
 });

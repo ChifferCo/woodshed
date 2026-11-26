@@ -210,7 +210,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
         data.projects.length > 1 && h('span', { class: 'quiet' }, ` ${p.project}`)),
       h('td', null, p.login ? W.person(p.login) : '—'),
       h('td', null, p.via === 'woodshed'
-        ? (p.sessionId ? h('a', { href: `/s/${p.sessionId}` }, 'Woodshed') : 'Woodshed')
+        ? (p.sessionLink ? h('a', { href: `/s/${p.sessionLink}` }, 'Woodshed') : 'Woodshed')
         : h('span', { class: 'quiet' }, 'Without')),
       h('td', null, STATE_WORD[p.state] ?? p.state),
       h('td', { class: 'num' }, p.mergeHours === null ? '—' : hours(p.mergeHours)),

@@ -15,7 +15,7 @@ const firstLine = (err) => String(err?.message ?? err).split('\n')[0];
  *   `githubFor` is the GitHub client of a project's repo, null where the console has no GitHub to ask; `signIn` says
  *   whether people sign in, without which the login is a stand-in GitHub knows nothing of
  */
-export function createProjectAccess({ config, githubFor, viewPrefs = null, signIn = () => true, now = Date.now }) {
+export function createProjectAccess({ config, githubFor, viewPrefs = null, signIn = () => true, hosted = () => false, now = Date.now }) {
   const checked = new Map();
   let toldUnchecked = false;
 
@@ -29,6 +29,11 @@ export function createProjectAccess({ config, githubFor, viewPrefs = null, signI
       toldUnchecked = true;
       return true;
     }
+    return askWrite(login, project, github);
+  }
+
+  // GitHub's answer for whether the person writes to the project's repo, kept FRESH_MS. A failure is a no.
+  async function askWrite(login, project, github) {
     const key = `${login}\n${project.name}\n${project.repo}`;
     const kept = checked.get(key);
     if (kept && now() - kept.at < FRESH_MS) return kept.ok;
@@ -48,6 +53,24 @@ export function createProjectAccess({ config, githubFor, viewPrefs = null, signI
     const projects = allProjects(config);
     if (projects.length === 1) return projects;
     const allowed = await Promise.all(projects.map((project) => canStart(login, project)));
+    return projects.filter((_, i) => allowed[i]);
+  }
+
+  /**
+   * The projects whose repo the person may read about on the Analytics page (analytics.mjs). Where GitHub sign-in is
+   * on, or nobody signs in, those they may start on. Behind a hosting proxy the host's role says nothing of a repo, and
+   * no sign-in proved the default one: GitHub is asked of each, the default included, and one it cannot answer for is
+   * left out.
+   * @returns {Promise<object[]>}
+   */
+  async function visible(login) {
+    if (!hosted()) return startable(login);
+    const projects = allProjects(config);
+    const allowed = await Promise.all(projects.map((project) => {
+      const github = githubFor(project);
+      if (!login || !github?.canWrite) return false;
+      return askWrite(login, project, github);
+    }));
     return projects.filter((_, i) => allowed[i]);
   }
 
@@ -86,5 +109,5 @@ export function createProjectAccess({ config, githubFor, viewPrefs = null, signI
     return (await canStart(login, project)) ? project : null;
   }
 
-  return { view, setDefault, forStart, startable };
+  return { view, setDefault, forStart, startable, visible };
 }
