@@ -1300,7 +1300,7 @@ console to post to GitHub:
   person's (`fleet: review threads resolved`).
 - **The merge risk** is the Merge risk check and the `merge risk: low|medium|high` label, the other two taken off.
 - **The PR comment** says `Reviewing`, with the spinner Claude's GitHub Action shows, as soon as the session starts, and becomes the review's comment when it ends.
-  A session that ends without a review turns it into `The review did not finish` with the reason
+  A session that ends without a review turns it into `The review did not finish` with the reason, quoted as code so nothing in it renders
   (`fleet: review ended without a report`).
 
 ### Who reviews: Claude Code, Codex, Grok Build, OpenCode, several or none
