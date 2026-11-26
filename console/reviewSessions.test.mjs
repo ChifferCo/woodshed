@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchesReviewHeading, parseReviewReport, reviewHeading, reviewRunningComment } from './reviewSessions.mjs';
+import { matchesReviewHeading, parseReviewReport, reviewEndedComment, reviewHeading, reviewRunningComment } from './reviewSessions.mjs';
 
 const SHA = 'a'.repeat(40);
 const body = (over = {}) => JSON.stringify({
@@ -56,4 +56,12 @@ test('a woodshed review\'s heading names whoever wrote its verdict, and the gate
   assert.ok(!matchesReviewHeading('## Someone else review — APPROVE', review));
   assert.match(reviewRunningComment({ sessionUrl: null, agents: ['grok'] }), /Reviewing\*\* with Grok Build in/);
   assert.deepEqual(parseReviewReport(body({ agents: ['grok', 'opencode', 'mystery'] })).agents, ['grok', 'opencode']);
+});
+
+test('a review that did not finish quotes its reason as code, so nothing in it renders as a link, a tag or a mention', () => {
+  const reason = 'the project file could not be read: unknown key "[click](https://evil.example) <img src=x> @ada ``x``"';
+  const body = reviewEndedComment({ reason, sessionUrl: 'https://console.example/s/1' });
+  assert.equal(body, `⚠️ **The review did not finish** ([session](https://console.example/s/1)): \`\`\` ${reason} \`\`\`. A new commit starts another.\n`);
+  assert.equal(reviewEndedComment({ reason: 'idle\nfor 2 h', sessionUrl: null }),
+    '⚠️ **The review did not finish**: ` idle for 2 h `. A new commit starts another.\n', 'one line, the fence one backtick');
 });
