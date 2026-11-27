@@ -89,9 +89,6 @@ const DELIVERED_WEBHOOKS_ALIVE_MS = 20_000;
  * @returns {{every: (ms: number, what: string, fn: () => unknown) => void, wait: (ms: number) => Promise<boolean>,
  *            stop: () => void, stopped: () => boolean}}
  */
-// How long after start the Analytics read is warmed, so it does not compete with the start.
-const ANALYTICS_WARM_MS = 10_000;
-
 export function createLoops() {
   const timers = new Set();
   const waiting = new Set();
@@ -549,12 +546,6 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (!reviewSources.has(key)) reviewSources.set(key, createReviewSource({ github: githubFor(project) }));
     return reviewSources.get(key)(session);
   };
-  // The Analytics page's read is kept in memory, so a restart (each deploy) empties it and the first viewer waits for the
-  // whole 90 days from GitHub. start() reads it in the background, so that view finds it warm.
-  const analytics = createAnalytics({
-    config, sessions: () => fleet.sessions(), state: () => store.state, githubFor, gatesOf: fileGatesOf,
-    members: () => (members ? members.view().members.map((m) => m.login) : []),
-  });
   // Session apps on ports of the console's own name, where it has one name and nobody signs in (appPorts.mjs).
   const appPorts = config.appPorts?.length ? createAppPorts({
     store, config, isActive: (id) => ACTIVE_STATUSES.has(fleet.find(id)?.status),
@@ -589,7 +580,10 @@ export async function createInstallation({ config: loaded, store, provider, trus
     slackSetup,
     cli,
     // The Analytics page: the fleet's sessions and those kept since they left its list, and each repo's pull requests.
-    analytics,
+    analytics: createAnalytics({
+      config, sessions: () => fleet.sessions(), state: () => store.state, githubFor, gatesOf: fileGatesOf,
+      members: () => (members ? members.view().members.map((m) => m.login) : []),
+    }),
     // Whether a repo's review can run in a session, for `woodshed review`: none with no GitHub App to run it.
     reviewReadiness: config.githubApp || hostApp ? createReviewReadiness({
       publicUrl: config.publicUrl, reviewer: reviewerApp, ownReviewer: !hostApp, appLogin: () => appIdentity.login(),
@@ -660,7 +654,6 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (config.launcher.kind === 'docker' && !tokens && !config.sessionEnv.GH_TOKEN) {
       console.warn('console: sessions push with the console\'s own gh token; set GH_TOKEN in the session env file to give them a narrower one');
     }
-    setTimeout(() => analytics.refresh({ missing: true }), ANALYTICS_WARM_MS).unref();
     repoSettings.moveOwnFiles().catch((err) => console.error('repoSettings: own files not moved', { message: String(err?.message ?? err).split('\n')[0] }));
     loops.every(60 * 60_000, 'attachments sweep', () => attachments.sweep());
     if (qaRecordings) loops.every(60 * 60_000, 'QA recordings sweep', () => qaRecordings.sweep());
@@ -692,7 +685,6 @@ export async function createInstallation({ config: loaded, store, provider, trus
     // The port a tainted session leaves through, on the session API's address (server.mjs listens).
     egressProxy: egressProxy && sessionApi ? { server: egressProxy, port: loaded.egress.port } : null,
     appPorts,
-    analytics,
     start,
     /** Stops the loops; requests already in flight finish. */
     stop: () => { members?.stop?.(); loops.stop(); },

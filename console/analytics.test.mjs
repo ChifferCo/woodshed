@@ -594,41 +594,6 @@ test('a Woodshed session\'s person who reviewed their own App-opened pull reques
   assert.deepEqual(recent[0].humanReviewers, ['bo']);
 });
 
-test('a console reads the pull requests by itself once it is up, so the first Analytics view finds them', async (t) => {
-  t.mock.method(console, 'log', () => {});
-  t.mock.method(console, 'warn', () => {});
-  const fs = await import('node:fs');
-  const os = await import('node:os');
-  const path = await import('node:path');
-  const { createInstallation } = await import('./installation.mjs');
-  // A `gh` that records each call and answers a search with one pull request.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'analytics-warm-'));
-  const calls = path.join(dir, 'calls');
-  const node = { number: 7, url: 'https://github.com/o/r/pull/7', title: 'warm', createdAt: new Date().toISOString(), state: 'OPEN', isDraft: false, additions: 1, deletions: 0, headRefName: 'b', author: { login: 'cy', __typename: 'User' }, labels: { nodes: [] }, reviews: { totalCount: 0, nodes: [] } };
-  fs.writeFileSync(path.join(dir, 'gh'), `#!/bin/sh\necho "$@" >> ${calls}\nprintf '%s' '${JSON.stringify({ data: { search: { issueCount: 1, pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node] } } })}'\n`, { mode: 0o755 });
-  const path0 = process.env.PATH;
-  process.env.PATH = `${dir}:${path0}`;
-  t.after(() => { process.env.PATH = path0; fs.rmSync(dir, { recursive: true, force: true }); });
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const installation = await createInstallation({
-    config: { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, launcher: { kind: 'docker' }, tickMs: 3_600_000, startingCheckMs: 3_600_000, stateDir: dir, sessionEnv: { GH_TOKEN: 'x' }, sessionApi: {} },
-    store: { state: { sessions: [] }, save() {} },
-    provider: { name: 'test', launcher: {}, secrets: { read: async () => null, save: async () => {}, remove: async () => {} }, dbAdmin: {}, databases: [] },
-  });
-  const searches = () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').split('\n').filter((l) => l.includes('RecentPulls')).length : 0);
-  assert.equal(searches(), 0, 'nothing is read at the start itself');
-  installation.start();
-  t.after(() => installation.stop());
-  assert.equal(searches(), 0, 'and not at once when it starts');
-  t.mock.timers.tick(10_001);
-  // Timers are mocked, so wait on the event loop itself.
-  for (const until = Date.now() + 5000; !searches() && Date.now() < until;) await new Promise((r) => setImmediate(r));
-  assert.equal(searches(), 1, 'the search starts when the warm-up timer fires, before any request');
-  const report = await installation.analytics.report({ days: 30 });
-  assert.equal(report.pulls.recent[0].number, 7);
-  assert.equal(searches(), 1, 'the first request reuses that read');
-});
-
 test('POST /api/analytics/refresh is an admin\'s, and starts reads only for the repos the viewer may open', async (t) => {
   t.mock.method(console, 'log', () => {});
   const { createMembers } = await import('./members.mjs');
