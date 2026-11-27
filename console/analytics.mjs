@@ -399,7 +399,12 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
   }
 
   /** Reads every repo once, so the first view of the page does not wait for GitHub. Failures are logged by the reads. */
-  const warm = () => refresh();
+  const warm = () => {
+    let started = 0;
+    // One already read (a visit came first) or being read is left alone: warming it again would only start a second search.
+    for (const p of allProjects(config).filter((p) => p.repo && !reads.get(keyOf(p)))) started += refresh({ repos: [p.repo], project: p.name });
+    return started;
+  };
 
   return { report, refresh, pullChanged, warm };
 }

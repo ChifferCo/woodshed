@@ -362,6 +362,17 @@ test('a close with no project named is the default project\'s: the other repo\'s
   assert.deepEqual(reads, [REPO]);
 });
 
+test('the warm-up leaves a repo a visit already read alone', async () => {
+  const clock = { now: NOW };
+  let reads = 0;
+  const analytics = cachedAnalytics({ recentPulls: async () => { reads++; return { pulls: [], total: 0, truncated: false }; } }, clock);
+  await analytics.report({ days: 7 });
+  assert.equal(analytics.warm(), 0);
+  await nextTick();
+  assert.equal(reads, 1);
+  assert.equal((await analytics.report({ days: 7 })).refreshing, false);
+});
+
 test('a close during the cooldown after a failed refresh does not repeat the read', async () => {
   const clock = { now: NOW };
   let fail = false;
