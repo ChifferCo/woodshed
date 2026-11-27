@@ -5,12 +5,13 @@
 // calls GitHub: the account, its repos and its links are made up, and what is added lasts until the console stops.
 // DEV_CONSOLE_BLOCKED_REPO=<owner/name> also gives that repo a made-up blocker through the projectReadiness hook. Each
 // repo's settings page gets made-up groups of the program's own through the repoPage hook (settingsMarkup.mjs): their
-// forms post nowhere here. Its launcher keeps a made-up machine for /s/fa11ed01, made from an older image (a launcher's
+// forms post nowhere here. Its envSources hook gives the env files of example-org/example-repo (DEV_CONSOLE_REPO_SETTINGS=1)
+// a made-up source, "Vault": on for api/.env, off for web/.env.local, none for worker/.env. Its launcher keeps a made-up machine for /s/fa11ed01, made from an older image (a launcher's
 // keptMachine, providers/README.md), for its page's Resume on the latest image: the start that follows is the docker
 // launcher's own, told `latestImage`, which it logs.
 import { run } from '../providers/console.mjs';
 import { isMain } from '../shared/isMain.mjs';
-import { actions, button, figures, form, group, howTo, html, note, pill, row, sub, textArea, valueBox } from '../console/settingsMarkup.mjs';
+import { actions, button, figures, form, group, howTo, html, labelled, note, pill, row, sub, textArea, textField, valueBox } from '../console/settingsMarkup.mjs';
 
 const ACCOUNT = 'acme';
 const GRANT = { account: ACCOUNT, href: `https://github.com/organizations/${ACCOUNT}/settings/installations/1` };
@@ -91,6 +92,39 @@ export function devRepoPage() {
   ]}`;
 }
 
+// The made-up source's env files, by key: the variables "Vault" holds for each, and whether sessions get them.
+const VAULT = {
+  'api-env': { on: true, path: 'acme/dev/api', text: 'API_URL=https://api.dev.example\nAPI_TOKEN=made-up-token\nQUEUE_URL=https://queue.dev.example\n' },
+  'web-env-local': { on: false, path: '', text: '' },
+};
+
+/**
+ * An envSources hook in the shape createInstallation takes: a made-up secret manager, "Vault", that sets one env file's
+ * installation values in place of the typed ones and is off for another. Its controls are drawn with
+ * settingsMarkup.mjs inside the file's installation layer, and their forms post nowhere.
+ */
+export function devEnvSources() {
+  const named = (text) => text.split('\n').filter(Boolean).map((l) => l.split('=')[0]);
+  const controls = (name, key, { on, path }) => html`${[
+    on ? note(`On: sessions get this file's values from ${path}, read at each session's start.`, { ok: true })
+      : sub('Off: sessions get the values typed here. Name a path in Vault, then turn it on.'),
+    form({ action: `/dev/host/${encodeURIComponent(name)}/vault/${key}` },
+      labelled('Path in Vault', textField({ name: 'path', value: path, placeholder: 'acme/dev/web', mono: true })),
+      actions(button(on ? 'Save' : 'Turn on', { kind: 'primary' }), on ? button('Turn off', { name: 'off', value: '1' }) : null)),
+    sub('Made up: the forms post nowhere.'),
+  ]}`;
+  return {
+    async view({ name, keys }) {
+      return Object.fromEntries(keys.filter((key) => Object.hasOwn(VAULT, key)).map((key) => [key, {
+        label: 'Vault', on: VAULT[key].on, keys: named(VAULT[key].text), markup: controls(name, key, VAULT[key]),
+      }]));
+    },
+    async forSession() {
+      return Object.fromEntries(Object.entries(VAULT).filter(([, file]) => file.on).map(([key, file]) => [key, file.text]));
+    },
+  };
+}
+
 /** The provider's launcher, keeping a made-up outdated machine for `outdated`'s sessions until one resumes on the latest image. */
 export function devKeptMachines(provider, outdated = ['fa11ed01']) {
   const kept = new Set(outdated);
@@ -109,4 +143,4 @@ export function devKeptMachines(provider, outdated = ['fa11ed01']) {
   };
 }
 
-if (isMain(import.meta.url)) run({ repos: devHostRepos(), projectReadiness: devReadiness(), repoPage: devRepoPage(), withProvider: devKeptMachines });
+if (isMain(import.meta.url)) run({ repos: devHostRepos(), projectReadiness: devReadiness(), repoPage: devRepoPage(), envSources: devEnvSources(), withProvider: devKeptMachines });

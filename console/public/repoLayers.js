@@ -90,6 +90,8 @@
   function winsWord(f, row, yours) {
     if (row.wins === 'session' && wiringOf(f, row).optional.includes(row.key)) return 'Session, if set';
     if (row.wins === 'personal' && yours) return 'Yours';
+    // The installation's layer comes from a program's source while it is on: the tag names it.
+    if (row.wins === 'installation' && f.source?.on) return f.source.label;
     return LAYER_WORDS[row.wins];
   }
 
@@ -113,6 +115,16 @@
           h('td', null, h('span', { class: `layer-tag is-wins is-${row.wins}` }, winsWord(f, row, yours))))))));
   }
 
+  // An env file whose installation values come from a program's source (its `envSources`) while it is on: `From Vault ·
+  // 3 keys`, for a closed row and the layer's line.
+  const sourceLine = (source) => `From ${source.label} · ${plural(source.keys.length, 'key', 'keys')}`;
+
+  // What a source sets, by name: all either page says of it without the program's own controls.
+  function sourceKeys(source) {
+    if (!source.keys.length) return h('p', { class: 'layer-text is-none' }, `${source.label} sets no keys.`);
+    return h('p', { class: 'layer-text' }, `${source.label} sets `, keyList(source.keys), '.');
+  }
+
   // The repo's own instructions: links to its rules and setup notes on GitHub.
   function repoRules(view) {
     const { rules, setup } = view.projectFile;
@@ -125,6 +137,6 @@
   window.WoodshedRepoLayers = {
     INSTRUCTIONS_MAX_BYTES: 16 * 1024,
     NO_CREDENTIALS: 'No production credentials or integration tokens. A session runs unattended, and this text can land in a log or a commit.',
-    LAYER_WORDS, bytesOf, plural, pathsOf, labelOf, andList, savedLine, layer, keyList, githubFile, sharedNote, defaultsLayer, sessionLayer, keyTable, repoRules,
+    LAYER_WORDS, bytesOf, plural, pathsOf, labelOf, andList, savedLine, layer, keyList, githubFile, sharedNote, defaultsLayer, sessionLayer, keyTable, repoRules, sourceLine, sourceKeys,
   };
 })();

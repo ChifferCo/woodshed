@@ -8,3 +8,8 @@ scroll.
 - Line two, at 75%: "Press ? for every shortcut". Left off the hint of Keyboard shortcuts itself.
 - Keys are one cap each, outlined in the text color: `⇧` `⌘` `O` on a Mac, `Ctrl` `Shift` `O` elsewhere.
 - Placed under the control, centred and kept 8px inside the window; above it when there is no room below.
+
+The double tap's mode is the same caps in a toast: once ⌘ is tapped twice (Ctrl off a Mac), the toast's place says
+`⌘ ⌘ J K 1–4 N · esc to stop`, each key a cap outlined in the toast's text color, for as long as the mode is on: until
+Esc, a click, a tab picked, another toast or any other key. It takes the place of a toast still showing, never sits over
+it.

@@ -27,6 +27,9 @@
   // Which page: /, /all or a session's. They are one page, so moving between them changes these, not the document
   // (navigate, below). /?new=1 is New session as a screen of its own on a phone, where / is the list alone.
   let id = null;
+  // The mode's moves (moveSession, below) keep focus out of the session they open, and whether the navigate running now is one.
+  let movingByKey = false;
+  let keyMove = false;
   let onMy = false;
   let onShared = false;
   let onNew = false;
@@ -393,6 +396,9 @@
   // and nothing flashes while a new document loads. The address changes as a link's would, and Back returns.
   const SHELL_PATH_RE = /^\/(all|s\/[0-9a-f]{8})?$/;
   function navigate(href) {
+    // Any move but the mode's own (moveTo) lets a session take focus again, so a session opened from the palette or a card
+    // focuses its Chat field as before.
+    if (!keyMove) movingByKey = false;
     const url = new URL(href, window.location.href);
     if (url.origin !== window.location.origin || !SHELL_PATH_RE.test(url.pathname)) {
       window.location.href = url.href;
@@ -424,7 +430,7 @@
     // For what follows the page's address without drawing it (notificationBell.js).
     window.dispatchEvent(new Event('woodshed:route'));
   }
-  window.addEventListener('popstate', moved);
+  window.addEventListener('popstate', () => { movingByKey = false; moved(); });
   // Going away altogether (My settings, another page of the console, a reload, closing the browser tab) puts the tab
   // aside for the next shell page, which keeps it unless that was a reload (sessionTabs.cjs, takeLeaving). After a
   // sign-out or an account change nothing is put aside (W.signingOut).
@@ -546,11 +552,15 @@
     return button;
   }
 
+  // A session the person just started again (Resume, Hand off) opens on their default view (My settings, Display), Chat
+  // or TUI for this width, as one opened with no tab picked does.
+  const openStarted = (sessionId) => navigate(`/s/${sessionId}?tab=${defaultView()}`);
+
   // Resume on a stopped private session: it opens on its page as it starts again. @returns {Promise<boolean>}
   async function resumePrivate(s, { latestImage = false } = {}) {
     try {
       const next = await W.postJson(`/api/my/sessions/${s.id}/resume`, latestImage ? { latestImage: true } : {});
-      navigate(`/s/${next.id}?tab=chat`);
+      openStarted(next.id);
       return true;
     } catch (err) {
       window.alert(`Could not resume: ${err.message}`);
@@ -628,7 +638,7 @@
         const next = await W.postJson(`/api/my/sessions/${s.id}/handoff`, { agent: agent.value, model: model.value, note: note.value, conversation: carry });
         pending = false;
         dialog.close();
-        navigate(`/s/${next.id}?tab=chat`);
+        openStarted(next.id);
       } catch (err) {
         pending = false;
         go.disabled = false;
@@ -673,15 +683,22 @@
   // of its repo than a new session gets resumes on that image, which may no longer start the branch. Resume on the latest
   // image leaves it, with what it held, for a new one; the branch and the conversation go along as on any Resume.
   // A settled answer is read again after a minute, so a newer image pushed while the page stays open shows.
+  // What it offers is keptMachine.cjs's: a failed session leads with the latest image, its note beside the failure, in
+  // the slot above the buttons, and its Resume steps back to plain; a stopped one keeps the quiet note and button under them.
   const keptMachines = new Map();
   const KEPT_MACHINE_MS = 60_000;
-  function keptMachineRow(s) {
+  function keptMachineRow(s, row, resume) {
     const key = `${s.id}@${s.stoppedAt ?? ''}`;
-    const slot = h('div');
+    // Hidden until an offer fills it: an empty one would still take the panel's gap beside the buttons.
+    const slot = h('div', { hidden: true });
     const fill = (kept) => {
-      if (!kept?.outdated) return;
+      // A page whose keptMachine.cjs did not load (a deploy mid-load) offers what it did before #410: Resume alone.
+      const offer = window.WoodshedKeptMachine?.offer(s, kept);
+      if (!offer) return;
+      slot.hidden = false;
+      const leads = offer.lead === 'latest';
       const button = h('button', {
-        type: 'button', class: 'btn btn-plain', title: 'Start it on a new machine from its repo\u2019s latest image',
+        type: 'button', class: `btn ${leads ? 'btn-primary' : 'btn-plain'}`, title: 'Start it on a new machine from its repo\u2019s latest image',
         onclick: async (e) => {
           e.preventDefault();
           // What goes along is what a Resume keeps anywhere but the machine: the branch, and claude's saved conversation.
@@ -694,8 +711,15 @@
           if (!(await resumePrivate(s, { latestImage: true }))) button.disabled = false;
         },
       }, 'Resume on the latest image');
+      if (leads && row && resume) {
+        // Orange stays on one action: the latest image takes the lead, and Resume (that same older image) goes plain.
+        resume.className = 'btn btn-plain';
+        row.prepend(button);
+        slot.replaceChildren(h('p', null, h('strong', null, offer.head), ' ', offer.note));
+        return;
+      }
       slot.replaceChildren(
-        h('p', { class: 'hint' }, 'Its machine was made from an older image of its repo, which Resume starts again. If that no longer starts the branch, resume it on the latest image.'),
+        h('p', { class: 'hint' }, offer.note),
         h('div', { class: 'row' }, button));
     };
     // The read itself is kept, so a panel drawn again before it answers fills from the same answer.
@@ -1895,8 +1919,101 @@
   // For a menu another module draws a button for, such as Start app's pick of several apps (common.js).
   W.openMenu = openCardMenu;
 
+  // The keys of the double tap's mode that move through the sessions (keys.cjs): J and K go down and up the rail as it is drawn, so a
+  // folded zone is skipped as the eye skips it, and N goes to the next session after this one that needs you, in the same
+  // order, then any of the rail's folded zones hide. Each cycles round at the end.
+  // A session is where its own card is; a copy (one asking its person, in Needs you) counts only when its own card is
+  // not drawn, as when its group is folded.
+  function railOrder() {
+    const cards = slots.railBody ? [...slots.railBody.querySelectorAll('.rcard[data-session]')] : [];
+    const own = new Set(cards.filter((c) => !c.classList.contains('is-copy')).map((c) => c.dataset.session));
+    const ids = [...new Set(cards.filter((c) => !c.classList.contains('is-copy') || !own.has(c.dataset.session)).map((c) => c.dataset.session))];
+    return ids.map((sid) => data?.sessions.find((s) => s.id === sid)).filter(Boolean);
+  }
+  function after(list, step) {
+    if (!list.length) return null;
+    const at = list.findIndex((s) => s.id === id);
+    if (at < 0) return step > 0 ? list[0] : list[list.length - 1];
+    return list[(at + step + list.length) % list.length];
+  }
+  // As in Herdr, moving is a mode of its own: the session a key opened takes no focus (Chat's field, its terminal), so
+  // the next J moves on rather than typing a j. A tab key, or a click anywhere, ends it.
+  W.movingByKey = () => movingByKey;
+  document.addEventListener('pointerdown', () => { movingByKey = false; }, true);
+  function moveTo(s) {
+    movingByKey = true;
+    // The field or terminal the focus was in stays on the page for the next session: it must let go of it.
+    document.activeElement?.blur?.();
+    window.focus();
+    keyMove = true;
+    // On a phone, Everyone's status chip lives in the address (railStatus): the session opened keeps it, so the next key
+    // moves within it still.
+    const status = !railMine() && narrow.matches ? railStatus() : 'all';
+    const href = sessionHref(s);
+    const to = status === 'all' ? href : `${href}${href.includes('?') ? '&' : '?'}status=${encodeURIComponent(status)}`;
+    try {
+      navigate(to);
+    } finally {
+      keyMove = false;
+    }
+  }
+  function moveSession(step) {
+    const next = after(railOrder(), step);
+    if (next && next.id !== id) moveTo(next);
+  }
+  // The sessions this rail lists (Mine or Everyone, on the project picked), so N never opens one the other rail has:
+  // those drawn first, in their order, then the ones in folded zones.
+  function nextNeedsYou() {
+    const drawn = railOrder();
+    const onProject = railProject();
+    // As railBody draws it: on a phone, Everyone's status chip leaves out the other statuses (Unassigned stays).
+    const status = !railMine() && narrow.matches ? railStatus() : 'all';
+    const inStatus = (s) => status === 'all' || W.group(s) === status || (!railMine() && W.isUnassigned(s) && !W.isPullCheck(s));
+    const listed = data ? railListing().filter((s) => (!onProject || s.project === onProject) && inStatus(s)) : [];
+    const order = [...drawn, ...listed.filter((s) => !drawn.includes(s))];
+    // The one shown stays in the list, so the next is the one after it, and it alone is "nothing else".
+    const waiting = order.filter((s) => W.needsYou(s) || s.id === id);
+    const next = after(waiting, 1);
+    if (!next || next.id === id) W.shell.toast('Nothing else needs you');
+    else moveTo(next);
+  }
+  // The pane bar's tabs, by their place on it: a click on the button, so a pair (Terminal, Review) opens the view of it
+  // last open, as a click does. `onlyAsk` says whether there is such a tab without pressing it.
+  function showTab(n, onlyAsk = false) {
+    const button = id ? slots.head?.querySelectorAll('.ptabs .ptab')[n - 1] : null;
+    if (onlyAsk || !button) return Boolean(button);
+    if (button.disabled) {
+      W.shell.toast(button.title || `${button.textContent} is not there now`, { ms: 4000 });
+      return true;
+    }
+    movingByKey = false;
+    button.click();
+    // Into the tab, as Herdr's terminal mode: the chat's field, or the terminal, takes the keys (never on a phone).
+    if (!narrow.matches) {
+      requestAnimationFrame(() => {
+        if (tab === 'chat') chat.focus();
+        else if (tab === 'tui' || tab === 'terminal') shownTerminal()?.contentWindow?.term?.focus();
+        else {
+          // Review is a framed page: the frame takes the keys. Diff and App log are this page's panels: the panel does,
+          // so the arrows and Page Down scroll it.
+          const frame = tab === 'review' ? slots.review.querySelector('iframe') : null;
+          // A stopped session's Review is drawn into the pane itself, with no frame: the pane takes the keys then.
+          const panel = frame ? null : ({ diff: slots.diff, applog: slots.applog, review: slots.review })[tab];
+          if (frame) frame.focus();
+          else if (panel) {
+            panel.tabIndex = -1;
+            panel.focus({ preventScroll: true });
+          }
+        }
+      });
+    }
+    return true;
+  }
+
   W.shell.register({
-    sessions: paletteSessions, actions: paletteActions, toggleRail, railShown: () => !railHidden,
+    sessions: paletteSessions, actions: paletteActions, toggleRail, railShown: () => !railHidden, moveSession, nextNeedsYou, showTab,
+    // The mode ended (Esc, another key, a toast): the session shown may take focus again.
+    endMoving: () => { movingByKey = false; },
   });
 
   // What a phone's top bar puts in its ⋯ ahead of the card's: the app, the databases, and the key bar's switch.
@@ -2454,7 +2571,7 @@
       if (!frame) return;
       requestAnimationFrame(() => {
         frame.contentWindow?.dispatchEvent(new Event('resize'));
-        if (focus && !narrow.matches) frame.contentWindow?.term?.focus();
+        if (focus && !narrow.matches && !W.movingByKey?.()) frame.contentWindow?.term?.focus();
       });
     }
 
@@ -2519,6 +2636,16 @@
       W.isAdmin() && h('p', { class: 'hint' }, 'Need more at once? ', h('a', { href: '/console-settings' }, 'Raise the limit in Settings'), '.'));
   }
 
+  // A stopped private session's Resume and Remove, with what its kept machine adds: a failed one's note goes above
+  // the buttons, where it is read with the failure, and a stopped one's quiet row below them (keptMachineRow).
+  function privateActions(s) {
+    if (!W.canResumePrivate(s)) return h('div', { class: 'row' }, removeButton(s));
+    const resume = resumeButton(s, false);
+    const row = h('div', { class: 'row' }, resume, removeButton(s));
+    const kept = keptMachineRow(s, row, resume);
+    return s.status === 'failed' ? [kept, row] : [row, kept];
+  }
+
   function terminalBody(s) {
     if (s.status === 'starting' && s.startedAt) return startingBody(s);
     if (W.linePlace(s, data.sessions)) return lineBody(s);
@@ -2547,8 +2674,7 @@
         ? [h('p', null, W.agentOf(s) !== 'claude'
           ? `Work in progress is committed and pushed to the branch before a stop. Resume starts ${W.agentOf(s)} again on the same branch, in a new conversation: ${W.agentTitle(s)} keeps none between runs.`
           : 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
-          h('div', { class: 'row' }, W.canResumePrivate(s) && resumeButton(s, false), removeButton(s)),
-          W.canResumePrivate(s) && keptMachineRow(s)]
+          privateActions(s)]
         : s.kind === 'ask' ? h('p', null, 'Its conversation is deleted. Mention the bot in a Slack thread to ask again.')
           : s.trigger === 'qa' ? h('p', null, s.qa?.conclusion
             ? `A QA session pushes nothing: its report is the QA comment and check on ${W.ref(s)}. Add the QA label to the pull request again to run QA again.`

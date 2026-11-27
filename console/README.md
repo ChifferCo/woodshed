@@ -72,11 +72,12 @@ whose it is: **My repo settings** and **My session timeouts** are yours; Setting
   (`public/sessionTabs.cjs`: sessionStorage, read only by the login that picked it and dropped at sign-out), and on
   one it was never left on, the person's default view: Chat or TUI, one for a desktop and one for a phone (under
   720px), from My settings' Display card (`viewPrefs.mjs`, `GET` and `POST /api/my/session-view`; the console logs
-  `viewPrefs: session view changed`). Chat unless they changed it. Until a tab is picked it follows the window's width. The page
+  `viewPrefs: session view changed`). Chat unless they changed it. Resume and Hand off open the session they start
+  on that default view too, whatever tab it was left on. Until a tab is picked it follows the window's width. The page
   never writes `?tab` itself: a tab picked lives in the history entry's state, so a reload, Back and Forward keep it
   (the entry's tab wins over its address), and an address only ever carries a link's tab, kept as it came after a pick
   or a fallback (it goes through sign-in as it came, and a ?tab nobody linked to never reaches someone else).
-  `?tab=chat` asks for Chat itself, as Open the chat and Resume do; a tab remembered as `agent` before TUI's rename
+  `?tab=chat` asks for Chat itself, as Open the chat does; a tab remembered as `agent` before TUI's rename
   opens TUI. A tab the session cannot show now opens the other view of its pair where that one can show, as the bar's
   tab does (Diff once it stopped opens Review, Terminal with no shell App log), and TUI otherwise; a remembered one is
   then remembered as the tab it opened. Until the route's lookup answers, the list may be the kept snapshot's, so the tab is held and tried again first.
@@ -633,7 +634,21 @@ And what the shed shows about each session:
   the browser, and whether a session opens on Chat or TUI, one choice for a
   desktop and one for a phone, kept for you on every device; **⇧⌘O** (or **N**) is
   New session; **G** then **M**, **E** or **S** goes to My Woodshed, shared
-  sessions or My settings. Ctrl works for ⌘ outside a terminal, and the pages
+  sessions or My settings. On the session pages, **⌘ tapped twice** (Ctrl off a
+  Mac), alone and within 0.4 s, turns on a mode for moving through the
+  sessions, as Herdr's prefix and navigate mode, wherever the focus is, typing
+  in Chat or in a terminal (a modifier alone sends a terminal nothing, and no
+  browser or OS takes the double tap): **J** and **K** (or **↓** and **↑**) open
+  the next and previous session in the rail as it is drawn, skipping folded
+  zones; **1** to **4** pick the pane bar's tabs by their place and end the
+  mode, the tab taking the keys; **N** opens the next session that needs you.
+  The mode stays on, the toast's place saying so, until Esc (which goes no
+  further, not to a terminal), a click, a toast, the double tap again, or any
+  other key, which then does what it would have. Outside the mode these keys
+  move nothing and keep what they did before: **N** alone is still New
+  session. A tap is the key pressed and let go with nothing else pressed between,
+  so ⌘K or Ctrl+C twice is never one.
+  Ctrl works for ⌘ outside a terminal, and the pages
   write the keys as Ctrl on Windows and Linux. A key alone works only while
   nothing takes typing, and never inside a terminal or the Review, whose
   frame gets the ⌘ keys alone. Which key does what is
@@ -765,7 +780,9 @@ never reached claude, or one stopped before sessions kept their own homes.
 A launcher that keeps the session's machine between runs (`keptMachine`, "Embedding the console") resumes it on the image
 that machine was made from, which may no longer start a branch that took a newer project file: when it says so, the page
 offers **Resume on the latest image** too, which asks first, then leaves that machine, with its databases and whatever
-else the session kept there, for a new one; the branch and the conversation go along as on any Resume.
+else the session kept there, for a new one; the branch and the conversation go along as on any Resume. On a session that
+failed, the page says the failure may come from that older image, and **Resume on the latest image** is its primary
+action, with Resume beside it (`public/keptMachine.cjs`).
 **Remove**, on a stopped private session's page, takes it off the list and
 deletes the home it kept; its branch stays on GitHub. **Forget it** on My
 settings and Remove My Woodshed delete your kept home and every one of your
@@ -2406,6 +2423,42 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   groups anew (a save answering with new ones). Its forms post to the program, which sends the page back to
   `/console-settings/repos/<project>#<row>`, opening that row. A hook that throws, or answers anything else, adds none
   and logs `repoSettings: the program's groups not given`; the page is shown without them.
+- `envSources: {view, forSession}`: a source of the program's own for an env file's installation values, such as a
+  secret manager, in place of the values an admin typed ("Repo settings" below, "A program's source"). Both are async
+  and must answer fast: the first is asked on each read of a repo's settings, the second at each session's start.
+  - `view({name, repo, keys, headers})` is for the pages: `keys` are the env file keys the repo's project file names,
+    and it answers `null`, or for some of them `{label, on, keys?, markup?, scripts?}`: `label`, the source's name as
+    people read it ("Vault", 1 to 40 characters); `on`, `true` when sessions get this file's installation values from
+    the source; `keys`, the names of the variables it sets while on, never a value; `markup`, its own controls for this
+    file, made with `settingsMarkup.mjs` (never a string), which the repo's page draws inside the file's installation
+    layer; `scripts`, as `repoPage`'s, loaded once into the page's head when the repo's page is drawn, whichever rows
+    are open. A script may listen for `woodshed:host-groups` on `window`, fired once for each file's controls drawn
+    anew (`detail.node`), and only after every script the page just added has loaded or failed, so one never misses
+    the controls a link opened (`?file=<key>`). Its forms post to the program, which sends the page back to
+    `/console-settings/repos/<project>?file=<key>`. The views carry `source: {label, on, keys}` on the env file, and
+    the admin's `html` and `scripts` too; My settings never gets the controls. A hook that throws, or answers anything
+    else (a label too long, a key that is no variable's name, markup that is a string), adds nothing for the repo and
+    logs `repoSettings: the program's env sources not given`; the pages are then the typed values' alone.
+    The line says what kind of thing was wrong (`why`, and the env file's `key` from the project file), or for a
+    throw which of JavaScript's error classes it is (`error`): never its message, the name or the code it gave
+    itself, nor anything else the program wrote.
+  - `forSession({name, repo, session: {id, owner}})` answers `null`, or the text (`NAME=value` lines) of each env file
+    whose source is on, by key. A session is handed that text as the file's installation layer, in place of the typed
+    one, which stays kept and is not read; a key with no typed values is handed out too. A key must be one the console
+    knows as an env file's: one the repo's project file names (on its default branch), or one the console keeps values
+    for. Any other is dropped and counted (`sourceKeysDropped` on `repoSettings: handed out`), never handed on or named,
+    since a session's own log names the keys it gets; with the project file unread, that is every key the console keeps
+    no values for. The program keeps its own
+    fallback for a source that does not answer: text that is not a string, or over the 64 KB a typed value may be, leaves
+    that file's installation layer with none, never the typed text, since the page says it is not used; an answer under
+    a name that is no env file's key is dropped. `repoSettings: env source text refused, the installation layer handed
+    out as none` counts them (`refused`, and `notAKey`, `notText`, `tooLarge`) and names none. A hook that throws,
+    answers no object, or has not answered in 10 seconds (`ENV_SOURCES_TIMEOUT_MS` in `repoSettings.mjs`, under the 15 a
+    session waits) says nothing of which sources are on, so the typed values are handed out (`repoSettings: env sources
+    not read, the typed values handed out`, with `why`, and for a throw the error's class, never its message or
+    code). The 10 seconds are for the answer and the check of its keys together: where a key needs the project file
+    read and that is not done when they are up, the file counts as unread (`repoSettings: project file not read, a
+    source's keys the console keeps no values for are dropped`), and the read goes on for the next start. The console keeps none of a source's text and logs nothing the program wrote.
 - `stillSignedIn({login, headers})`, behind `trusted` only: whether the person who opened a page's live session list
   (`GET /api/sessions/live`, "How the rail keeps up" above) is still signed in with the program, `true` or a promise of
   it. The console asks it before the opening list and each change it sends on that stream, with the headers of the request that opened it,
@@ -3173,20 +3226,33 @@ public/repoLayers.js, which the admin page shares), for each repo they can write
 files that share a key are one tab there too (`app-env → api/.env, worker/.env`), and a person's values are written to
 each of them.
 
-Repo settings are the only place an env file's values are set: no secret on Secrets & webhooks, Terraform or the task
-definition holds them. A value saved by the old start-time copy from a Terraform secret says `copied from Terraform` in
-place of who saved it.
+Repo settings are the only place the console keeps an env file's values: no secret on Secrets & webhooks, Terraform
+or the task definition holds them. A value saved by the old start-time copy from a Terraform secret says `copied from
+Terraform` in place of who saved it.
+
+**A program's source.** A program that embeds the console may give an env file's installation values from a source of
+its own, such as a secret manager (its `envSources` hook, "Embedding the console" above). The file's installation layer
+on the repo's page then opens on a switch, **Typed here** or the source's name ("Vault"), with a line saying which is in
+use. It opens on the side in use, and picking the other only shows it: turning a source on or off is the program's own
+form, on the source's side, which is the program's controls. While the source is on, sessions get its text as layer 2
+and the typed values are kept but handed to no session: Typed here says so, and names the typed keys the source does not
+set: this installation sets no value for those while the source is on, though the repo's defaults or a person's own
+values still may. The row says `From Vault · 3 keys`, the table's Installation column is the
+source's keys, and where that layer wins the tag is the source's name. My settings shows the same layer read only,
+`From Vault · 3 keys` and the names of its keys, with no typed values and none of the program's controls. A person's own
+values, the session's wiring and the instructions are as ever. The console asks the program at each session's start and
+keeps none of the text. With no hook, or no source for a file, both pages are what they are without one.
 
 The JSON API:
 
 | Route | Who | Answers |
 | --- | --- | --- |
-| `GET /api/console-settings/repos/<project>` | admins | the project file's env files, one a key (key, `paths`, and `files`: each path's defaults and wiring, `overrides`, `optional`, `env`; `path`, `defaults` and `wiring` are the first path's), each layer's records, `table` (each key, the layers that set it and the one that `wins`, one row for all the paths where they agree, else one a path with its `path`), `unnamed` (keys saved that the file no longer names), the instructions' records |
+| `GET /api/console-settings/repos/<project>` | admins | the project file's env files, one a key (key, `paths`, and `files`: each path's defaults and wiring, `overrides`, `optional`, `env`; `path`, `defaults` and `wiring` are the first path's), each layer's records, `table` (each key, the layers that set it and the one that `wins`, one row for all the paths where they agree, else one a path with its `path`), `unnamed` (keys saved that the file no longer names), the instructions' records. An env file a program has a source for carries `source`: `{label, on, keys, html?, scripts?}` |
 | `GET`, `POST /api/console-settings/repos/<project>/env/<key>` | admins | `{"text"}`, the installation's values; a POST of `{"text": ""}` clears them |
 | `POST /api/console-settings/repos/<project>/env/<key>/remove` | admins | deletes the installation's and everyone's values for a key the project file no longer names |
 | `GET`, `POST /api/console-settings/repos/<project>/instructions` | admins | `{"text"}` |
 | `GET /api/my/repos` | everyone | the repos you can write to, each with the keys and instructions you keep for it, and `defaultProject`, the person's default |
-| `GET /api/my/repos/<project>` | writers | the admin view, plus your own records (`personal`) |
+| `GET /api/my/repos/<project>` | writers | the admin view, plus your own records (`personal`); a `source` is `{label, on, keys}` alone |
 | `GET`, `POST /api/my/repos/<project>/env/<key>` | writers | `{"text": yours, "installation": the installation's or null}`; a POST saves yours |
 | `GET`, `POST /api/my/repos/<project>/instructions` | writers | the same, for the instructions |
 
@@ -3203,7 +3269,10 @@ by what it asks for: `{"project", "envFiles": {"<key>": {"installation", "person
 "personal"}, "personalFor"}`, every key the console keeps for the project (null where a layer has none). `personal` is
 filled only in a private session, from its owner's names; a shared or QA session gets the installation's alone, an ask session
 404, and 503 while the store does not answer. The console logs `repoSettings: handed out` with the session, the project,
-the keys each layer gave and whether each has instructions. The session writes them into its env files and rules
+the keys each layer gave and whether each has instructions. Where a program gives env files' installation values from
+a source of its own ("A program's source" above), `installation` is the source's text for each file it is on for, and
+the line also has `fromSource`, those files' keys (and `sourceKeysDropped`, how many keys the program answered that
+the console does not know as env files, which no session is handed). The session writes them into its env files and rules
 (session/README.md, "What a container does").
 
 The database template's seed (`session/dbAdmin.mjs`, `seedEnvFiles`) writes the env files its databases name from the
@@ -3213,7 +3282,8 @@ reads them itself, as
 role may read that project's `repos/<project>/env/*` and no other repo's (`TheSeedsEnvFiles` in
 `providers/aws/terraform/ecs.tf`). A key that two env files name (they share a secret) is read once and written to
 both. Its log says `Seed env files read` with where each key came from (`repo settings` or `none`) and the paths that
-name it, never a value.
+name it, never a value. The seed reads the store, so it does not see a program's source: for a file whose source is
+on it writes the typed values, where any are kept.
 
 **Remove** on the Repos card deletes the repo's installation values and every person's own for it
 (`repoSettings: repo forgotten`, with how many), and **Remove My Woodshed** deletes the person's for every repo.
