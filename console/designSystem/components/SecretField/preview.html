@@ -3,18 +3,19 @@
 <style>
  body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif;font-size:13px}
  .form{max-width:560px;display:flex;flex-direction:column;gap:12px}
- label{display:flex;flex-direction:column;gap:4px;font-weight:600}
- .secret{display:flex;align-items:flex-start;gap:6px}
+ .field{display:flex;flex-direction:column;gap:4px}
+ label{font-weight:600}
+ .secret{display:flex;align-items:stretch;gap:6px}
  input{flex:1 1 auto;min-width:0;padding:8px 10px;border:1px solid #b9b9b9;border-radius:4px;background:var(--ground);color:var(--ink);font:400 13px "Red Hat Mono",monospace}
- button{height:32px;padding:0 12px;border:1px solid var(--line);border-radius:4px;background:var(--ground);color:var(--ink);font:600 12.5px "Red Hat Display",sans-serif}
+ button{padding:0 12px;border:1px solid var(--line);border-radius:4px;background:var(--ground);color:var(--ink);font:600 12.5px "Red Hat Display",sans-serif}
  .sub{margin:0;color:var(--sub)}
 </style>
 <div class="form">
- <label>API token
-  <span class="secret"><input type="password" value="tok_made_up_value_0001" placeholder="tok_…" autocomplete="new-password" spellcheck="false" autocapitalize="off"><button type="button" aria-pressed="false">Show</button></span>
- </label>
- <label>Signing secret, shown to check the paste
-  <span class="secret"><input type="text" value="made-up-signing-secret" spellcheck="false" autocapitalize="off"><button type="button" aria-pressed="true">Hide</button></span>
- </label>
+ <div class="field"><label for="api-token">API token</label>
+  <span class="secret"><input id="api-token" type="password" value="tok_made_up_value_0001" placeholder="tok_…" autocomplete="new-password" spellcheck="false" autocapitalize="off"><button type="button" aria-controls="api-token" aria-pressed="false">Show</button></span>
+ </div>
+ <div class="field"><label for="signing-secret">Signing secret, shown to check the paste</label>
+  <span class="secret"><input id="signing-secret" type="text" value="made-up-signing-secret" spellcheck="false" autocapitalize="off"><button type="button" aria-controls="signing-secret" aria-pressed="true">Hide</button></span>
+ </div>
  <p class="sub">The token is kept sealed and never shown again.</p>
 </div>
