@@ -170,7 +170,11 @@ export function beginInteractiveGrok(session) {
   const grant = existing && existing.token === session.token ? existing : { token: session.token, pending: 0, started: false };
   interactiveGrok.set(session, grant);
   grant.pending++;
+  let settled = false;
   return (status) => {
+    // Statusd can report a response and then a socket error for the same start.
+    if (settled) return;
+    settled = true;
     grant.pending--;
     if (status === 200) grant.started = true;
   };

@@ -476,6 +476,21 @@ test('a Responses body that leaves store out is refused, since left out it is st
   assert.equal((await call(token, path, { body })).status, 200);
 });
 
+test('a late statusd error does not consume another pending Grok start', async (t) => {
+  const session = { id: '66666666', status: 'running', token: 'pending-grok', owner: 'gil' };
+  SESSIONS.push(session);
+  t.after(() => SESSIONS.splice(SESSIONS.indexOf(session), 1));
+  const { call, seen } = await setup(t);
+  const refused = beginInteractiveGrok(session);
+  const pending = beginInteractiveGrok(session);
+  refused(409);
+  refused(502);
+  assert.equal((await call(session.token)).status, 200, 'the other start is still pending');
+  pending(409);
+  assert.equal((await call(session.token)).status, 403);
+  assert.equal(seen.length, 1);
+});
+
 test('interactive Grok grants model access only and reads the current API key at the console', async (t) => {
   const session = { id: '55555555', status: 'running', token: 'interactive-grok', owner: 'gil' };
   SESSIONS.push(session);
