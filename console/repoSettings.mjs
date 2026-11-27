@@ -36,8 +36,9 @@ const VARIABLE = /^[A-Za-z_][A-Za-z0-9_.]*$/;
 // The most names a source gives for one env file: far more than a real one sets.
 const MAX_SOURCE_KEYS = 1000;
 const MAX_SOURCE_LABEL = 40;
-// How long a program's `envSources.forSession` may take: under the 15 s a session waits for its repo settings
-// (session/entrypoint.sh), so one that hangs costs a start its source, never the start.
+// How long a program's `envSources.forSession` may take, the check of the keys it answers included (a read of the
+// project file, where one is not known): under the 15 s a session waits for its repo settings (session/entrypoint.sh),
+// so one that hangs costs a start its source, never the start.
 export const ENV_SOURCES_TIMEOUT_MS = 10_000;
 const PROJECT = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 // A whole .env file, JSON-escaped, under the store's 64 KB.
@@ -342,17 +343,18 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
   // The program's sources for a project's env files, by key: none without the hook, where it names none, or where it
   // throws or answers badly, and the pages are then the typed values' alone.
   async function sourcesOf(project, keys, headers) {
-    if (!envSources || !keys.length) return {};
+    // A Map: an env file's key may be a name every object has (`constructor`), which a plain object would answer for.
+    if (!envSources || !keys.length) return new Map();
     try {
       const given = await envSources.view({ name: project.name, repo: project.repo ?? null, keys, headers });
-      if (given === null || given === undefined) return {};
+      if (given === null || given === undefined) return new Map();
       if (!isRecord(given)) throw notByKey(given);
       // Read whole here, inside the guard: what is returned is plain data.
       const entries = new Map(plainEntries(given));
-      return Object.fromEntries(keys.filter((key) => entries.get(key) != null).map((key) => [key, checkedSource(key, entries.get(key))]));
+      return new Map(keys.filter((key) => entries.get(key) != null).map((key) => [key, checkedSource(key, entries.get(key))]));
     } catch (err) {
       console.warn('repoSettings: the program\'s env sources not given', { project: project.name, ...failureOf(err) });
-      return {};
+      return new Map();
     }
   }
 
@@ -392,7 +394,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     return {
       project: project.name, repo: project.repo, default: Boolean(project.default),
       projectFile: { read: Boolean(layer), error, rules: layer?.rules ?? null, setup: layer?.setup ?? null },
-      envFiles: byKey(files).map((group) => envFileView({ project, files: group, layer, login, source: sources[group[0].key] ?? null, controls })),
+      envFiles: byKey(files).map((group) => envFileView({ project, files: group, layer, login, source: sources.get(group[0].key) ?? null, controls })),
       // Saved for a key the project file no longer names: kept until someone deletes it.
       unnamed: layer ? saved.map((key) => ({ key, installation: instEnv[key] ?? null, ...(login && { personal: ownEnv[key] ?? null }) })) : [],
       instructions: { installation: recordOf({ project: project.name }), ...(login && { personal: recordOf({ login, project: project.name }) }) },
@@ -564,10 +566,13 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     if (isAsk(session)) return null;
     const project = projectFor(config, session).name;
     const personalFor = session.owner && !isQa(session) ? session.owner : null;
-    const answered = await sourcedFor(session, project);
+    // The source's answer and the check of its keys share one wait (envSourcesTimeoutMs), so a slow hook and then a
+    // slow read of the project file cannot together outlast the session's own wait for this answer.
+    const until = Date.now() + envSourcesTimeoutMs;
+    const answered = await sourcedFor(session, project, until);
     // A key only the program gave is its text until the console knows it as an env file's: never handed on, where the
     // session's log would name it, and never named here. Dropped and counted.
-    const known = answered.size ? await knownKeys(project, [...answered.keys()]) : new Set();
+    const known = answered.size ? await knownKeys(project, [...answered.keys()], until) : new Set();
     const sourced = new Map([...answered].filter(([key]) => known.has(key)));
     const dropped = answered.size - sourced.size;
     const keys = [...new Set([
@@ -593,15 +598,20 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
   // The keys the console knows as a project's env files: those it keeps a record for, and, where a source answered
   // others, those the project file names (on its default branch). That read is made only then; when it fails, a source's
   // key with no record is not known, and is dropped.
-  async function knownKeys(project, sourcedKeys) {
+  async function knownKeys(project, sourcedKeys, until) {
     const known = new Set(Object.keys(rootFor(null)?.[project]?.env ?? {}));
     for (const person of Object.values(store.state.people ?? {})) for (const key of Object.keys(person?.repos?.[project]?.env ?? {})) known.add(key);
     if (sourcedKeys.every((key) => known.has(key))) return known;
-    // The message is the console's own reader's (GitHub's answer), as its other lines log it.
-    const layer = await readerOf(project).repoLayer().catch((err) => {
+    // The message is the console's own reader's (GitHub's answer), as its other lines log it, or that the wait the
+    // source's answer began is over: the read goes on, and the next start finds it done.
+    let timer;
+    const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer in what was left of the ${envSourcesTimeoutMs} ms a source has`)), Math.max(0, until - Date.now())); });
+    const reading = Promise.resolve().then(() => readerOf(project).repoLayer());
+    reading.catch(() => {});
+    const layer = await Promise.race([reading, late]).catch((err) => {
       console.warn('repoSettings: project file not read, a source\'s keys the console keeps no values for are dropped', { project, message: firstLine(err) });
       return null;
-    });
+    }).finally(() => clearTimeout(timer));
     for (const file of layer?.envFiles ?? []) known.add(file.key);
     return known;
   }
@@ -612,13 +622,13 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
   // A hook that throws, answers no object or does not answer in time says nothing of which sources are on, so the
   // typed values are handed out. The log names no key here: a key is the program's text, so a refused one is counted,
   // by what was wrong with it.
-  async function sourcedFor(session, project) {
+  async function sourcedFor(session, project, until) {
     const sourced = new Map();
     if (!envSources) return sourced;
     let entries;
     let timer;
     try {
-      const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new BadAnswer(`no answer in ${envSourcesTimeoutMs} ms`)), envSourcesTimeoutMs); });
+      const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new BadAnswer(`no answer in ${envSourcesTimeoutMs} ms`)), Math.max(0, until - Date.now())); });
       const asked = Promise.resolve().then(() => envSources.forSession({ name: project, repo: projectNamed(config, project)?.repo ?? null, session: { id: session.id, owner: session.owner ?? null } }));
       // Should it fail after the wait is over, that is no one's to catch.
       asked.catch(() => {});

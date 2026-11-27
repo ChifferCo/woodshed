@@ -225,14 +225,31 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
 
   // The scripts the sources' controls name, loaded once for the document, into its head: not into a panel, which is in
   // the page only while its row is open on the source's side, so a script two sources share would wait on the first's.
+  // The controls drawn anew are told to the scripts (`woodshed:host-groups`) only once every script this page added
+  // has loaded, or failed to: one still loading has no listener yet, and would miss the first draw of a panel a link
+  // opened (?file=). Each panel is told once, so a script that was already loaded hears nothing twice.
+  let scriptsLoading = 0;
   function loadSourceScripts() {
     for (const f of view.envFiles) {
       for (const src of f.source?.scripts ?? []) {
         if (repoPageScripts.has(src)) continue;
         repoPageScripts.add(src);
-        document.head.append(h('script', { src }));
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          scriptsLoading -= 1;
+          saySourcesDrawn();
+        };
+        scriptsLoading += 1;
+        document.head.append(h('script', { src, onload: done, onerror: done }));
       }
     }
+  }
+
+  function saySourcesDrawn() {
+    if (scriptsLoading > 0) return;
+    for (const node of sourcesRedrawn.splice(0)) window.dispatchEvent(new CustomEvent('woodshed:host-groups', { detail: { node } }));
   }
 
   // The typed values while a source is on: kept, and handed to no session, the keys the source leaves out included.
@@ -566,8 +583,8 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
       window.dispatchEvent(new CustomEvent('woodshed:host-groups', { detail: { node: hostNode } }));
     }
     loadSourceScripts();
-    // The same for each env file's source whose controls were drawn anew.
-    for (const node of sourcesRedrawn.splice(0)) window.dispatchEvent(new CustomEvent('woodshed:host-groups', { detail: { node } }));
+    // The same for each env file's source whose controls were drawn anew, once its scripts are there to hear it.
+    saySourcesDrawn();
     for (const key of editors.keys()) updateCounts(key);
     if (focused && focused === document.activeElement) {
       try { if (caret?.[0] !== undefined && caret?.[0] !== null) focused.setSelectionRange(...caret); } catch { /* not a text field */ }

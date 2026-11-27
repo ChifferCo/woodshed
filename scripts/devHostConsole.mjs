@@ -115,7 +115,7 @@ export function devEnvSources() {
   ]}`;
   return {
     async view({ name, keys }) {
-      return Object.fromEntries(keys.filter((key) => VAULT[key]).map((key) => [key, {
+      return Object.fromEntries(keys.filter((key) => Object.hasOwn(VAULT, key)).map((key) => [key, {
         label: 'Vault', on: VAULT[key].on, keys: named(VAULT[key].text), markup: controls(name, key, VAULT[key]),
       }]));
     },

@@ -798,6 +798,7 @@ test('a source\'s controls stay the same node when the page is drawn again, and 
   const head = page.context.document.head;
   assert.deepEqual(walk(head).filter((e) => e.tag === 'script').map((e) => e.attrs.src), ['/assets/vault.js'], 'once, a path on the console\'s address alone, with every row closed');
   assert.equal(walk(page.app).some((e) => e.tag === 'script'), false, 'not in a panel, which is in the page only while its row is open');
+  walk(head).find((e) => e.tag === 'script').listeners.load();
   // The second file's row alone is opened: its controls are drawn, and said.
   openRow(page.app, 'file-web-env-local');
   await settle();
@@ -845,4 +846,30 @@ test('with no source for its env files, or a hook that fails, the page is what i
   }
   const other = await loadPage({ before: saveTyped, envSources: vault({ web: null }) });
   assert.equal(drawn(rowOf(other.app, 'file-web-env-local')), drawn(rowOf((await loadPage({ before: saveTyped })).app, 'file-web-env-local')), 'a file with none, beside one with a source');
+});
+
+test('a link that opens a source\'s controls tells its script of them only once the script has loaded', async () => {
+  const page = await loadPage({ search: '?file=api-env', envSources: vault({ scripts: ['/assets/vault.js'] }), opened: [] });
+  const script = walk(page.context.document.head).find((e) => e.tag === 'script');
+  assert.equal(script.attrs.src, '/assets/vault.js');
+  assert.ok(walk(page.app).some((e) => e.className === 'host-groups'), 'the controls are drawn, the row opened by the link');
+  assert.deepEqual(page.events, [], 'not said yet: the script has no listener until it has run');
+  // Drawn again while it loads: still held.
+  page.context.window.Woodshed.postJson('/api/console-settings/repos/app/instructions', { text: 'Be brief.' });
+  await settle();
+  assert.deepEqual(page.events, []);
+  script.listeners.load();
+  assert.deepEqual(page.events, [{ type: 'woodshed:host-groups', inPage: true }], 'said once it has, with the controls in the page');
+  script.listeners.load();
+  script.listeners.error();
+  pick(rowOf(page.app, 'file-api-env'), 'Typed here');
+  pick(rowOf(page.app, 'file-api-env'), 'Vault');
+  await settle();
+  assert.equal(page.events.length, 1, 'and not again: for a load said twice, or a redraw of the same controls');
+  // A script that fails to load holds nothing back; one already loaded is told at once, as before.
+  const failed = await loadPage({ search: '?file=api-env', envSources: vault({ scripts: ['/assets/gone.js'] }), opened: [] });
+  walk(failed.context.document.head).find((e) => e.tag === 'script').listeners.error();
+  assert.equal(failed.events.length, 1);
+  const none = await loadPage({ search: '?file=api-env', envSources: vault(), opened: [] });
+  assert.equal(none.events.length, 1, 'no script: said at once');
 });

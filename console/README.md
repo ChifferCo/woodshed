@@ -2432,7 +2432,9 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
     the source; `keys`, the names of the variables it sets while on, never a value; `markup`, its own controls for this
     file, made with `settingsMarkup.mjs` (never a string), which the repo's page draws inside the file's installation
     layer; `scripts`, as `repoPage`'s, loaded once into the page's head when the repo's page is drawn, whichever rows
-    are open. Its forms post to the program, which sends the page back to
+    are open. A script may listen for `woodshed:host-groups` on `window`, fired once for each file's controls drawn
+    anew (`detail.node`), and only after every script the page just added has loaded or failed, so one never misses
+    the controls a link opened (`?file=<key>`). Its forms post to the program, which sends the page back to
     `/console-settings/repos/<project>?file=<key>`. The views carry `source: {label, on, keys}` on the env file, and
     the admin's `html` and `scripts` too; My settings never gets the controls. A hook that throws, or answers anything
     else (a label too long, a key that is no variable's name, markup that is a string), adds nothing for the repo and
@@ -2454,7 +2456,9 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
     answers no object, or has not answered in 10 seconds (`ENV_SOURCES_TIMEOUT_MS` in `repoSettings.mjs`, under the 15 a
     session waits) says nothing of which sources are on, so the typed values are handed out (`repoSettings: env sources
     not read, the typed values handed out`, with `why`, and for a throw the error's class, never its message or
-    code). The console keeps none of a source's text and logs nothing the program wrote.
+    code). The 10 seconds are for the answer and the check of its keys together: where a key needs the project file
+    read and that is not done when they are up, the file counts as unread (`repoSettings: project file not read, a
+    source's keys the console keeps no values for are dropped`), and the read goes on for the next start. The console keeps none of a source's text and logs nothing the program wrote.
 - `stillSignedIn({login, headers})`, behind `trusted` only: whether the person who opened a page's live session list
   (`GET /api/sessions/live`, "How the rail keeps up" above) is still signed in with the program, `true` or a promise of
   it. The console asks it before the opening list and each change it sends on that stream, with the headers of the request that opened it,
