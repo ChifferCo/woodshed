@@ -3359,7 +3359,7 @@ window (90 days) that all three windows share, and at most its newest 2,000 of t
 repo with more is read in date ranges, halved until each fits; a window is flagged cut off only when the 2,000 do not reach back
 past its start). The saved read is always shown at once, however old, with when the data is as of and a
 **Refresh** button (`POST /api/analytics/refresh`, off while a read runs, the page asking again every 3 s until it is done); a view
-of a read over an hour old also starts one in the background, as does a pull request closing, merged or not (a pull request webhook, `pullWebhooks: pull request marked due` by `analytics`), for that repo only if it was read before; the console also reads every repo once ten seconds after it starts, so the first view does not wait for GitHub, and one that fails keeps the last read, says so on the page and is
+of a read over an hour old also starts one in the background, as does a pull request closing, merged or not (a pull request webhook, `pullWebhooks: pull request marked due` by `analytics`), for that repo only if it was read before; a console with GitHub App tokens also reads each repo not yet read ten seconds after it starts, so a first view after that read finished does not wait for GitHub, and one that fails keeps the last read, says so on the page and is
 not tried on its own again for a minute (nor is a first read that failed) (`analytics: refresh failed, keeping the last read`; `analytics: refresh asked` says who
 pressed the button). Only the first read, with none saved, makes the viewer wait. `analytics: pull requests not read` with the project and GitHub's error when a read fails, and the
 page names the repo it left out.
