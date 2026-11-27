@@ -75,6 +75,8 @@ export function createLiveSessions({ bodyFor, onChange = null, later = setTimeou
   let flushTimer = null;
   let sweepTimer = null;
   let heartbeatTimer = null;
+  // Set by closeAll: the console is stopping, so an opening still waiting on its sign-in check is never kept.
+  let closed = false;
 
   const unref = (timer) => { timer?.unref?.(); return timer; };
 
@@ -181,7 +183,13 @@ export function createLiveSessions({ bodyFor, onChange = null, later = setTimeou
     async handle(req, res, login, { stillAllowed = () => true } = {}) {
       // A hosted request signed just before the program took its person out passes the console's own check: the
       // program's is asked before the list is so much as read.
-      if (!(await allows(stillAllowed))) {
+      const allowed = await allows(stillAllowed);
+      if (closed) {
+        res.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ error: 'the console is stopping' }));
+        return;
+      }
+      if (!allowed) {
         console.log('liveSessions: stream refused, its sign-in no longer lets it in', { login });
         res.writeHead(401, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         res.end(JSON.stringify({ error: 'sign in first' }));
@@ -216,6 +224,7 @@ export function createLiveSessions({ bodyFor, onChange = null, later = setTimeou
     },
     /** Ends every stream: the console is stopping. */
     closeAll() {
+      closed = true;
       for (const stream of [...streams]) end(stream);
       for (const timer of [flushTimer, sweepTimer, heartbeatTimer]) if (timer) cancel(timer);
       flushTimer = sweepTimer = heartbeatTimer = null;

@@ -198,3 +198,19 @@ test('an opening list too big for a browser that is not reading ends its stream,
   assert.equal(live.open(), 0);
   assert.deepEqual(timers.pending(), [], 'no sweep or heartbeat left for it');
 });
+
+test('an opening still waiting on its sign-in check when the console stops is answered, never kept', async () => {
+  const { live, timers } = setup([{ id: 'aaaa1111', state: 'done' }]);
+  let allow;
+  const res = fakeResponse();
+  const opening = live.handle(new EventEmitter(), res, 'joel', { stillAllowed: () => new Promise((resolve) => { allow = resolve; }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  live.closeAll();
+  allow(true);
+  await opening;
+  assert.equal(res.head.status, 503);
+  assert.equal(res.ended, true);
+  assert.equal(live.open(), 0);
+  assert.equal(res.events().length, 0);
+  assert.deepEqual(timers.pending(), []);
+});
