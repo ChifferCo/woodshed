@@ -16,6 +16,10 @@
   const W = window.Woodshed;
   const { h } = W;
   const REFRESH_MS = 5000;
+  // While the console pushes the list as it changes (openLive), the poll is only its backstop.
+  const LIVE_REFRESH_MS = 30_000;
+  // A console that refused the stream (one from before it) is asked again this much later.
+  const LIVE_RETRY_MS = 60_000;
   // While the open session starts, so its checklist and clock move and the terminal opens as soon as claude does.
   const STARTING_REFRESH_MS = 1000;
   // A phone's width, where the rail and the pane are pages of their own and a menu is a sheet from the bottom.
@@ -3295,7 +3299,16 @@
       const askMe = onMy || !me || (railMine() && !W.setupDone(me));
       const answer = await Promise.all([W.fetchSessions(), askMe ? W.getJson('/api/my') : Promise.resolve(me)]);
       // A read started on the previous page must not confirm a session absent from its older list.
-      if (version !== routeVersion || !sessionLookups.fresh(lookup)) return;
+      if (version !== routeVersion) return;
+      if (!sessionLookups.fresh(lookup)) {
+        // A change the console pushed came after this read started: its list is older, but its /api/my is still news.
+        if (askMe && answer[1] && !accountChanged(answer[1].login)) {
+          me = answer[1];
+          keepLast();
+          render();
+        }
+        return;
+      }
       if (accountChanged(answer[0]?.login, answer[1]?.login)) return;
       [data, me] = answer;
       routePending = false;
@@ -3324,13 +3337,90 @@
     render();
   }
 
+  // The list as it changes, pushed by the console (console/liveSessions.mjs): the whole list as the stream opens, then
+  // each change. Only while the tab shows: a hidden one holds no connection, which over HTTP/1 a browser has six of
+  // for the console's every tab. Whatever the stream does, the poll goes on, every 30 s while it is open.
+  let live = null;
+  let liveOpen = false;
+  // The list as the stream has sent it, which each patch applies to: what the console compared it with. A poll's
+  // answer in between may be newer or older than a patch, so a patch is never applied to it.
+  let liveList = null;
+  let liveRefusedAt = -Infinity;
+  function openLive() {
+    if (live || typeof window.EventSource !== 'function' || document.hidden || Date.now() - liveRefusedAt < LIVE_RETRY_MS) return;
+    const stream = new window.EventSource('/api/sessions/live');
+    live = stream;
+    const take = (kind) => (event) => {
+      if (live !== stream) return;
+      let body;
+      try {
+        body = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      liveOpen = true;
+      applyLive(kind, body);
+    };
+    stream.addEventListener('full', take('full'));
+    stream.addEventListener('patch', take('patch'));
+    stream.addEventListener('error', () => {
+      if (live !== stream) return;
+      const wasOpen = liveOpen;
+      liveOpen = false;
+      liveList = null;
+      // The poll was 30 s away while the stream carried the page: back to every 5 s from now.
+      if (wasOpen) {
+        clearTimeout(loopTimer);
+        loopTimer = setTimeout(loop, REFRESH_MS);
+      }
+      // CONNECTING: the browser opens it again by itself. CLOSED: refused (signed out, an older console), so the poll
+      // carries the page, and the stream is asked for again a minute later.
+      if (stream.readyState === window.EventSource.CLOSED) {
+        live = null;
+        liveRefusedAt = Date.now();
+      }
+    });
+  }
+  function closeLive() {
+    live?.close();
+    live = null;
+    liveOpen = false;
+    liveList = null;
+  }
+  // Drawn once per frame however many changes came in it.
+  let liveFrame = 0;
+  function applyLive(kind, body) {
+    // Until the page's own first answer, the list it would patch is a guess (readLast) or nothing: the poll comes first.
+    if (accountChanged(body.login ?? body.top?.login)) return;
+    if (kind === 'full') liveList = body;
+    else if (liveList) liveList = SessionTabs.withPatch(liveList, body);
+    else return;
+    if (!data || !routeConfirmed) return;
+    // Newer than any poll still out: that answer, when it lands, is dropped (sessionLookups).
+    sessionLookups.fresh(sessionLookups.start());
+    data = W.sessionsAnswer(structuredClone(liveList));
+    keepLast();
+    if (liveFrame) return;
+    liveFrame = window.requestAnimationFrame(() => {
+      liveFrame = 0;
+      render();
+    });
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return closeLive();
+    openLive();
+    // What changed while it was hidden.
+    loop();
+  });
+
   // One loop for the page's life, whichever of its pages shows; a move refreshes at once besides.
   let loopTimer = null;
   async function loop() {
     clearTimeout(loopTimer);
     await refresh();
+    openLive();
     const waiting = currentSession?.status === 'starting' || currentSession?.status === 'queued';
-    loopTimer = setTimeout(loop, waiting ? STARTING_REFRESH_MS : REFRESH_MS);
+    loopTimer = setTimeout(loop, waiting ? STARTING_REFRESH_MS : liveOpen ? LIVE_REFRESH_MS : REFRESH_MS);
   }
   readLast();
   if (data) render();

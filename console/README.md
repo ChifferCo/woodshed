@@ -390,6 +390,31 @@ page has a tab for each:
 review and the agent suite (see Slack below). The page shows when a waiting
 session pauses.
 
+### How the rail keeps up
+
+The console reads each session's state from its statusd (`GET /status`) and pushes what changed to every open page
+(`GET /api/sessions/live`, server-sent events, `liveSessions.mjs`): the whole list as the stream opens, then each
+session's changed fields within 100 ms of the console knowing them. A session the console just sent something to (a
+message, an answer, an interrupt) is read 400 ms later and every 2 s for 30 s after (`fleet.soon`, `checkLive`), and
+so is every session working, which is when Done or Needs you comes; the rest are read at the 10 s tick, all at once,
+eight at a time. A status read costs a session about a tenth of a second of CPU (git and `gh`'s cached lookups),
+which is why sessions not likely to change are not read every 2 s. So a card says Working within about a second of a
+message from the page, and Done or Needs you within about 2 s of the agent saying so. A message typed in the TUI tab
+is seen at the next tick, up to 10 s.
+
+The page keeps the stream only while its tab shows: over HTTP/1 a browser allows six connections to the console for
+all its tabs. It polls `GET /api/sessions` every 30 s while the stream is open, and every 5 s as before when it is
+not (refused by a console from before it, cut by a proxy, or reconnecting: the browser opens it again a second after
+it drops). Before the opening list and each send after it, the stream's own request is signed in again, as every request is (a check that has not answered in 2 s is a no, and holds up no other stream): someone signed out or
+taken off People gets nothing more and the stream ends, and so does a stream opened with no sign-in once the console
+starts requiring one. Behind a hosting proxy the console cannot tell on its own that the program took someone out
+while their identity header is still good, so a hosted console pushes the list only when the program gives the
+`stillSignedIn` hook ("Embedding the console"); otherwise its pages poll. A stream also ends after 5 minutes and the
+browser opens it again. The console's stop ends every stream. A proxy in front
+must pass `text/event-stream` through unbuffered (the console sends `X-Accel-Buffering: no` for nginx); one that holds
+it back leaves the page on the poll, a little later than the stream but never wrong. The browser's notifications
+(`browserNotifications.js`) still read the list every 20 s from one tab of their own, which may be hidden.
+
 Every stop of a shared session that ran keeps it (`kept` in `state.json`): its
 databases (`woodshed__<id>`) stay, and statusd saves its Claude home to the
 homes bucket at `_sessions/<id>/claude-home.tar.gz`, a name no GitHub login can
@@ -2398,6 +2423,13 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   groups anew (a save answering with new ones). Its forms post to the program, which sends the page back to
   `/console-settings/repos/<project>#<row>`, opening that row. A hook that throws, or answers anything else, adds none
   and logs `repoSettings: the program's groups not given`; the page is shown without them.
+- `stillSignedIn({login, headers})`, behind `trusted` only: whether the person who opened a page's live session list
+  (`GET /api/sessions/live`, "How the rail keeps up" above) is still signed in with the program, `true` or a promise of
+  it. The console asks it before the opening list and each change it sends on that stream, with the headers of the request that opened it,
+  and refuses or ends the stream on anything but `true`, a throw, or no answer in 2 s. The identity header the stream opened with stays good for its
+  minute after the program took someone out, so without this hook a hosted console sends no live list at all
+  (`GET /api/sessions/live` answers 404) and its pages poll every 5 s, each poll signed in afresh by the program. It is
+  asked often, up to ten times a second for each open page while sessions change: answer from memory.
 - `standalonePage({title, body, brand: {label, href, icon?}, groups?, current?, login?, signOut?, dialog?, refresh?, styles?, scripts?})`
   from `server.mjs`: a page of the program's that stands outside any console, such as a first visit before there is a
   console to be in. It is the settings pages' frame drawn by the server, the program's name (and its mark, `icon`, a path) heading the side list in

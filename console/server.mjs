@@ -281,6 +281,7 @@ import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from '
 import { readMyPulls } from './myPulls.mjs';
 import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
+import { createLiveSessions } from './liveSessions.mjs';
 import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
 import { createMcpTester } from './mcpTest.mjs';
 import { ROLES, roleById, roleDiffers, roleOf } from './peopleRoles.mjs';
@@ -958,7 +959,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, appPorts = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, stillSignedIn = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
   cli = null, reviewReadiness = null, analytics = null,
 }) {
@@ -1527,6 +1528,10 @@ export function createHandler({
 
   // Every shared session for someone with sessions from GitHub, and the asker's own private ones. The counts are the
   // fleet's, which say nothing of whose.
+  // Each open page's list, pushed as it changes (liveSessions.mjs). An embedding's fleet with no onChange pushes only
+  // what the sweep finds.
+  const liveSessions = createLiveSessions({ bodyFor: sessionsBody, onChange: fleet.onChange ? (fn) => fleet.onChange(fn) : null });
+
   function sessionsBody(login) {
     const all = fleet.sessions();
     const sessions = all.filter((s) => canOpen(s, login, access));
@@ -2398,6 +2403,7 @@ export function createHandler({
     if (body.text.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in one message` });
     const messageId = typeof body.id === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(body.id) ? body.id : randomUUID();
     console.log('console: message typed in from the page', { id: session.id, agent: agentId, chars: body.text.length });
+    fleet.soon?.(session);
     return toStatusd(req, res, session, { method: 'POST', path: `${base}/send`, body: { text: body.text, id: messageId } });
   }
 
@@ -2423,6 +2429,8 @@ export function createHandler({
     }
     if (action === 'interrupt') {
       console.log('console: agent interrupted from the page', { id: session.id });
+      // Its card changes from what this does: read again in a moment, and often for a while.
+      fleet.soon?.(session);
       return toStatusd(req, res, session, { method: 'POST', path: '/interrupt', body: {} });
     }
     if (action === 'answer') {
@@ -2433,6 +2441,8 @@ export function createHandler({
         id: session.id, kind: sent.kind,
         ...(sent.kind === 'question' ? { questions: sent.questions.length, picks: sent.questions.map((q) => q.pick + 1) } : { decision: sent.decision }),
       });
+      // Its card changes from what this does: read again in a moment, and often for a while.
+      fleet.soon?.(session);
       return toStatusd(req, res, session, { method: 'POST', path: '/answer', body: sent });
     }
     if (action === 'send') {
@@ -3248,6 +3258,23 @@ export function createHandler({
     if (pathname === '/api/analytics') return analyticsReply(res, url.searchParams.get('days'), user.login);
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
     if (pathname === '/api/sessions') return reply(res, 200, sessionsBody(user.login));
+    if (pathname === '/api/sessions/live') {
+      // Behind a hosting proxy, the identity the stream opened with is good for a minute after the person was taken
+      // out: only the program can say they are gone, so a hosted console pushes the list only when it is asked
+      // (stillSignedIn). Its pages poll otherwise, and see the refusal of their next poll.
+      if (trusted && !stillSignedIn) return reply(res, 404, { error: 'this console pushes no live session list: its host does not say who is still signed in' });
+      // Signed in again before each send, as every request is (signedIn): someone taken off People, or signed out,
+      // gets nothing more on a stream they opened before. Asked afresh each time: a console that starts requiring
+      // sign-in (its first GitHub sign-in) ends a stream opened before with no sign-in, as it refuses that request now.
+      const headers = req.headers;
+      const login = user.login;
+      const stillAllowed = async () => {
+        if (!signInOn()) return login === soloLogin;
+        if ((await consoleUser(headers))?.login !== login) return false;
+        return !trusted || (await stillSignedIn({ login, headers })) === true;
+      };
+      return liveSessions.handle(req, res, login, { stillAllowed });
+    }
     if (pathname === '/api/my') {
       // The first look waits for the store, so the page never shows a sign-in missing that is there. Later ones ask it in
       // the background: the page polls, and sees a change on a later poll.
@@ -3355,6 +3382,7 @@ export function createHandler({
   handle.startMine = startMine;
   handle.resumeMine = resumeMine;
   handle.agentAction = agentAction;
+  handle.liveSessions = liveSessions;
   return handle;
 }
 
