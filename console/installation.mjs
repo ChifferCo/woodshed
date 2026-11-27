@@ -4,7 +4,7 @@
 // another program can build one from services of its own and serve it from its own servers (README.md, "Embedding the
 // console").
 
-import { createAnalytics } from './analytics.mjs';
+import { createAnalytics, warmAtStart } from './analytics.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -496,7 +496,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     members: () => (members ? members.view().members.map((m) => m.login) : []),
   });
   pullWebhooks.watch({ name: 'analytics', stale: analytics.pullChanged });
-  if (tokens) setTimeout(() => analytics.warm(), 10_000).unref?.();
+  if (tokens) warmAtStart(analytics);
   // Questions need the bot token to answer, and the session API to hear the answer.
   const asks = slack.canReply && config.sessionApi.host ? createAsks({
     store, fleet, slack, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null,

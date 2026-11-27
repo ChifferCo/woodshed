@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
 
-import { analyticsReport, createAnalytics, keepUsage, usageRecord } from './analytics.mjs';
+import { analyticsReport, createAnalytics, keepUsage, usageRecord, warmAtStart } from './analytics.mjs';
 import { createGitHub, recentPullRow } from './github.mjs';
 import { createHandler } from './server.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
@@ -345,6 +345,41 @@ test('a pull request closing reads its repo again, but only one already read, an
   await nextTick();
   await nextTick();
   assert.equal(reads, 2);
+});
+
+test('a close with no project named is the default project\'s: the other repo\'s read is left alone', async () => {
+  const clock = { now: NOW };
+  const reads = [];
+  const analytics = createAnalytics({
+    config: { projects: [{ name: 'app', repo: REPO, default: true }, { name: 'tools', repo: 'o/tools' }] }, sessions: () => [], state: () => ({ usageKept: [] }),
+    githubFor: () => ({ recentPulls: async ({ repo }) => { reads.push(repo); return { pulls: [], total: 0, truncated: false }; } }), now: () => clock.now,
+  });
+  const report = await analytics.report({ days: 7 });
+  assert.deepEqual(report.repos, [REPO, 'o/tools'], 'every repo the viewer may open, for the menu');
+  reads.length = 0;
+  assert.deepEqual(analytics.pullChanged([5], null, 'pull request closed'), [5]);
+  await nextTick();
+  assert.deepEqual(reads, [REPO]);
+});
+
+test('the start-up warm-up reads every repo after its delay, before anyone opens the page', async () => {
+  const reads = [];
+  const analytics = createAnalytics({
+    config: { projects: [{ name: 'app', repo: REPO, default: true }, { name: 'tools', repo: 'o/tools' }] }, sessions: () => [], state: () => ({ usageKept: [] }),
+    githubFor: () => ({ recentPulls: async ({ repo }) => { reads.push(repo); return { pulls: [], total: 0, truncated: false }; } }),
+  });
+  let fire = null;
+  const timer = { unrefed: false, unref() { this.unrefed = true; } };
+  warmAtStart(analytics, { delayMs: 10_000, setTimer: (fn, ms) => { fire = fn; assert.equal(ms, 10_000); return timer; } });
+  assert.deepEqual(reads, [], 'nothing before the delay');
+  assert.equal(timer.unrefed, true, 'and it does not hold the process open');
+  fire();
+  await nextTick();
+  assert.deepEqual(reads.sort(), [REPO, 'o/tools'].sort());
+  reads.length = 0;
+  const first = await analytics.report({ days: 30 });
+  assert.deepEqual(reads, [], 'the first view uses those reads');
+  assert.equal(first.refreshing, false);
 });
 
 test('a failed refresh keeps the old read, says so, and is not tried on its own again for a minute; the first read still fails the page', async () => {

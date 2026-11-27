@@ -14,7 +14,7 @@
 // branch, and is then that session's person's, whoever GitHub says opened it (a shared session's opens as the App).
 
 import { isAsk, isQa, isReview, prUrlsOf } from './sessions.mjs';
-import { allProjects, projectFor } from './projects.mjs';
+import { allProjects, defaultProject, projectFor } from './projects.mjs';
 
 export const WINDOWS = [7, 30, 90];
 const DAY_MS = 86_400_000;
@@ -375,7 +375,7 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
     ].filter((r) => visible(r.repo)).map((r) => ({ ...r, prUrls: (r.prUrls ?? []).filter((u) => visible(urlRepo(u))) }));
     return {
       ...analyticsReport({ records, pulls, members: members(), days, now: at }),
-      projects: projects.map((p) => p.name), failed, truncated,
+      projects: projects.map((p) => p.name), repos: projects.map((p) => p.repo), failed, truncated,
       // What the pull request data is as of (the oldest repo's read), whether a read is running now, and whether the last
       // background read failed, so the page can say so and offer to read again.
       asOf: reads_.length ? new Date(Math.min(...reads_.map((r) => r.at))).toISOString() : null,
@@ -390,7 +390,9 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
    */
   function pullChanged(numbers, projectName, what) {
     if (what !== 'pull request closed') return [];
-    const projects = allProjects(config).filter((p) => p.repo && (!projectName || p.name === projectName) && reads.get(keyOf(p))?.value);
+    // No project named is the default's (pullWebhooks.mjs), not every project's.
+    const name = projectName ?? defaultProject(config).name;
+    const projects = allProjects(config).filter((p) => p.repo && p.name === name && reads.get(keyOf(p))?.value);
     let started = 0;
     for (const p of projects) started += refresh({ repos: [p.repo], project: p.name });
     return started ? numbers : [];
@@ -400,4 +402,16 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
   const warm = () => refresh();
 
   return { report, refresh, pullChanged, warm };
+}
+
+/**
+ * Reads every repo shortly after the console starts, so the first view of the page does not wait for GitHub.
+ * @param {{warm: () => number}} analytics  createAnalytics's
+ * @param {{delayMs?: number, setTimer?: Function}} [opts]
+ * @returns {*}  the timer, which does not hold the process open
+ */
+export function warmAtStart(analytics, { delayMs = 10_000, setTimer = setTimeout } = {}) {
+  const timer = setTimer(() => analytics.warm(), delayMs);
+  timer?.unref?.();
+  return timer;
 }

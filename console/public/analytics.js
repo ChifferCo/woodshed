@@ -487,7 +487,8 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
   function repoPicker() {
     if (data.projects.length < 2) return null;
     const picked = repoPick();
-    const repos = [...new Set([...data.pulls.recent.map((p) => p.repo), ...data.sessions.recent.map((s) => s.repo)].filter(Boolean))].sort();
+    // Every repo the viewer may open, a quiet one too, so it can be picked to see it empty.
+    const repos = [...new Set([...(data.repos ?? []), ...data.pulls.recent.map((p) => p.repo), ...data.sessions.recent.map((s) => s.repo)].filter(Boolean))].sort();
     if (picked && !repos.includes(picked)) repos.push(picked);
     const select = h('select', { 'aria-label': 'Repo', onchange: (e) => pick('repo', e.target.value || null, null) },
       h('option', { value: '' }, 'All repos'),
