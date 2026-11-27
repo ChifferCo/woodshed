@@ -1162,64 +1162,7 @@ agentDir() {
 # once). Its config turns off its updater, its telemetry and what it would take from ~/.claude (MCP servers, hooks:
 # claude's are Woodshed's own); trusts the checkout, so the repo's AGENTS.md and rules load; and the rules go in
 # ~/.grok/rules/, which it reads at every start. Its hooks tell statusd what it is doing, as claude's do (hookState.mjs).
-# The rules files Grok Build reads into its first request by itself (measured with 1.0.92, `grok inspect`'s Project
-# Instructions), where a branch's symlink could point at the owner's sign-in. One that resolves outside the checkout, or
-# a rules folder that does, stops the start: Grok cannot be told to skip it. A link inside the checkout (AGENTS.md to
-# CLAUDE.md) is a repo's own choice.
-refuseRulesOutsideCheckout() {
-  local checkout path real
-  checkout=$(realpath -m "$REPO_DIR")
-  outside() {
-    real=$(realpath -m "$1")
-    case "$real/" in "$checkout"/*) return 1 ;; esac
-  }
-  for path in AGENTS.md CLAUDE.md .claude .claude/CLAUDE.md .claude/rules .grok .grok/rules .cursor .cursor/rules; do
-    [ -e "$REPO_DIR/$path" ] || [ -L "$REPO_DIR/$path" ] || continue
-    ! outside "$REPO_DIR/$path" || die "the repo's $path points outside the checkout, where Grok Build would read it into its first request: it is not started on this branch"
-  done
-  while IFS= read -r -d '' path; do
-    ! outside "$path" || die "the repo's ${path#"$REPO_DIR"/} points outside the checkout, where Grok Build would read it into its first request: it is not started on this branch"
-  done < <(find "$REPO_DIR/.claude/rules" "$REPO_DIR/.grok/rules" "$REPO_DIR/.cursor/rules" -type l -print0 2>/dev/null)
-}
-
-configureGrok() {
-  agentDir "$GROK_HOME_DIR" grok
-  refuseRulesOutsideCheckout
-  local file
-  for file in auth.json config.toml trusted_folders.toml rules; do
-    [ ! -L "$GROK_HOME_DIR/$file" ] || die "grok's $file is a symlink"
-  done
-  if ownAgentAuthIsKey; then
-    rm -f "$GROK_HOME_DIR/auth.json"
-    log "grok runs on the owner's own xAI key, directly"
-  else
-    (umask 077 && cp "$OWN_AGENT_AUTH_FILE" "$GROK_HOME_DIR/auth.json")
-    log "grok runs on the owner's own Grok Build login, directly"
-  fi
-  cat > "$GROK_HOME_DIR/config.toml" <<'TOML'
-[cli]
-auto_update = false
-
-[features]
-telemetry = false
-feedback = false
-
-[compat.claude]
-mcps = false
-hooks = false
-
-[compat.cursor]
-mcps = false
-TOML
-  # A key is used only when grok is told to prefer it: with none of this, grok 1.0.92 opens its browser sign-in whatever
-  # XAI_API_KEY holds (measured in the session image).
-  if ownAgentAuthIsKey; then printf '\n[auth]\npreferred_method = "api_key"\n' >> "$GROK_HOME_DIR/config.toml"; fi
-  printf '[folders.%s]\ntrusted = true\ndecided_at = %s\n' "$(jq -Rn --arg p "$REPO_DIR" '$p')" "$(date +%s)" > "$GROK_HOME_DIR/trusted_folders.toml"
-  mkdir -p "$GROK_HOME_DIR/rules"
-  cp /tmp/woodshed-rules.md "$GROK_HOME_DIR/rules/woodshed.md"
-  # Its hooks, statusd's word on what it does, are in the image's /etc/grok/requirements.toml
-  # (session/grokRequirements.toml), the only hooks Grok runs in a session: none of a repo's own.
-}
+. "$SESSION_DIR/grokSetup.sh"
 
 # Grok Build's flags for what New session picked: auto approves every call (the container is the sandbox, as for
 # codex), acceptEdits and plan are its own modes of those names, default leaves its own policy. Inline, never full
@@ -1237,64 +1180,12 @@ grokFlags() {
   [ -z "${EFFORT:-}" ] || printf ' --effort %s' "$EFFORT"
 }
 
-# OpenCode: the providers the owner signed in to, as `opencode auth login` saved them, as its own auth.json, which
-# statusd sends back refreshed at stop. Its config turns off its updater and sharing, and gives the effort (its
-# `variant`) to the build and plan agents; the rules go in its global AGENTS.md, which it reads with the repo's own.
-configureOpencode() {
-  agentDir "$OPENCODE_DATA_DIR" opencode
-  agentDir "$OPENCODE_CONFIG_DIR" opencode
-  local file
-  for file in "$OPENCODE_DATA_DIR/auth.json" "$OPENCODE_CONFIG_DIR/opencode.json" "$OPENCODE_CONFIG_DIR/AGENTS.md"; do
-    [ ! -L "$file" ] || die "opencode's $(basename "$file") is a symlink"
-  done
-  ! ownAgentAuthIsKey || die "OpenCode takes its auth.json, and the console sent something else"
-  (umask 077 && cp "$OWN_AGENT_AUTH_FILE" "$OPENCODE_DATA_DIR/auth.json")
-  # session/bin/opencode turns the repo's own config off (OPENCODE_DISABLE_PROJECT_CONFIG): an opencode.json in the
-  # repo could point a provider at another address, which would get the owner's key. That also leaves out the repo's
-  # AGENTS.md (measured with 1.19.6), so its text, or CLAUDE.md's where the repo has none, goes after the rules in
-  # opencode's own AGENTS.md, copied once here: never named by path, which a symlink made later in the session could
-  # turn into another file, and never through a symlink, which could point at auth.json and send every saved provider
-  # key to the model.
-  jq -n --arg effort "${EFFORT:-}" --argjson permission "$(opencodePermission)" \
-    '{"$schema": "https://opencode.ai/config.json", autoupdate: false, share: "disabled"}
-    + (if $permission.global == null then {} else {permission: $permission.global} end)
-    + ([(if $effort == "" then {} else {agent: {build: {variant: $effort}, plan: {variant: $effort}}} end),
-        (if $permission.plan == null then {} else {agent: {plan: {permission: $permission.plan}}} end)]
-       | reduce .[] as $part ({}; . * $part))' \
-    > "$OPENCODE_CONFIG_DIR/opencode.json"
-  cp /tmp/woodshed-rules.md "$OPENCODE_CONFIG_DIR/AGENTS.md"
-  local rules
-  for rules in AGENTS.md CLAUDE.md; do
-    if [ -L "$REPO_DIR/$rules" ]; then
-      log "WARNING: the repo's $rules is a symlink, so OpenCode does not get it"
-      break
-    fi
-    if [ -f "$REPO_DIR/$rules" ]; then
-      { printf '\n\n# The repo\x27s own %s\n\n' "$rules"; cat "$REPO_DIR/$rules"; } >> "$OPENCODE_CONFIG_DIR/AGENTS.md"
-      break
-    fi
-  done
-  log "opencode runs on the owner's own provider sign-ins, directly" "(providers: $(jq -r 'keys | join(" ")' "$OWN_AGENT_AUTH_FILE"))"
-}
+# shellcheck source=opencodeSetup.sh
+. "$SESSION_DIR/opencodeSetup.sh"
 
-# OpenCode's permission rules for New session's mode, so each means what it does for Claude Code: its own policy allows
-# almost everything, edits and commands included. {global, plan}: `permission` for every agent, and the plan agent's own,
-# which OpenCode 1.19.6 applies after the global (its agent.ts: the last rule that matches wins), so plan's edit deny
-# holds where the global asks. Measured with 1.19.6 against a stand-in model (PR #335):
-#   default      edits and commands ask
-#   acceptEdits  edits allowed, commands ask
-#   plan         the plan agent: edits refused (the edit tools are not even offered), commands ask, so a write through
-#                bash waits for a person; a switch to the build agent asks for both
-#   auto         none: --auto answers every ask itself
-# A web fetch asks in all three, as Claude Code's does.
-opencodePermission() {
-  local asks='{"edit": "ask", "bash": "ask", "webfetch": "ask"}'
-  case "${PERMISSION_MODE:-auto}" in
-    default) printf '{"global": %s}' "$asks" ;;
-    acceptEdits) printf '{"global": {"edit": "allow", "bash": "ask", "webfetch": "ask"}}' ;;
-    plan) printf '{"global": %s, "plan": {"edit": "deny", "bash": "ask"}}' "$asks" ;;
-    *) printf '{}' ;;
-  esac
+configureOpencode() {
+  configureOpencodePane
+  installOpencodeAuth
 }
 
 # OpenCode's flags: auto answers every ask itself, plan is its plan agent; the other modes are its build agent under the

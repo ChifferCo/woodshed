@@ -220,7 +220,7 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
-    if (reviewAgentProxy?.isProxyPath(pathname)) return reviewAgentProxy.handle(req, res, sessionForToken(reviewAgentTokenOf(req.headers), fleet.sessions()));
+    if (reviewAgentProxy?.isProxyPath(pathname)) return reviewAgentProxy.handle(req, res, sessionForToken(reviewAgentTokenOf(req.headers), fleet.sessions()), (session) => fleet.isLocked?.(session));
     if (isMcpPath(pathname)) {
       if (!mcpRelay) {
         req.resume();
@@ -240,7 +240,7 @@ export function createSessionApi({
     if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, repoSettings, { planOnly: req.headers[PLAN_ONLY_HEADER] === '1' });
     if (pathname === '/repo-settings') return repoSettingsReply(req, res, session, repoSettings);
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings, fleet);
-    if (pathname === '/agent-auth') return agentAuthReply(req, res, session, userSettings);
+    if (pathname === '/agent-auth') return agentAuthReply(req, res, session, userSettings, fleet);
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
     if (pathname === '/answer') return answerReply(req, res, session, asks);
     if (pathname === '/issues') return issueReply(req, res, session, asks);
@@ -498,9 +498,11 @@ function loginExpiry(text) {
 // The sign-in a session says it was given (session/statusd.mjs, keepAgentAuth).
 const GIVEN_SIGN_IN_HEADER = 'x-woodshed-given-sign-in';
 
-async function agentAuthReply(req, res, session, userSettings) {
-  const agent = agents.isAgent(session.options?.agent) ? agents.agent(session.options.agent) : null;
-  if (!userSettings || !session.owner || !agent?.signIn?.rotates) {
+async function agentAuthReply(req, res, session, userSettings, fleet) {
+  const requested = new URL(req.url, 'http://console').searchParams.get('agent');
+  const id = requested === null ? session.options?.agent : null;
+  const agent = agents.isAgent(id) ? agents.agent(id) : null;
+  if (!userSettings || !session.owner || !agent?.signIn?.rotates || session.taintedAt || fleet.isLocked?.(session)) {
     req.resume();
     return reply(res, 404, { error: 'only a private Grok Build or OpenCode session keeps a sign-in' });
   }
@@ -516,6 +518,7 @@ async function agentAuthReply(req, res, session, userSettings) {
   const refuse = (code, body) => { reply(res, code, body); return true; };
   const answered = await turn(session.owner, agent.id, async ({ read, save }) => {
     const current = await read();
+    if (session.taintedAt || fleet.isLocked?.(session)) return refuse(409, { error: 'the session was locked' });
     if (!current) {
       console.log(`sessionApi: ${agent.product} sign-in not kept, the owner has none saved`, { sessionId: session.id, owner: session.owner });
       return refuse(409, { error: `the owner saved no ${agent.product} sign-in` });

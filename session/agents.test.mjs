@@ -218,3 +218,94 @@ test('a codex agent\'s rollout is claimed as the list is read, so the session\'s
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('extra Grok and OpenCode launch with their own conversations and undo failed setup', async (t) => {
+  const { DatabaseSync } = await import('node:sqlite');
+  let fail = false;
+  let undoCount = 0;
+  const undo = async () => { undoCount++; };
+  const standIn = standInTmux();
+  const { agents, dir } = agentsWith({
+    run: async (command, args) => {
+      if (fail && args[0] === 'new-session') throw new Error('terminal failed');
+      return standIn.run(command, args);
+    },
+    grokEnv: async () => ({ env: { GROK_HOME: path.join(dir, '.grok') }, undo }),
+    opencodeEnv: async () => ({ env: { OPENCODE_DB: path.join(dir, 'pane.db') }, undo }),
+  });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const grok = await agents.start({ agent: 'grok', model: 'grok-build', effort: 'high' });
+  const grokLine = standIn.typed.get(`=${grok.id}:`);
+  assert.match(grokLine, /--always-approve --model grok-build --effort high/);
+  const [, id] = grokLine.match(/--session-id ([a-f0-9-]{36})/);
+  assert.ok(agents.claimed().grok.has(id));
+  const records = path.join(dir, '.grok', 'sessions', '%2Fwork%2Frepo');
+  for (const [conversation, message] of [[id, 'Grok pane'], ['other', 'Other Grok pane']]) {
+    const folder = path.join(records, conversation);
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'updates.jsonl'), JSON.stringify({
+      timestamp: 1, params: { update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: message } } },
+    }) + '\n');
+  }
+  assert.equal((await agents.transcript(grok.id)).entries[0].text, 'Grok pane');
+
+  const options = { agent: 'opencode', model: 'openai/gpt-5', effort: 'max', permissionMode: 'plan', prompt: '--look' };
+  assert.deepEqual(startOptions(options), options);
+  assert.throws(() => startOptions({ ...options, effort: 'xhigh' }), { status: 400 });
+  const open = await agents.start(options);
+  assert.match(standIn.typed.get(`=${open.id}:`), /--agent plan --model openai\/gpt-5 --prompt="\$\(cat .*\)"/);
+  const db = new DatabaseSync(path.join(dir, 'pane.db'));
+  try {
+    db.exec(`
+      CREATE TABLE session (id TEXT, directory TEXT, parent_id TEXT, time_archived INTEGER, time_updated INTEGER);
+      CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
+      CREATE TABLE part (id TEXT, session_id TEXT, message_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+      INSERT INTO session VALUES ('pane', '/work/repo', NULL, NULL, 1);
+      INSERT INTO message VALUES ('m', 'pane', 1, '{"role":"user"}');
+      INSERT INTO part VALUES ('p', 'pane', 'm', 1, 1, '{"type":"text","text":"OpenCode pane"}');
+    `);
+  } finally {
+    db.close();
+  }
+  assert.equal((await agents.transcript(open.id)).entries[0].text, 'OpenCode pane');
+  fail = true;
+  for (const agent of ['grok', 'opencode']) await assert.rejects(agents.start({ agent }), /terminal failed/);
+  assert.equal(undoCount, 2);
+  assert.deepEqual((await agents.list()).map(({ id }) => id), [grok.id, open.id]);
+});
+
+test('extra Grok and OpenCode deliver Chat follow-ups into their own idle panes', async (t) => {
+  const standIn = standInTmux();
+  const panes = new Map();
+  const { agents, dir } = agentsWith({
+    run: async (command, args) => {
+      const pane = panes.get(args[args.indexOf('-t') + 1]);
+      if (pane && args[0] === 'capture-pane') return { stdout: args.includes('-e') ? pane.screen : pane.plain };
+      if (pane && args[0] === 'display') return { stdout: '1\n' };
+      return standIn.run(command, args);
+    },
+    grokEnv: async () => ({ env: {} }),
+    opencodeEnv: async () => ({ env: {} }),
+  });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const agent of ['grok', 'opencode']) {
+    const { id } = await agents.start({ agent });
+    const target = `=${id}:`;
+    // Grok draws the suggested next message dim and italic inside its box after a turn.
+    const screen = agent === 'grok'
+      ? '  │ ❯ \x1b[2;3mDone.\x1b[0m │\n  ╰──── grok-build · always-approve ─╯\n  Tab/→:accept suggestion'
+      : fs.readFileSync(new URL('../shared/__fixtures__/pane-opencode-box-empty.ansi', import.meta.url), 'utf8');
+    panes.set(target, { screen, plain: screen.replace(/\x1b\[[0-9;]*m/g, '') });
+    const text = `Follow-up for ${agent}`;
+    const messageId = `message-${agent}`;
+    const before = standIn.calls.length;
+    assert.deepEqual(await agents.send(id, text, messageId), { ok: true });
+    const calls = standIn.calls.slice(before);
+    assert.ok(calls.some((args) => args.includes('set-buffer') && args.at(-1) === text));
+    assert.ok(calls.some((args) => args.includes('paste-buffer') && args.includes(target)));
+    assert.ok(calls.some((args) => args.includes(target) && args.at(-1) === 'Enter'));
+    const view = (await agents.list()).find((pane) => pane.id === id);
+    assert.deepEqual(view.heldIds, []);
+    assert.deepEqual(view.deliveredIds, [messageId]);
+  }
+});

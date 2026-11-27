@@ -46,9 +46,10 @@ if (format === 'grok') {
   process.emitWarning = (warning, ...rest) => (/SQLite/i.test(String(warning)) ? undefined : emit.call(process, warning, ...rest));
   const { DatabaseSync } = await import('node:sqlite');
   process.emitWarning = emit;
-  const dbDir = path.join(dir, '.local', 'share', 'opencode');
+  const dbFile = process.env.OPENCODE_DB || path.join(dir, '.local', 'share', 'opencode', 'opencode.db');
+  const dbDir = path.dirname(dbFile);
   fs.mkdirSync(dbDir, { recursive: true });
-  const db = new DatabaseSync(path.join(dbDir, 'opencode.db'));
+  const db = new DatabaseSync(dbFile);
   // OpenCode's own journal mode: readers (statusd) never wait on its writes.
   db.exec(`PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, title TEXT,
@@ -186,9 +187,8 @@ function ran(tool, input, failed = false) {
   }
 }
 
-// ---- A conversation that happened before the page opened, but for a session just started (DEV_CHAT_AGENT_FRESH=1),
-// whose agent writes nothing until it is sent a message.
-const fresh = process.env.DEV_CHAT_AGENT_FRESH === '1';
+// Seed a primary pane's example conversation. A fresh session or an extra pane starts with its own first message.
+const fresh = process.env.DEV_CHAT_AGENT_FRESH === '1' || Boolean(process.env.WOODSHED_AGENT_ID);
 if (format === 'codex' && !fresh) write({ timestamp: now(), type: 'session_meta', payload: { id, cwd: repo } });
 if (!fresh) pastConversation();
 function pastConversation() {
@@ -272,8 +272,8 @@ function draw() {
     // Its rules in claude's grey, as statusd tells a rule from a row of dashes in a draft.
     const rule = `\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m`;
     out(`\n${rule}\n❯\u00a0${typed || hint('Try "fix lint errors"')}\n${rule}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`);
-  } else if (screen === 'idle' && format === 'opencode') out(`\n┃ ${typed || hint('Ask anything... "Fix a TODO in the codebase"')}\n┃\n┃ Build  stand-in/model\n\n  ${repo}                    tab agents  ctrl+p commands\n`);
-  else if (screen === 'idle' && format === 'grok') out(`\n❯ ${typed || hint('Ask Grok to build something')}\n\n  stand-in grok-build · ${repo}\n`);
+  } else if (screen === 'idle' && format === 'opencode') out(`\n┃ ${typed || hint('Ask anything... "Fix a TODO in the codebase"')}\n┃\n┃  Build · \x1b[37mstand-in/model\x1b[0m\n\n  ${repo}                    tab agents  ctrl+p commands\n`);
+  else if (screen === 'idle' && format === 'grok') out(`\n╭──────────────────────────────────────╮\n│ ❯ ${typed}\n╰──────────────────────────────────────╯\n  stand-in grok-build · ${repo}\n`);
   else if (screen === 'idle') out(`\n\x1b[1m›\x1b[0m ${typed || hint('Ask anything')}\n\n  stand-in codex · /tmp/fx/repo\n`);
 }
 
@@ -393,5 +393,6 @@ process.stdin.on('data', (chunk) => {
 });
 draw();
 // The first message, as the real agents take it: the last word of the command line, after the flags and their values.
-const first = flags.length && !flags.at(-1).startsWith('-') && !['--session-id', '--model', '--effort', '--permission-mode', '-c', '--add-dir', '--sandbox', '--ask-for-approval'].includes(flags.at(-2)) ? flags.at(-1) : '';
+const explicitPrompt = flags.find((flag) => flag.startsWith('--prompt='))?.slice('--prompt='.length);
+const first = explicitPrompt ?? (flags.length && !flags.at(-1).startsWith('-') && !['--session-id', '--model', '--effort', '--permission-mode', '-c', '--add-dir', '--sandbox', '--ask-for-approval'].includes(flags.at(-2)) ? flags.at(-1) : '');
 if (first.trim()) submit(first);

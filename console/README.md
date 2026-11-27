@@ -179,11 +179,13 @@ tab at its terminal (`#term/<id>?arg=agent-N` on the terminal page, which puts `
 argument). The pick is kept per session in the browser tab.
 **Stop** in the switch's menu ends one. An extra Codex agent runs on its owner's Codex sign-in, which the
 console sends with that start alone, or on the team's OpenAI key through the console's proxy, which the session may use
-only once the agent started (`fleet.allowAgent`), as a Codex session does. A session's lockdown drops that at once and cuts
-its calls on the way (`openaiProxy: calls cut at the lockdown`). A shared session, a question, a review and a QA run have none, nor a session
+only once the agent started (`fleet.allowAgent`), as a Codex session does. To start Grok Build alongside another agent, save an xAI API key on My settings.
+The console uses that key for scoped model requests and the session holds only its Woodshed token. Authorization lasts
+for that session and ends at lockdown, session stop, or a console restart. After a console restart, stop the extra Grok pane and start a new one to restore access. A saved Grok login and OpenCode provider sign-ins are used in private sessions
+started with their respective agent. Extra panes of the same agent can reuse the primary sign-in. Both agents have their own Chat and TUI. Lockdown refuses new proxy requests and cuts in-flight OpenAI calls (`openaiProxy: calls cut at the lockdown`). A Grok model request already forwarded upstream can finish. A shared session, a question, a review and a QA run have none, nor a session
 that has seen production data: its lockdown stops them. They last while the session runs: a Resume starts its own
-agent alone. The command line does the same (cli/README.md, "Sessions"): `woodshed session agents <id>` lists them,
-`woodshed session agent <id> --agent codex --model … "first message"` starts one, `… stop agent-N` ends one, and
+agent alone. The command line can manage extra panes (cli/README.md, "Sessions"): `woodshed session agents <id>` lists them,
+`woodshed session agent <id> --agent codex --model … "first message"` starts a Codex pane; CLI starts support Claude Code and Codex. `… stop agent-N` ends one, and
 `woodshed session connect <id> --agent agent-N` puts a terminal on one (`x-woodshed-agent` on the terminal pipe,
 `console/execPipe.mjs`).
 

@@ -722,8 +722,13 @@ export function undimmed(line) {
   for (const m of line.matchAll(SGR)) {
     if (!dim) out += line.slice(at, m.index);
     const codes = m[1] === '' ? [0] : m[1].split(';').map(Number);
-    for (const c of codes) {
-      if (c === 2) dim = true;
+    for (let i = 0; i < codes.length; i++) {
+      const c = codes[i];
+      if (c === 38 || c === 48 || c === 58) {
+        // Indexed and RGB color parameters can contain numbers also used for attributes.
+        if (codes[i + 1] === 5) i += 2;
+        else if (codes[i + 1] === 2) i += 4;
+      } else if (c === 2) dim = true;
       else if (c === 0 || c === 22) dim = false;
     }
     at = m.index + m[0].length;
@@ -824,7 +829,7 @@ export function composerText(colored, agent) {
  * Whether Grok Build's or OpenCode's input box holds a draft, from a capture with colours: a message is never typed onto
  * one. Neither draws its empty box dim, so each is read its own way (captured from grok 1.0.92 and opencode 1.19.6:
  * shared/__fixtures__/pane-{grok,opencode}-box-*.ansi). Grok's box is `│ ❯ ` in a frame, with nothing after its mark
- * when empty. OpenCode's shows its placeholder in the theme's muted colour, and a draft in its text colour, which the
+ * when empty, except for a dimmed suggestion. OpenCode's shows its placeholder in the theme's muted colour, and a draft in its text colour, which the
  * model's name on the line under the box has too.
  * @param {string} colored  `tmux capture-pane -e -p`
  * @param {'grok'|'opencode'} agent
@@ -838,8 +843,8 @@ export function draftInBox(colored, agent) {
     let at = -1;
     for (let i = 0; i < plain.length; i++) if (/^\s*│\s*❯(\s|$)/.test(plain[i])) at = i;
     if (at === -1) return null;
-    let text = plain[at].replace(/^\s*│\s*❯/, '');
-    for (let j = at + 1; j < plain.length && !/^\s*╰/.test(plain[j]); j++) text += plain[j].replace(/^\s*│/, '');
+    let text = undimmed(lines[at]).replace(/^\s*│\s*❯/, '');
+    for (let j = at + 1; j < plain.length && !/^\s*╰/.test(plain[j]); j++) text += undimmed(lines[j]).replace(/^\s*│/, '');
     return text.replace(/│\s*$/gm, '').trim() !== '';
   }
   if (agent === 'opencode') {
@@ -853,11 +858,11 @@ export function draftInBox(colored, agent) {
     const dot = metaCells.findIndex((c) => c.ch === '·');
     const model = metaCells.slice(dot + 1).find((c) => c.ch.trim());
     if (!model) return null;
-    // The box's lines above it, inside the same border, to the box's top.
+    // The box's lines above it share the model's background. The sidebar beside them can use the same text color.
     for (let j = meta - 1; j >= 0 && /^\s*┃/.test(plain[j]); j--) {
       const cells = cellsOf(lines[j]);
       const border = cells.findIndex((c) => c.ch === '┃');
-      if (cells.slice(border + 1).some((c) => c.ch.trim() && c.fg === model.fg)) return true;
+      if (cells.slice(border + 1).some((c) => c.ch.trim() && c.fg === model.fg && c.bg === model.bg)) return true;
     }
     return false;
   }

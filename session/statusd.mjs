@@ -47,6 +47,7 @@
 //   POST /agents      {"agent": "claude"|"codex", "model", "effort", "permissionMode", "prompt"} starts another, in a tmux
 //                     session of its own in the same checkout; 409 once the session is tainted, or with three running
 //   POST /agents/with-claude-token   starts Claude beside Grok Build or OpenCode with the owner's claudeToken
+//   POST /agents/with-grok-proxy     starts Grok beside another agent using the console model proxy
 //   ANY  /agents/<id>/transcript|send|interrupt|prompt|answer|stop   as the routes of the same names, for that agent:
 //                     its own record of its conversation, a message typed into its pane (held while it works, and typed
 //                     once it is back at its prompt), Esc, what it asks and the answer; stop ends it
@@ -213,6 +214,7 @@ const AGENT = AGENTS.isAgent(process.env.AGENT) ? process.env.AGENT : 'claude';
 const CLAUDE = AGENT === 'claude';
 const CODEX = AGENT === 'codex';
 const GROK = AGENT === 'grok';
+const OPENCODE = AGENT === 'opencode';
 // The agents whose input box statusd reads from the screen (panePrompt.mjs, composerText): claude's and codex's. The
 // others' boxes are not read: a message to them is typed only between turns, with no prompt on screen, as for any.
 const READS_BOX = CLAUDE || CODEX;
@@ -223,8 +225,9 @@ const CODEX_GIVEN_FILE = path.join(os.homedir(), '.config/woodshed/codex-auth');
 // The own sign-in of Grok Build or OpenCode, which refresh a login whose refresh token works once: where the agent keeps
 // it, and the copy the entrypoint was given (configureGrok, configureOpencode). An API key never changes, so none goes
 // back.
+const GROK_HOME = process.env.GROK_HOME || path.join(os.homedir(), '.grok');
 const OWN_AUTH_FILES = {
-  grok: path.join(process.env.GROK_HOME || path.join(os.homedir(), '.grok'), 'auth.json'),
+  grok: path.join(GROK_HOME, 'auth.json'),
   opencode: path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode', 'auth.json'),
 };
 const AGENT_GIVEN_FILE = path.join(os.homedir(), '.config/woodshed/agent-auth');
@@ -644,6 +647,8 @@ const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.
   claudeFlagsFile: process.env.WOODSHED_AGENT_CLAUDE_FLAGS_FILE || '/tmp/woodshed-agent-claude-flags',
   codexReady: async () => existsSync(CODEX_READY_FILE),
   codexEnv: codexBeside,
+  grokEnv: grokBeside,
+  opencodeEnv: opencodeBeside,
   claudeEnv: AGENTS.agent(AGENT).teamCredential ? undefined : claudeBeside,
   uploadsDir: process.env.UPLOADS_DIR || '/tmp/uploads',
   stateDir: process.env.WOODSHED_AGENT_STATE_DIR || '/tmp',
@@ -701,6 +706,83 @@ async function codexBeside(given) {
   };
 }
 
+// Keep one Grok home for all the extra terminals so they share the currently refreshed login.
+let besideGrok;
+async function grokBeside(proxy) {
+  const setup = path.join(import.meta.dirname, 'grokSetup.sh');
+  const rules = process.env.WOODSHED_AGENT_RULES_FILE || '/tmp/woodshed-rules.md';
+  const prepare = async (home, file, action) => {
+    try {
+      await run('bash', ['-c', `set -euo pipefail
+        die() { printf '%s\n' "$*" >&2; exit 1; }
+        log() { :; }
+        ownAgentAuthIsKey() { ! head -c 1 "$OWN_AGENT_AUTH_FILE" | grep -q '{'; }
+        agentDir() { [ ! -L "$1" ] && mkdir -p "$1" && chmod 700 "$1"; }
+        . "$1"
+        REPO_DIR=$2 GROK_HOME_DIR=$3 OWN_AGENT_AUTH_FILE=$4 WOODSHED_RULES_FILE=$5
+        "$6"`, 'grok-setup', setup, REPO_DIR, home, file, rules, action]);
+    } catch (err) {
+      throw Object.assign(new Error(err.stderr?.trim() || 'could not set up Grok Build in this session'), { status: 409 });
+    }
+  };
+  if (!GROK && (!proxy || !CONSOLE_URL)) {
+    throw Object.assign(new Error('start Grok from a console with model proxy support'), { status: 409 });
+  }
+  const present = GROK ? { home: GROK_HOME, file: AGENT_GIVEN_FILE } : besideGrok;
+  if (present) {
+    await prepare(present.home, present.file, 'refuseRulesOutsideCheckout');
+    return { env: { GROK_HOME: present.home, WOODSHED_AGENT_AUTH_FILE: present.file, ...(!GROK && { WOODSHED_GROK_PROXY_TOKEN_FILE: present.file, GROK_MODELS_BASE_URL: `${CONSOLE_URL}/grok/v1` }) } };
+  }
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'woodshed-extra-grok-'));
+  const home = path.join(dir, '.grok');
+  const file = path.join(dir, 'given');
+  const undo = async () => {
+    besideGrok = undefined;
+    await fs.rm(dir, { recursive: true, force: true });
+  };
+  try {
+    await fs.writeFile(file, TOKEN, { mode: 0o600, flag: 'wx' });
+    await prepare(home, file, 'configureGrok');
+    besideGrok = { home, file };
+    return { env: { GROK_HOME: home, WOODSHED_AGENT_AUTH_FILE: file, WOODSHED_GROK_PROXY_TOKEN_FILE: file, GROK_MODELS_BASE_URL: `${CONSOLE_URL}/grok/v1` }, undo };
+  } catch (err) {
+    await undo();
+    throw err;
+  }
+}
+
+// Share auth with the primary OpenCode process, with a separate config and transcript per pane.
+async function opencodeBeside({ effort, permissionMode }) {
+  if (!OPENCODE) throw Object.assign(new Error('start an OpenCode session to use your saved OpenCode sign-in'), { status: 409 });
+  const pane = await fs.mkdtemp(path.join(os.tmpdir(), 'woodshed-opencode-pane-'));
+  const undo = () => fs.rm(pane, { recursive: true, force: true, maxRetries: 3 });
+  try {
+    const data = path.dirname(path.dirname(OWN_AUTH_FILES.opencode));
+    const config = path.join(pane, 'config');
+    const setup = path.join(import.meta.dirname, 'opencodeSetup.sh');
+    const rules = process.env.WOODSHED_AGENT_RULES_FILE || '/tmp/woodshed-rules.md';
+    await run('bash', ['-c', `set -euo pipefail
+      die() { printf '%s\n' "$*" >&2; exit 1; }
+      log() { :; }
+      agentDir() { [ ! -L "$1" ] && mkdir -p "$1" && chmod 700 "$1"; }
+      . "$1"
+      REPO_DIR=$2 OPENCODE_CONFIG_DIR=$3 WOODSHED_RULES_FILE=$4
+      EFFORT=$5 PERMISSION_MODE=$6
+      configureOpencodePane`,
+    'opencode-setup', setup, REPO_DIR, path.join(config, 'opencode'), rules, effort, permissionMode]);
+    return {
+      env: { XDG_DATA_HOME: data, XDG_CONFIG_HOME: config, OPENCODE_DB: path.join(pane, 'opencode.db') },
+      // The database and its SQLite sidecars stay after a normal Stop.
+      cleanup: () => fs.rm(config, { recursive: true, force: true, maxRetries: 3 }),
+      undo,
+    };
+  } catch (err) {
+    await undo();
+    if (err.status) throw err;
+    throw Object.assign(new Error('could not set up OpenCode in this session'), { status: 409 });
+  }
+}
+
 // The rollout the session's own codex writes to: the one its process holds open, and with none open (it exited, or has
 // not opened one yet) the newest no agent beside it claimed.
 async function ownRollout() {
@@ -720,7 +802,8 @@ async function readOwnConversation({ limit, since } = {}) {
     ...OWN_TRANSCRIPTS,
     root: REPO_DIR,
     codexHome: CODEX_HOME,
-    skip: CODEX ? claimed?.codex : CLAUDE ? claimed?.claude : undefined,
+    skip: CODEX ? claimed?.codex : CLAUDE ? claimed?.claude : GROK ? claimed?.grok : undefined,
+    ...(GROK && { grokHome: GROK_HOME }),
     ...(CODEX ? { file: await ownRollout() } : {}),
     ...(limit ? { limit } : {}),
     ...(since !== undefined ? { since } : {}),
@@ -1001,11 +1084,13 @@ async function keepCodexAuth() {
 export const GIVEN_SIGN_IN_HEADER = 'x-woodshed-given-sign-in';
 
 async function keepAgentAuth() {
-  const file = OWN_AUTH_FILES[AGENT];
-  if (!file || !CONSOLE_URL || process.env.SESSION_KIND !== 'private') return;
-  const name = AGENTS.agent(AGENT).product;
+  const agent = AGENT;
+  const file = OWN_AUTH_FILES[agent];
+  const givenFile = AGENT_GIVEN_FILE;
+  if (!file || !CONSOLE_URL || tainted() || process.env.SESSION_KIND !== 'private') return;
+  const name = AGENTS.agent(agent).product;
   try {
-    const [body, given] = await Promise.all([fs.readFile(file, 'utf8'), fs.readFile(AGENT_GIVEN_FILE, 'utf8').catch(() => null)]);
+    const [body, given] = await Promise.all([fs.readFile(file, 'utf8'), fs.readFile(givenFile, 'utf8').catch(() => null)]);
     if (!changedLogin(given, body)) {
       console.log(`statusd: ${name} sign-in unchanged, not sent back`);
       return;
@@ -2131,7 +2216,7 @@ async function agentsReply(req, res, route, pathname) {
   if (!agents) return reply(res, 404, { error: 'this session runs no other agents: only a private coding session does' });
   if (route === 'GET /agents') return reply(res, 200, { agents: await agents.list() });
   try {
-    if (route === 'POST /agents' || route === 'POST /agents/with-claude-token') {
+    if (route === 'POST /agents' || route === 'POST /agents/with-claude-token' || route === 'POST /agents/with-grok-proxy') {
       let body;
       try {
         body = JSON.parse((await readBody(req)) || '{}');
@@ -2144,7 +2229,7 @@ async function agentsReply(req, res, route, pathname) {
       if (route === 'POST /agents' && body?.agent === 'claude' && !AGENTS.agent(AGENT).teamCredential) {
         return reply(res, 409, { error: 'start Claude from a console that can pass your Claude token' });
       }
-      return reply(res, 200, { agent: await agents.start(body) });
+      return reply(res, 200, { agent: await agents.start({ ...body, grokProxy: route === 'POST /agents/with-grok-proxy' }) });
     }
     const [, , id, action] = pathname.split('/');
     if (!AGENT_ID_RE.test(id ?? '') || pathname.split('/').length !== 4) return reply(res, 404, { error: 'not found' });

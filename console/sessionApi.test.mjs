@@ -1230,6 +1230,43 @@ test('a session\'s conversation is kept beside its own home, never a tainted one
   assert.equal(marked.length, 2, 'only what was kept is marked');
 });
 
+test('a different primary agent cannot save a rotated login even after launching an extra agent', async (t) => {
+  const session = { id: 'aaaaaaaa', status: 'running', token: 'beside', owner: 'joel', options: { agent: 'claude' } };
+  const saved = [];
+  const before = {
+    grok: JSON.stringify({ scope: { key: 'original', refresh_token: 'refresh' } }),
+    opencode: JSON.stringify({ openai: { type: 'oauth', access: 'original', refresh: 'refresh', expires: 1000 } }),
+  };
+  const after = {
+    grok: JSON.stringify({ scope: { key: 'updated', refresh_token: 'new-refresh' } }),
+    opencode: JSON.stringify({ openai: { type: 'oauth', access: 'updated', refresh: 'new-refresh', expires: 2000 } }),
+  };
+  const handle = createSessionApi({
+    fleet: { sessions: () => [session] },
+    userSettings: {
+      agentAuth: async (owner, id) => owner === 'joel' ? before[id] : null,
+      setAgentAuth: async (...args) => { saved.push(args); },
+    },
+  });
+  const server = http.createServer(handle);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  for (const id of ['grok', 'opencode']) {
+    const rotate = () => request(server.address().port, {
+      path: `/agent-auth?agent=${id}`, authorization: 'Bearer beside', body: after[id],
+      headers: { 'x-woodshed-given-sign-in': agents.signInDigest(before[id]) },
+    });
+    session.extraAgents = [];
+    assert.equal((await rotate()).status, 404);
+    session.extraAgents = [id];
+    assert.equal((await rotate()).status, 404);
+    session.taintedAt = '2026-11-23T10:00:00Z';
+    assert.equal((await rotate()).status, 404);
+    delete session.taintedAt;
+  }
+  assert.deepEqual(saved, []);
+});
+
 test('/repo-settings hands out the typed values, and logs none of it, when a program\'s source answers something that throws as it is read', async (t) => {
   const { createRepoSettings } = await import('./repoSettings.mjs');
   // What a secret manager's client might put in an error: it must reach no console method.

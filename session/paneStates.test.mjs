@@ -167,6 +167,16 @@ test('a draft left in Grok Build\'s or OpenCode\'s box is seen, so a Chat messag
   const plain = (name) => fixture(name).replace(/\x1b\[[0-9;]*m/g, '');
   assert.equal(draftInBox(plain('pane-opencode-box-draft.ansi'), 'opencode'), null, 'OpenCode\'s placeholder is told from a draft by colour alone');
   assert.equal(draftInBox(plain('pane-grok-box-draft.ansi'), 'grok'), true);
+  const sidebar = '  ┃\x1b[48;5;234m     \x1b[48;5;233;38;5;255min-image-\n'
+    + '  ┃\x1b[48;5;234m  Build auto · \x1b[38;5;255mGPT-5\x1b[0m';
+  assert.equal(draftInBox(sidebar, 'opencode'), false, 'branch text belongs to the sidebar');
+  assert.equal(draftInBox(sidebar.replace('     ', '\x1b[38;5;255ma draft'), 'opencode'), true);
+  const suggestion = '  │ ❯ \x1b[2;3mDone.\x1b[0m │\n  ╰──── grok-build ─╯';
+  assert.equal(draftInBox(suggestion, 'grok'), false);
+  assert.equal(draftInBox(suggestion.replace('❯ ', '❯ a draft '), 'grok'), true);
+  for (const color of ['38;5;2', '38;2;65;42;23']) {
+    assert.equal(draftInBox(suggestion.replace('❯ ', `❯ \x1b[${color}ma draft `), 'grok'), true);
+  }
   assert.equal(draftInBox('a shell prompt $ \n', 'grok'), null, 'no box, no reading');
   assert.equal(draftInBox(fixture('pane-opencode-approval-once-captured.ansi'), 'opencode'), null, 'a prompt in its place');
 });

@@ -430,17 +430,19 @@ const AGENT_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
  * The agents statusd says run beside the session's own (session/agents.mjs), as the page reads them: each one's id,
  * agent, model, effort, permission mode, state, and the page's ids of the messages it holds or typed in. Null from a
  * session that cannot start any (an older image, a shared session), which the page then offers none to.
- * @param {unknown} agents  statusd's `agents`
+ * @param {unknown} list  statusd's `agents`
  * @returns {object[]|null}
  */
-export function agentsFrom(agents) {
-  if (!Array.isArray(agents)) return null;
+export function agentsFrom(list) {
+  if (!Array.isArray(list)) return null;
   const ids = (list) => (Array.isArray(list) ? list.filter((id) => typeof id === 'string' && MESSAGE_ID_RE.test(id)).slice(-20) : []);
   const name = (value) => (typeof value === 'string' && AGENT_NAME_RE.test(value) ? value : null);
-  return agents.filter((a) => /^agent-[2-9]$/.test(a?.id ?? '') && AGENTS.includes(a.agent)).slice(0, 3).map((a) => ({
+  const model = (a) => a.agent === 'claude' ? name(a.model)
+    : typeof a.model === 'string' && a.model && agents.modelShapeOk(a.agent, a.model) ? a.model : null;
+  return list.filter((a) => /^agent-[2-9]$/.test(a?.id ?? '') && AGENTS.includes(a.agent)).slice(0, 3).map((a) => ({
     id: a.id,
     agent: a.agent,
-    model: name(a.model),
+    model: model(a),
     effort: name(a.effort),
     permissionMode: name(a.permissionMode),
     startedAt: typeof a.startedAt === 'string' && !Number.isNaN(Date.parse(a.startedAt)) ? a.startedAt : null,

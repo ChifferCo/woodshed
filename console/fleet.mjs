@@ -2103,7 +2103,7 @@ export function createFleet({
    * it: a Codex one may then use the team's key (openaiProxy.mjs) and send its refreshed sign-in back at the stop
    * (sessionApi.mjs POST /codex-auth), as a Codex session does.
    * @param {object} session
-   * @param {'claude'|'codex'} agent
+   * @param {'claude'|'codex'|'grok'|'opencode'} agent
    * @returns {boolean}  whether it was allowed now, rather than before
    */
   function allowAgent(session, agent) {

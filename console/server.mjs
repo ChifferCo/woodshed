@@ -234,6 +234,7 @@
 // A session started from My Woodshed is private: every route that reaches it (its page's data, terminal,
 // Redis, app, review, Stop, the websockets) answers anyone but its owner as it would an id that does not exist.
 
+import { beginInteractiveGrok } from './reviewAgentProxy.mjs';
 import { safeHref } from './settingsMarkup.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -2337,12 +2338,29 @@ export function createHandler({
       } catch (err) {
         return reply(res, 400, { error: err.message });
       }
-      // The agents beside a session's own are Claude Code or Codex alone (session/agents.mjs).
-      if (!agentsRegistry.agent(picked.agent).teamCredential) return reply(res, 400, { error: 'the agent must be claude or codex' });
       const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
       if (prompt.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in the first message` });
       // A direct Anthropic call must use the owner's credential, not the session token used by the plan proxy.
       const primary = agentsRegistry.agent(agentsRegistry.agentOfSession(session));
+      const extra = agentsRegistry.agent(picked.agent);
+      const proxyGrok = extra.id === 'grok' && primary.id !== extra.id;
+      if (extra.signIn && (session.kind === 'ask' || ['review', 'qa', 'slack'].includes(session.trigger))) {
+        return reply(res, 409, { error: `${extra.product} starts only beside a private coding session` });
+      }
+      if (extra.id === 'opencode' && primary.id !== extra.id) {
+        return reply(res, 409, { error: 'start an OpenCode session to use your saved OpenCode sign-in' });
+      }
+      if (proxyGrok) {
+        let agentAuth;
+        try {
+          agentAuth = await userSettings?.agentAuth?.(session.owner, extra.id);
+        } catch {
+          console.warn(`console: ${extra.product} sign-in not read for an agent`, { id: session.id });
+          return reply(res, 502, { error: `the console could not read your ${extra.product} sign-in: try again` });
+        }
+        if (!/^xai-[0-9A-Za-z_-]{10,200}$/.test(agentAuth ?? '')) return reply(res, 409, { error: 'save an xAI API key on My settings to run Grok alongside another agent' });
+        if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
+      }
       const needsClaudeToken = picked.agent === 'claude' && !primary.teamCredential;
       let claudeToken = null;
       if (needsClaudeToken) {
@@ -2374,11 +2392,15 @@ export function createHandler({
         id: session.id, agent: picked.agent, model: picked.model || null, effort: picked.effort || null, permissionMode: picked.permissionMode,
         prompt: Boolean(prompt.trim()), ...(extraCodex && { ownCodex: Boolean(codexAuth) }),
       });
+      const finishGrokStart = proxyGrok ? beginInteractiveGrok(session) : null;
       return toStatusd(req, res, session, {
         // Older images refuse this route rather than ignoring the credential and launching on the session token.
-        method: 'POST', path: needsClaudeToken ? '/agents/with-claude-token' : '/agents',
+        method: 'POST', path: needsClaudeToken ? '/agents/with-claude-token' : proxyGrok ? '/agents/with-grok-proxy' : '/agents',
         body: { ...picked, prompt, ...(claudeToken ? { claudeToken } : {}), ...(codexAuth ? { codexAuth } : {}) },
-        onStatus: (code) => { if (code === 200 && !session.taintedAt && !fleet.isLocked?.(session)) fleet.allowAgent(session, picked.agent); },
+        onStatus: (code) => {
+          finishGrokStart?.(code);
+          if (code === 200 && !session.taintedAt && !fleet.isLocked?.(session)) fleet.allowAgent(session, picked.agent);
+        },
       });
     }
     const base = `/agents/${agentId}`;
