@@ -110,7 +110,7 @@ export function devEnvSources() {
       : sub('Off: sessions get the values typed here. Name a path in Vault, then turn it on.'),
     form({ action: `/dev/host/${encodeURIComponent(name)}/vault/${key}` },
       labelled('Path in Vault', textField({ name: 'path', value: path, placeholder: 'acme/dev/web', mono: true })),
-      labelled('Vault token', secretField({ name: 'token', id: `vault-${key}-token`, placeholder: 'hvs.…' })),
+      secretField({ label: 'Vault token', name: 'token', id: `vault-${key}-token`, placeholder: 'hvs.…' }),
       actions(button(on ? 'Save' : 'Turn on', { kind: 'primary' }), on ? button('Turn off', { name: 'off', value: '1' }) : null)),
     sub('Made up: the forms post nowhere.'),
   ]}`;

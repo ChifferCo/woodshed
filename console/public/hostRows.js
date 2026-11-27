@@ -35,6 +35,13 @@
     target?.scrollIntoView({ block: 'start' });
   }
 
+  /** Shows or masks a secret field's paste, its button saying which press undoes it. */
+  function showSecret(field, button, shown) {
+    field.type = shown ? 'text' : 'password';
+    button.textContent = shown ? 'Hide' : 'Show';
+    button.setAttribute('aria-pressed', String(shown));
+  }
+
   // A pick's line says what is picked, in the order of its list, or what its summary says with none.
   function pickText(pick) {
     const text = pick.querySelector('.repo-pick-text');
@@ -64,10 +71,7 @@
       if (show && root.contains(show)) {
         const field = show.parentElement.querySelector('input');
         if (!field) return;
-        const shown = field.type === 'password';
-        field.type = shown ? 'text' : 'password';
-        show.textContent = shown ? 'Hide' : 'Show';
-        show.setAttribute('aria-pressed', String(shown));
+        showSecret(field, show, field.type === 'password');
         return;
       }
       const copy = e.target.closest('[data-copy]');
@@ -85,6 +89,15 @@
           window.getSelection()?.addRange(range);
         }
       }
+    });
+    // A secret left shown is masked again as its form is sent: a browser may keep a text field's value in its form
+    // history, and offer the secret again later, but never a password field's.
+    root.addEventListener('submit', (e) => {
+      e.target.querySelectorAll?.('.secret-field').forEach((secret) => {
+        const field = secret.querySelector('input');
+        const button = secret.querySelector('[data-reveal]');
+        if (field && button && field.type === 'text') showSecret(field, button, false);
+      });
     });
     root.addEventListener('change', (e) => {
       const pick = e.target.closest('.repo-pick');
