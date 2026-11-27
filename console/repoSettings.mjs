@@ -82,25 +82,42 @@ const notByKey = (given) => new BadAnswer(`answered ${Array.isArray(given) ? 'a 
 // under the wrong name). Of an error of its own, only which of JavaScript's error classes it is.
 const ERROR_CLASSES = [TypeError, RangeError, SyntaxError, ReferenceError, URIError, EvalError, AggregateError, Error];
 function failureOf(err) {
-  if (err instanceof BadAnswer) return { why: err.why, ...(err.key && { key: err.key }) };
-  const kind = ERROR_CLASSES.find((c) => err instanceof c)?.name ?? null;
-  return { why: 'the hook threw', ...(kind && { error: kind }) };
+  try {
+    if (err instanceof BadAnswer) return { why: err.why, ...(err.key && { key: err.key }) };
+    const kind = ERROR_CLASSES.find((c) => err instanceof c)?.name ?? null;
+    return { why: 'the hook threw', ...(kind && { error: kind }) };
+  } catch {
+    // What it threw is no plain value: one that throws again when asked what it is.
+    return { why: 'the hook threw' };
+  }
 }
 
-// One env file's source as the program's `envSources.view` gave it, checked: what the pages are told of it. `key` is
-// one the console asked about, from the project file.
+// A program's answer, copied to plain data: its own enumerable keys, each value read once. An answer can be anything,
+// one whose keys or values throw when read included, so it is read here, inside the guard that asked for it, and only
+// the copy is used after.
+function plainEntries(given) {
+  return Object.keys(given).map((key) => [key, given[key]]);
+}
+
+// One env file's source as the program's `envSources.view` gave it, checked, as plain data: each field read once,
+// its markup's text included, so nothing of the program's is read again once this returns. `key` is one the console
+// asked about, from the project file.
 function checkedSource(key, given) {
   if (!isRecord(given)) throw new BadAnswer('an env file\'s source is not an object', key);
-  const label = typeof given.label === 'string' ? given.label.trim() : '';
+  const { label: named, on: switched, keys: listed, markup, scripts: paths } = given;
+  const label = typeof named === 'string' ? named.trim() : '';
   if (!label || label.length > MAX_SOURCE_LABEL) throw new BadAnswer(`a label is not 1 to ${MAX_SOURCE_LABEL} characters`, key);
-  const on = given.on === true;
-  const names = given.keys ?? [];
-  if (!Array.isArray(names) || names.length > MAX_SOURCE_KEYS || names.some((k) => typeof k !== 'string' || !VARIABLE.test(k))) throw new BadAnswer('keys are not variable names', key);
+  const on = switched === true;
+  if (listed != null && (!Array.isArray(listed) || listed.length > MAX_SOURCE_KEYS)) throw new BadAnswer('keys are not variable names', key);
+  const names = Array.from(listed ?? []);
+  if (names.some((k) => typeof k !== 'string' || !VARIABLE.test(k))) throw new BadAnswer('keys are not variable names', key);
   // Markup alone, made with settingsMarkup.mjs, which escaped every value: never a string built some other way.
-  if (given.markup != null && !(given.markup instanceof Markup)) throw new BadAnswer(`markup is ${typeof given.markup}, not markup from settingsMarkup.mjs`, key);
-  const scripts = (Array.isArray(given.scripts) ? given.scripts : []).filter(onConsole).slice(0, 8);
+  if (markup != null && !(markup instanceof Markup)) throw new BadAnswer(`markup is ${typeof markup}, not markup from settingsMarkup.mjs`, key);
+  const html = markup == null ? null : markup.text;
+  if (html !== null && typeof html !== 'string') throw new BadAnswer('markup has no text', key);
+  const scripts = (Array.isArray(paths) ? Array.from(paths) : []).filter(onConsole).slice(0, 8);
   // The names matter only while the source is on: off, sessions get the typed values.
-  return { label, on, keys: on ? [...new Set(names)] : [], markup: given.markup ?? null, scripts };
+  return { label, on, keys: on ? [...new Set(names)] : [], html, scripts };
 }
 
 /** @returns {string}  the installation's value for one env file of a project, under the console's prefix */
@@ -317,7 +334,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       files: paths.map(({ table, ...rest }) => rest),
       installation: inst, ...(login && { personal: own }),
       // The program's controls are the admin's page's alone.
-      ...(source && { source: { label: source.label, on: source.on, keys: source.keys, ...(controls && source.markup && { html: source.markup.text, scripts: source.scripts }) } }),
+      ...(source && { source: { label: source.label, on: source.on, keys: source.keys, ...(controls && source.html !== null && { html: source.html, scripts: source.scripts }) } }),
       table: sharedTable(paths),
     };
   }
@@ -330,7 +347,9 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       const given = await envSources.view({ name: project.name, repo: project.repo ?? null, keys, headers });
       if (given === null || given === undefined) return {};
       if (!isRecord(given)) throw notByKey(given);
-      return Object.fromEntries(keys.filter((key) => Object.hasOwn(given, key) && given[key] != null).map((key) => [key, checkedSource(key, given[key])]));
+      // Read whole here, inside the guard: what is returned is plain data.
+      const entries = new Map(plainEntries(given));
+      return Object.fromEntries(keys.filter((key) => entries.get(key) != null).map((key) => [key, checkedSource(key, entries.get(key))]));
     } catch (err) {
       console.warn('repoSettings: the program\'s env sources not given', { project: project.name, ...failureOf(err) });
       return {};
@@ -578,7 +597,11 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     const known = new Set(Object.keys(rootFor(null)?.[project]?.env ?? {}));
     for (const person of Object.values(store.state.people ?? {})) for (const key of Object.keys(person?.repos?.[project]?.env ?? {})) known.add(key);
     if (sourcedKeys.every((key) => known.has(key))) return known;
-    const layer = await readerOf(project).repoLayer().catch(() => null);
+    // The message is the console's own reader's (GitHub's answer), as its other lines log it.
+    const layer = await readerOf(project).repoLayer().catch((err) => {
+      console.warn('repoSettings: project file not read, a source\'s keys the console keeps no values for are dropped', { project, message: firstLine(err) });
+      return null;
+    });
     for (const file of layer?.envFiles ?? []) known.add(file.key);
     return known;
   }
@@ -592,15 +615,17 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
   async function sourcedFor(session, project) {
     const sourced = new Map();
     if (!envSources) return sourced;
-    let given;
+    let entries;
     let timer;
     try {
       const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new BadAnswer(`no answer in ${envSourcesTimeoutMs} ms`)), envSourcesTimeoutMs); });
       const asked = Promise.resolve().then(() => envSources.forSession({ name: project, repo: projectNamed(config, project)?.repo ?? null, session: { id: session.id, owner: session.owner ?? null } }));
       // Should it fail after the wait is over, that is no one's to catch.
       asked.catch(() => {});
-      given = await Promise.race([asked, late]);
+      const given = await Promise.race([asked, late]);
       if (given !== null && given !== undefined && !isRecord(given)) throw notByKey(given);
+      // Read whole here, inside the guard: a key or a value that throws when read is a hook that threw.
+      entries = given == null ? [] : plainEntries(given);
     } catch (err) {
       console.warn('repoSettings: env sources not read, the typed values handed out', { sessionId: session.id, project, ...failureOf(err) });
       return sourced;
@@ -608,7 +633,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       clearTimeout(timer);
     }
     const refused = { notAKey: 0, notText: 0, tooLarge: 0 };
-    for (const [key, text] of Object.entries(given ?? {})) {
+    for (const [key, text] of entries) {
       if (!KEY.test(key)) {
         refused.notAKey += 1;
         continue;

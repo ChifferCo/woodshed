@@ -11,7 +11,7 @@ import {
 import { createUserSettings } from './userSettings.mjs';
 import { createHandler } from './server.mjs';
 import { createInstallation } from './installation.mjs';
-import { group, note, pill, row } from './settingsMarkup.mjs';
+import { Markup, group, note, pill, row } from './settingsMarkup.mjs';
 import { parseProject } from '../shared/project.mjs';
 
 // Every value a test saves carries one of these: none may ever reach a log line.
@@ -742,4 +742,40 @@ test('envSources is view and forSession, both functions, or the installation is 
   await assert.rejects(createInstallation({ ...base, envSources: async () => null }), /envSources needs view and forSession/);
   await assert.rejects(createInstallation({ ...base, envSources: { view: async () => null } }), /envSources needs view and forSession/);
   assert.throws(() => setup({ envSources: { forSession: async () => null } }), /envSources needs view and forSession/);
+});
+
+test('a source\'s view that throws as it is read adds nothing to the admin\'s page, and its words reach no log', async (t) => {
+  const MARK = `sk-live-${SECRET_MARK}-getter`;
+  const boom = () => { throw new Error(`401: token ${MARK} was refused`); };
+  const entry = (field) => ({ 'api-env': Object.defineProperty({ label: 'Vault', on: true, keys: ['API_URL'] }, field, { enumerable: true, get: boom }) });
+  class Thrower extends Markup { get text() { return boom(); } set text(_) { /* the base class sets it */ } }
+  const answers = {
+    'an entry\'s getter throws': () => ({ get 'api-env'() { return boom(); } }),
+    'an entry for a key not asked about throws': () => ({ 'api-env': { label: 'Vault', on: true }, get other() { return boom(); } }),
+    'listing its keys throws': () => new Proxy({}, { ownKeys: boom }),
+    'its label throws': () => entry('label'),
+    'its on throws': () => entry('on'),
+    'its keys throw': () => entry('keys'),
+    'one of its keys throws': () => ({ 'api-env': { label: 'Vault', on: true, keys: new Proxy(['API_URL'], { get: (target, prop) => (prop === '0' ? boom() : target[prop]) }) } }),
+    'its markup throws': () => entry('markup'),
+    'its markup\'s text throws': () => ({ 'api-env': { label: 'Vault', on: true, markup: new Thrower('') } }),
+    'its scripts throw': () => entry('scripts'),
+    'an entry is a proxy that throws': () => ({ 'api-env': new Proxy({}, { get: boom, has: boom, ownKeys: boom, getPrototypeOf: boom }) }),
+    'it throws what throws again when asked what it is': () => { throw new Proxy({}, { getPrototypeOf: boom, get: boom }); },
+    'it throws a string': () => { throw MARK; },
+  };
+  let answer = () => null;
+  const { call } = await startConsole(t, { envSources: { view: async () => answer(), forSession: async () => null } });
+  const expected = (await call('mia-dev', 'GET', '/api/console-settings/repos/app')).body;
+  assert.equal(expected.envFiles[0].source, undefined);
+  for (const [what, make] of Object.entries(answers)) {
+    answer = make;
+    let got;
+    const lines = await captureLog(async () => { got = await call('mia-dev', 'GET', '/api/console-settings/repos/app'); });
+    assert.equal(got.status, 200, `${what}: the page is still shown`);
+    assert.deepEqual(got.body, expected, `${what}: as with no source`);
+    assert.equal(lines.filter((l) => l.includes('repoSettings: the program\'s env sources not given')).length, 1, `${what}: said so`);
+    assert.ok(!lines.join('\n').includes(SECRET_MARK) && !lines.join('\n').includes('was refused'), `${what}: ${lines.filter((l) => l.includes(SECRET_MARK) || l.includes('was refused')).join(' | ').replaceAll(SECRET_MARK, '<the text>')}`);
+    assert.ok(!lines.some((l) => l.includes('the secret store did not answer')), `${what}: nothing left for the route to catch and log`);
+  }
 });
