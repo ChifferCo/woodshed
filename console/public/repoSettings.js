@@ -5,6 +5,8 @@
 // to. A closed row says what it holds. Admins only: the API refuses anyone else, and the page says so. Values stay
 // hidden until Show, as on Secrets & webhooks, and never reach the table, which names keys alone. ?file=<key> opens
 // one env file's row, #slack the channel's and #github the label's, so a link can point at them.
+// An env file a program has a source for (its `envSources` hook, the view's `source`) has a switch in its installation
+// layer, Typed here or the source: the program's own controls are the source's side, and the row says which is in use.
 // The scripts a program named for its groups (its `repoPage` hook), loaded once for the document: the settings pages are
 // one page, and this one starts again on each visit to a repo's settings, which would run them again and stack their
 // listeners.
@@ -51,6 +53,12 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
   const LABEL_MAX = 50;
 
   const fileOf = (key) => view.envFiles.find((f) => f.key === key) ?? null;
+  // Which side of an env file's switch is shown, by key, once someone picked one: until then, the one in use.
+  const sides = new Map();
+  // Each source's controls, by env file key: {html, node, said}, the same node until the markup changes (hostGroups below).
+  const sourceNodes = new Map();
+  // The controls drawn anew in this render, told to the program's scripts once they are in the page.
+  const sourcesRedrawn = [];
   const { pathsOf, labelOf, andList } = L;
 
   function editorFor(key) {
@@ -151,7 +159,9 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
       shownText.set(key, text);
       if (key === INSTRUCTIONS) return text.trim() ? 'Saved. The next session on this repo has them in its prompt; running ones keep theirs.' : 'Cleared. Sessions on this repo get the repo\'s own rules alone.';
       const f = fileOf(key);
+      if (text.trim() && f?.source?.on) return `Saved. They are kept, but no session gets them while ${f.source.label} is on.`;
       if (text.trim()) return `Saved. The next session on ${view.repo} writes them into ${f ? andList(pathsOf(f)) : key}; running ones keep theirs.`;
+      if (f?.source?.on) return `Cleared. Sessions still get this file's values from ${f.source.label}.`;
       return 'Cleared. Sessions get the repo\'s defaults alone.';
     });
   }
@@ -189,6 +199,91 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
     return block;
   }
 
+  // A source's own controls (the program's markup), put in as a template's so no <script> in it runs, as its groups
+  // are (hostGroups): the same node until the markup changes, so what is typed in its forms survives a redraw. With
+  // no controls, the keys it sets.
+  function sourcePanel(f) {
+    const { html } = f.source;
+    if (!html) return f.source.on ? L.sourceKeys(f.source) : h('p', { class: 'layer-text is-none' }, `${f.source.label} is off for this file.`);
+    let kept = sourceNodes.get(f.key);
+    if (kept?.html !== html) {
+      const template = document.createElement('template');
+      template.innerHTML = html;
+      const node = h('div', { class: 'host-groups' });
+      node.append(template.content);
+      window.WoodshedHostRows?.wire(node, { hash: false });
+      kept = { html, node, said: false };
+      sourceNodes.set(f.key, kept);
+    }
+    // A closed row's body is not in the page: its scripts are told once it is.
+    if (!kept.said && open.has(fileRow(f.key))) {
+      kept.said = true;
+      sourcesRedrawn.push(kept.node);
+    }
+    return kept.node;
+  }
+
+  // The scripts the sources' controls name, loaded once for the document, into its head: not into a panel, which is in
+  // the page only while its row is open on the source's side, so a script two sources share would wait on the first's.
+  // The controls drawn anew are told to the scripts (`woodshed:host-groups`) only once every script this page added
+  // has loaded, or failed to: one still loading has no listener yet, and would miss the first draw of a panel a link
+  // opened (?file=). Each panel is told once, so a script that was already loaded hears nothing twice.
+  let scriptsLoading = 0;
+  function loadSourceScripts() {
+    for (const f of view.envFiles) {
+      for (const src of f.source?.scripts ?? []) {
+        if (repoPageScripts.has(src)) continue;
+        repoPageScripts.add(src);
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          scriptsLoading -= 1;
+          saySourcesDrawn();
+        };
+        scriptsLoading += 1;
+        document.head.append(h('script', { src, onload: done, onerror: done }));
+      }
+    }
+  }
+
+  function saySourcesDrawn() {
+    if (scriptsLoading > 0) return;
+    for (const node of sourcesRedrawn.splice(0)) window.dispatchEvent(new CustomEvent('woodshed:host-groups', { detail: { node } }));
+  }
+
+  // The typed values while a source is on: kept, and handed to no session, the keys the source leaves out included.
+  // Those may still be set by the repo's defaults or a person's own values: only this installation's are gone.
+  function unusedNote(f) {
+    const { label, keys } = f.source;
+    const left = (f.installation?.keys ?? []).filter((k) => !keys.includes(k));
+    return h('p', { class: 'cap-note' }, `The values typed here are kept, but no session gets them while ${label} is on.`,
+      left.length > 0 && [` ${label} does not set `, L.keyList(left), `, so this installation sets no value for ${left.length === 1 ? 'it' : 'them'} while ${label} is on.`]);
+  }
+
+  // The installation's layer. Where a program has a source for the file, a switch shows the typed values or the
+  // source's side: it opens on the one in use, and picking the other changes nothing, since the program's own controls do.
+  function installationLayer(f) {
+    const typed = [
+      h('p', { class: 'layer-meta' }, savedLine(f.installation)),
+      editorBlock(f.key, f.installation, `This installation's values for ${labelOf(f)}`),
+      note(f.key),
+      h('p', { class: 'sub' }, `They replace the repo's defaults for the keys they set. ${NO_CREDENTIALS}`),
+    ];
+    const { source } = f;
+    if (!source) return layer('installation', 'This installation\'s values', typed);
+    const shown = sides.get(f.key) ?? (source.on ? 'source' : 'typed');
+    const option = (side, text, used) => h('button', {
+      type: 'button', class: 'theme-opt', 'aria-pressed': String(side === shown), title: used ? 'Sessions get these' : 'Not used now',
+      onclick: () => { sides.set(f.key, side); render(); },
+    }, text);
+    return layer('installation', 'This installation\'s values',
+      h('div', { class: 'theme-seg', role: 'group', 'aria-label': `Where this installation's values for ${labelOf(f)} come from` },
+        option('typed', 'Typed here', !source.on), option('source', source.label, source.on)),
+      h('p', { class: 'layer-meta' }, source.on ? `In use: ${source.label} · ${plural(source.keys.length, 'key', 'keys')}` : 'In use: the values typed here'),
+      shown === 'source' ? sourcePanel(f) : [source.on && unusedNote(f), typed]);
+  }
+
   function envFileBody(f) {
     const read = view.projectFile.read;
     return [
@@ -196,11 +291,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
       pathsOf(f).length > 1 && L.sharedNote(f),
       h('div', { class: 'layered' },
         read && L.defaultsLayer(f, view.repo),
-        layer('installation', 'This installation\'s values',
-          h('p', { class: 'layer-meta' }, savedLine(f.installation)),
-          editorBlock(f.key, f.installation, `This installation's values for ${labelOf(f)}`),
-          note(f.key),
-          h('p', { class: 'sub' }, `They replace the repo's defaults for the keys they set. ${NO_CREDENTIALS}`)),
+        installationLayer(f),
         read && L.sessionLayer(f),
         read && h('div', { class: 'layer-gets' },
           h('h3', null, 'What a session gets'),
@@ -220,6 +311,14 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
   function envFileRow(f) {
     const record = f.installation;
     const count = record?.keys?.length ?? 0;
+    // From a program's source while it is on: the typed values, kept or not, reach no session.
+    if (f.source?.on) {
+      return row({
+        id: fileRow(f.key), title: h('span', { class: 'mono' }, labelOf(f)),
+        value: L.sourceLine(f.source), pill: h('span', { class: 'pill is-ok' }, `From ${f.source.label}`),
+        onOpen: () => nameFile(f.key),
+      }, envFileBody(f));
+    }
     return row({
       id: fileRow(f.key), title: h('span', { class: 'mono' }, labelOf(f)),
       value: record ? `This installation sets ${plural(count, 'key', 'keys')} · ${savedLine(record)}`
@@ -483,6 +582,9 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
       hostRedrawn = false;
       window.dispatchEvent(new CustomEvent('woodshed:host-groups', { detail: { node: hostNode } }));
     }
+    loadSourceScripts();
+    // The same for each env file's source whose controls were drawn anew, once its scripts are there to hear it.
+    saySourcesDrawn();
     for (const key of editors.keys()) updateCounts(key);
     if (focused && focused === document.activeElement) {
       try { if (caret?.[0] !== undefined && caret?.[0] !== null) focused.setSelectionRange(...caret); } catch { /* not a text field */ }

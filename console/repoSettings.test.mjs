@@ -6,11 +6,12 @@ import { inspect } from 'node:util';
 import { createMembers } from './members.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
 import {
-  createRepoSettings, installationEnvName, installationInstructionsName, personalEnvName, personalInstructionsName, repoSettingsRoute,
+  ENV_SOURCES_TIMEOUT_MS, createRepoSettings, installationEnvName, installationInstructionsName, personalEnvName, personalInstructionsName, repoSettingsRoute,
 } from './repoSettings.mjs';
 import { createUserSettings } from './userSettings.mjs';
 import { createHandler } from './server.mjs';
-import { group, pill, row } from './settingsMarkup.mjs';
+import { createInstallation } from './installation.mjs';
+import { Markup, group, note, pill, row } from './settingsMarkup.mjs';
 import { parseProject } from '../shared/project.mjs';
 
 // Every value a test saves carries one of these: none may ever reach a log line.
@@ -44,7 +45,7 @@ function memorySecrets(initial = {}) {
   };
 }
 
-function setup({ state = {}, secrets = memorySecrets(), files = FILES } = {}) {
+function setup({ state = {}, secrets = memorySecrets(), files = FILES, envSources = null, envSourcesTimeoutMs = undefined } = {}) {
   const store = { state: { sessions: [], ...state }, save() {} };
   const config = { projects: PROJECTS, repo: 'acme/app' };
   const readerOf = (name) => ({
@@ -55,7 +56,7 @@ function setup({ state = {}, secrets = memorySecrets(), files = FILES } = {}) {
     },
   });
   let clock = Date.parse('2026-11-12T10:00:00Z');
-  const repoSettings = createRepoSettings({ store, secrets, config, readerOf, now: () => (clock += 1000) });
+  const repoSettings = createRepoSettings({ store, secrets, config, readerOf, now: () => (clock += 1000), envSources, envSourcesTimeoutMs });
   return { store, secrets, config, repoSettings };
 }
 
@@ -218,7 +219,7 @@ test('forget deletes a removed repo\'s values, the installation\'s and everyone\
 });
 
 // The routes behind the pages, over HTTP, as three people: an admin, a member who writes to tools, one who does not.
-async function startConsole(t, { secrets: initial = memorySecrets(), people = {}, repoPage = null } = {}) {
+async function startConsole(t, { secrets: initial = memorySecrets(), people = {}, repoPage = null, envSources = null } = {}) {
   const state = {
     people,
     members: {
@@ -227,7 +228,7 @@ async function startConsole(t, { secrets: initial = memorySecrets(), people = {}
       'ana-k': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' },
     },
   };
-  const { store, secrets, config, repoSettings } = setup({ state, secrets: initial });
+  const { store, secrets, config, repoSettings } = setup({ state, secrets: initial, envSources });
   const members = createMembers({ store });
   const userSettings = createUserSettings({ store, secrets });
   const auth = {
@@ -522,4 +523,308 @@ test('a program\'s own groups for a repo\'s page come with the admin\'s view, an
   answer = () => null;
   assert.equal((await call('mia-dev', 'GET', '/api/console-settings/repos/tools')).body.host, null, 'none for this repo');
   assert.equal((await call('sam-ops', 'GET', '/api/console-settings/repos/tools')).status, 403, 'still an admin\'s alone');
+});
+
+// A program's own source of env files' installation values, a made-up secret manager: `files` by env file key.
+const VAULT_ENV = `API_URL=http://vault.test\nAPI_TOKEN=vault-${SECRET_MARK}\n`;
+function vault(files) {
+  const asked = { view: [], forSession: [] };
+  return {
+    asked,
+    async view(args) {
+      asked.view.push(args);
+      return Object.fromEntries(Object.entries(files).map(([key, f]) => [key, { label: 'Vault', on: f.on, keys: f.keys, markup: note(`Vault for ${key}`) }]));
+    },
+    async forSession(args) {
+      asked.forSession.push(args);
+      return Object.fromEntries(Object.entries(files).filter(([, f]) => f.on).map(([key, f]) => [key, f.text]));
+    },
+  };
+}
+
+test('an env file whose source is on hands the session the source\'s text in place of the typed one, which stays kept', async () => {
+  const envSources = vault({ 'api-env': { on: true, keys: ['API_URL', 'API_TOKEN'], text: VAULT_ENV }, 'web-env-local': { on: true, keys: ['PUBLIC_URL'], text: 'PUBLIC_URL=http://web.test\r\n' } });
+  const { repoSettings, secrets } = setup({ envSources });
+  await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
+  await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'api-env', text: OWN_ENV });
+  let answer;
+  const lines = await captureLog(async () => { answer = await repoSettings.forSession({ id: 'a1', project: 'app', owner: 'sam-ops' }); });
+  assert.deepEqual(answer.envFiles, {
+    'api-env': { installation: VAULT_ENV, personal: OWN_ENV },
+    'web-env-local': { installation: 'PUBLIC_URL=http://web.test\n', personal: null },
+  }, 'the source\'s text, a file with no typed record included, and the person\'s own untouched');
+  assert.deepEqual(envSources.asked.forSession, [{ name: 'app', repo: 'acme/app', session: { id: 'a1', owner: 'sam-ops' } }]);
+  assert.equal(secrets.values.get('repos/app/env/api-env'), INSTALLATION_ENV, 'the typed value is still kept');
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /repoSettings: handed out/);
+  assert.match(lines[0], /fromSource: \[ 'api-env', 'web-env-local' \]/);
+  assert.ok(!lines.join('\n').includes(SECRET_MARK), 'no value in the log');
+  assert.equal(await repoSettings.forSession({ id: 'd4', project: 'app', kind: 'ask' }), null, 'an ask session gets nothing');
+  assert.equal(envSources.asked.forSession.length, 1, 'and the source is not asked for it');
+});
+
+test('a source that is off, or names no file, leaves the typed values; text that cannot be used leaves the layer with none', async () => {
+  const off = vault({ 'api-env': { on: false, keys: [], text: VAULT_ENV } });
+  const first = setup({ envSources: off });
+  await first.repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
+  const lines = await captureLog(async () => {
+    assert.deepEqual((await first.repoSettings.forSession({ id: 'a1', project: 'app', owner: null })).envFiles, { 'api-env': { installation: INSTALLATION_ENV, personal: null } });
+  });
+  assert.match(lines[0], /fromSource: \[\]/);
+
+  let given = { 'api-env': 7, 'web-env-local': `BIG=${'x'.repeat(70_000)}`, 'Not A Key': 'A=1', tools: '  \n' };
+  const bad = setup({ envSources: { view: async () => null, forSession: async () => given } });
+  await bad.repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
+  let answer;
+  const warned = await captureLog(async () => { answer = await bad.repoSettings.forSession({ id: 'b2', project: 'app', owner: null }); });
+  assert.deepEqual(answer.envFiles, {
+    'api-env': { installation: null, personal: null }, 'web-env-local': { installation: null, personal: null },
+  }, 'none, never the typed text: the page says it is not used while the source is on');
+  const refusals = warned.filter((l) => l.includes('repoSettings: env source text refused, the installation layer handed out as none'));
+  assert.equal(refusals.length, 1, 'one line, counting them');
+  assert.match(refusals[0], /refused: 3,\s+notAKey: 1,\s+notText: 1,\s+tooLarge: 1/);
+  assert.ok(!refusals[0].includes('api-env') && !refusals[0].includes('Not A Key'), 'and naming none: a key is the program\'s text');
+  assert.match(warned.at(-1), /fromSource: \[ 'api-env', 'web-env-local' \],\s+sourceKeysDropped: 1/, 'the project file\'s env files; a key it does not name is dropped and counted');
+
+  // A hook that throws, or answers no object, says nothing of which sources are on.
+  const thrown = Object.assign(new TypeError(`the vault is away\n${SECRET_MARK}`), { code: 'ECONNREFUSED' });
+  for (const [fail, said] of [[() => { throw thrown; }, /why: 'the hook threw',\s+error: 'TypeError'\s+\}/], [() => 'api-env', /why: 'answered string, not an object by env file key'/]]) {
+    const failing = setup({ envSources: { view: async () => null, forSession: async () => fail() } });
+    await failing.repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
+    const lines = await captureLog(async () => { answer = await failing.repoSettings.forSession({ id: 'c3', project: 'app', owner: null }); });
+    assert.deepEqual(answer.envFiles, { 'api-env': { installation: INSTALLATION_ENV, personal: null } });
+    assert.match(lines[0], /repoSettings: env sources not read, the typed values handed out/);
+    assert.match(lines[0], said);
+    assert.ok(!lines.join('\n').includes(SECRET_MARK));
+  }
+});
+
+// What a program's hook may hold by mistake: its secret manager's error quoting a token, a value under the wrong name.
+const LEAK = `sk-live-${SECRET_MARK}`;
+
+test('nothing a program\'s source wrote reaches the log: not a thrown message, an error\'s name or code, a key or an entry', async () => {
+  const typed = async (repoSettings) => repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: 'API_URL=http://typed.test\n', by: 'mia-dev' });
+  const leaky = Object.assign(new Error(`401 from the vault: token ${LEAK} was refused`), { name: `Vault ${LEAK}`, code: LEAK });
+  const forSession = [
+    () => { throw leaky; },
+    () => { throw LEAK; },
+    () => LEAK,
+    () => [LEAK],
+    // As keys: one in an env file key's shape, one not. As entries: text too large, and what is no text.
+    () => ({ [`token-${SECRET_MARK}`]: 7, [LEAK]: 'A=1', [`TOKEN=${LEAK}`]: `A=${LEAK}`, 'api-env': { token: LEAK }, 'web-env-local': `A=${LEAK}${'x'.repeat(70_000)}` }),
+  ];
+  for (const answer of forSession) {
+    const { repoSettings } = setup({ envSources: { view: async () => null, forSession: async () => answer() } });
+    let handed;
+    const lines = await captureLog(async () => {
+      await typed(repoSettings);
+      handed = await repoSettings.forSession({ id: 'a1', project: 'app', owner: null });
+    });
+    assert.ok(lines.some((l) => /repoSettings: env source(s not read| text refused)/.test(l)), 'the failure is logged');
+    // Nor the session, whose own start log names the keys it was handed: only env files the console knows.
+    assert.ok(Object.keys(handed.envFiles).every((key) => ['api-env', 'web-env-local'].includes(key)), 'a key the console does not know as an env file is not handed on');
+    assert.ok(!JSON.stringify(handed).includes(SECRET_MARK), 'and nothing of it is in the answer');
+    assert.ok(!lines.join('\n').includes(SECRET_MARK), `forSession ${String(answer).slice(0, 40)}: ${lines.filter((l) => l.includes(SECRET_MARK)).join(' | ').replaceAll(SECRET_MARK, '<the secret>')}`);
+  }
+  const view = [
+    () => { throw leaky; },
+    () => LEAK,
+    () => ({ 'api-env': LEAK }),
+    () => ({ 'api-env': { label: LEAK.repeat(3), on: true } }),
+    () => ({ 'api-env': { label: 'Vault', on: true, keys: [`API_TOKEN=${LEAK}`] } }),
+    () => ({ 'api-env': { label: 'Vault', on: true, markup: `<p>${LEAK}</p>` } }),
+    () => ({ [LEAK]: { label: 'Vault', on: true }, 'api-env': { label: 'Vault', on: 'yes', keys: 7 } }),
+  ];
+  for (const answer of view) {
+    const { repoSettings } = setup({ envSources: { view: async () => answer(), forSession: async () => null } });
+    const lines = await captureLog(async () => { await repoSettings.view('app'); });
+    assert.equal(lines.filter((l) => l.includes('repoSettings: the program\'s env sources not given')).length, 1, 'the failure is logged');
+    assert.ok(!lines.join('\n').includes(SECRET_MARK), `view ${String(answer).slice(0, 40)}: ${lines.filter((l) => l.includes(SECRET_MARK)).join(' | ').replaceAll(SECRET_MARK, '<the secret>')}`);
+  }
+  // A key in an env file key's shape that the project file does not name, with text that could be used: dropped, counted.
+  const shaped = setup({ envSources: { view: async () => null, forSession: async () => ({ [LEAK]: 'A=1', 'web-env-local': 'B=2' }) } });
+  let handed;
+  const dropLines = await captureLog(async () => { handed = await shaped.repoSettings.forSession({ id: 'a1', project: 'app', owner: null }); });
+  assert.deepEqual(handed.envFiles, { 'web-env-local': { installation: 'B=2', personal: null } });
+  assert.match(dropLines.at(-1), /fromSource: \[ 'web-env-local' \],\s+sourceKeysDropped: 1/);
+  // With the project file unread, a source's key the console keeps no record for is not known either.
+  const unread = setup({ files: { ...FILES, app: new Error('GitHub did not answer') }, envSources: { view: async () => null, forSession: async () => ({ 'web-env-local': 'B=2' }) } });
+  await captureLog(async () => { handed = await unread.repoSettings.forSession({ id: 'a1', project: 'app', owner: null }); });
+  assert.deepEqual(handed.envFiles, {});
+  // What the lines do say: the kind of thing that was wrong, in the console's words, and an error's class where it is a name.
+  const said = setup({ envSources: { view: async () => ({ 'api-env': { label: '', on: true } }), forSession: async () => { throw Object.assign(new RangeError(LEAK), { code: 'ERR_VAULT_AWAY' }); } } });
+  const lines = await captureLog(async () => {
+    await said.repoSettings.view('app');
+    await said.repoSettings.forSession({ id: 'a1', project: 'app', owner: null });
+  });
+  assert.match(lines[0], /the program's env sources not given \{\s+project: 'app',\s+why: 'a label is not 1 to 40 characters',\s+key: 'api-env'\s+\}/);
+  assert.match(lines[1], /env sources not read, the typed values handed out \{\s+sessionId: 'a1',\s+project: 'app',\s+why: 'the hook threw',\s+error: 'RangeError'\s+\}/, 'the class alone: a code is the program\'s text too');
+});
+
+test('a source that does not answer in time costs the session its source, not its start: the typed values are handed out', async () => {
+  let asked = 0;
+  const hung = { view: async () => null, forSession: () => { asked += 1; return new Promise(() => {}); } };
+  const { repoSettings } = setup({ envSources: hung, envSourcesTimeoutMs: 20 });
+  await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
+  let answer;
+  const started = Date.now();
+  const lines = await captureLog(async () => { answer = await repoSettings.forSession({ id: 'a1', project: 'app', owner: null }); });
+  assert.ok(Date.now() - started < 5000, 'answered, not hung');
+  assert.equal(asked, 1);
+  assert.deepEqual(answer.envFiles, { 'api-env': { installation: INSTALLATION_ENV, personal: null } });
+  assert.match(lines[0], /repoSettings: env sources not read, the typed values handed out/);
+  assert.match(lines[0], /why: 'no answer in 20 ms'/);
+  assert.match(lines.at(-1), /fromSource: \[\]/);
+  assert.ok(ENV_SOURCES_TIMEOUT_MS < 15_000, 'under the 15 s a session waits for its repo settings (session/entrypoint.sh)');
+  // One that answers late and then fails is no unhandled rejection, and one in time is used.
+  const slow = setup({ envSources: { view: async () => null, forSession: () => new Promise((_, reject) => { setTimeout(() => reject(new Error('late')), 40); }) }, envSourcesTimeoutMs: 10 });
+  await captureLog(async () => { await slow.repoSettings.forSession({ id: 'b2', project: 'app', owner: null }); });
+  await new Promise((r) => { setTimeout(r, 60); });
+  const quick = setup({ envSources: { view: async () => null, forSession: async () => ({ 'api-env': VAULT_ENV }) }, envSourcesTimeoutMs: 1000 });
+  let handed;
+  await captureLog(async () => { handed = await quick.repoSettings.forSession({ id: 'c3', project: 'app', owner: null }); });
+  assert.equal(handed.envFiles['api-env'].installation, VAULT_ENV);
+});
+
+test('the views say which env files have a source, and the table\'s installation layer is the source\'s keys while it is on', async (t) => {
+  const envSources = vault({ 'api-env': { on: true, keys: ['API_URL', 'VAULT_ONLY'], text: VAULT_ENV }, 'web-env-local': { on: false, keys: ['IGNORED'], text: '' }, 'not-in-the-file': { on: true, keys: [], text: '' } });
+  const { call } = await startConsole(t, { envSources });
+  await call('mia-dev', 'POST', '/api/console-settings/repos/app/env/api-env', { text: INSTALLATION_ENV });
+  const admin = (await call('mia-dev', 'GET', '/api/console-settings/repos/app', undefined, { 'x-org': 'acme' })).body;
+  const [api, web] = admin.envFiles;
+  assert.deepEqual(api.source, { label: 'Vault', on: true, keys: ['API_URL', 'VAULT_ONLY'], html: '<p class="form-note">Vault for api-env</p>', scripts: [] });
+  assert.deepEqual(web.source, { label: 'Vault', on: false, keys: [], html: '<p class="form-note">Vault for web-env-local</p>', scripts: [] }, 'off: its keys are not the session\'s');
+  assert.deepEqual(api.installation.keys, ['API_URL', 'API_TOKEN', 'LOG_LEVEL'], 'the typed record stays');
+  const set = Object.fromEntries(api.table.map((r) => [r.key, r.setBy]));
+  assert.ok(set.VAULT_ONLY.includes('installation') && set.API_URL.includes('installation'), 'the source\'s keys');
+  assert.ok(!set.API_TOKEN, 'a typed key the source does not set reaches no session');
+  assert.deepEqual(set.LOG_LEVEL, ['repo'], 'nor wins over the repo\'s default');
+  const asked = envSources.asked.view.at(-1);
+  assert.deepEqual({ name: asked.name, repo: asked.repo, keys: asked.keys }, { name: 'app', repo: 'acme/app', keys: ['api-env', 'web-env-local'] }, 'asked of the keys the project file names');
+  assert.equal(asked.headers['x-org'], 'acme', 'with the request\'s headers');
+  assert.equal(admin.envFiles.length, 2, 'a key the project file does not name adds no file');
+
+  const mine = (await call('sam-ops', 'GET', '/api/my/repos/app')).body;
+  assert.deepEqual(mine.envFiles[0].source, { label: 'Vault', on: true, keys: ['API_URL', 'VAULT_ONLY'] }, 'My settings: never the program\'s controls');
+  assert.ok(mine.envFiles[0].table.some((r) => r.key === 'VAULT_ONLY'));
+});
+
+test('a source that throws or answers badly adds nothing to the views, and no hook leaves them as they were', async (t) => {
+  let answer = () => { throw new Error('the vault is away'); };
+  const { call } = await startConsole(t, { envSources: { view: async (args) => answer(args), forSession: async () => null } });
+  const plain = await startConsole(t);
+  const expected = (await plain.call('mia-dev', 'GET', '/api/console-settings/repos/app')).body;
+  const bad = [
+    answer,
+    () => 'api-env',
+    () => ({ 'api-env': { label: '', on: true } }),
+    () => ({ 'api-env': { label: 'x'.repeat(41), on: true } }),
+    () => ({ 'api-env': { label: 'Vault', on: true, keys: [`API_TOKEN=${SECRET_MARK}`] } }),
+    () => ({ 'api-env': { label: 'Vault', on: true, keys: 'API_URL' } }),
+    () => ({ 'api-env': { label: 'Vault', on: true, markup: '<p>Vault</p>' } }),
+  ];
+  const lines = await captureLog(async () => {
+    for (const next of bad) {
+      answer = next;
+      assert.deepEqual((await call('mia-dev', 'GET', '/api/console-settings/repos/app')).body, expected);
+    }
+  });
+  assert.equal(lines.filter((l) => l.includes('repoSettings: the program\'s env sources not given')).length, bad.length);
+  assert.ok(!lines.join('\n').includes(SECRET_MARK), 'a name that was a value by mistake is not logged');
+  answer = () => null;
+  assert.deepEqual((await call('mia-dev', 'GET', '/api/console-settings/repos/app')).body, expected, 'none for this repo');
+  answer = () => ({ 'api-env': { label: ' Vault ', on: 'yes', scripts: ['/assets/vault.js', 'https://x.test/a.js'] } });
+  assert.deepEqual((await call('mia-dev', 'GET', '/api/console-settings/repos/app')).body.envFiles[0].source, { label: 'Vault', on: false, keys: [] }, 'on is true alone, and no markup carries no scripts');
+});
+
+test('envSources is view and forSession, both functions, or the installation is not made', async () => {
+  const base = { config: {}, store: { state: {} }, provider: {} };
+  await assert.rejects(createInstallation({ ...base, envSources: async () => null }), /envSources needs view and forSession/);
+  await assert.rejects(createInstallation({ ...base, envSources: { view: async () => null } }), /envSources needs view and forSession/);
+  assert.throws(() => setup({ envSources: { forSession: async () => null } }), /envSources needs view and forSession/);
+});
+
+test('a source\'s view that throws as it is read adds nothing to the admin\'s page, and its words reach no log', async (t) => {
+  const MARK = `sk-live-${SECRET_MARK}-getter`;
+  const boom = () => { throw new Error(`401: token ${MARK} was refused`); };
+  const entry = (field) => ({ 'api-env': Object.defineProperty({ label: 'Vault', on: true, keys: ['API_URL'] }, field, { enumerable: true, get: boom }) });
+  class Thrower extends Markup { get text() { return boom(); } set text(_) { /* the base class sets it */ } }
+  const answers = {
+    'an entry\'s getter throws': () => ({ get 'api-env'() { return boom(); } }),
+    'an entry for a key not asked about throws': () => ({ 'api-env': { label: 'Vault', on: true }, get other() { return boom(); } }),
+    'listing its keys throws': () => new Proxy({}, { ownKeys: boom }),
+    'its label throws': () => entry('label'),
+    'its on throws': () => entry('on'),
+    'its keys throw': () => entry('keys'),
+    'one of its keys throws': () => ({ 'api-env': { label: 'Vault', on: true, keys: new Proxy(['API_URL'], { get: (target, prop) => (prop === '0' ? boom() : target[prop]) }) } }),
+    'its markup throws': () => entry('markup'),
+    'its markup\'s text throws': () => ({ 'api-env': { label: 'Vault', on: true, markup: new Thrower('') } }),
+    'its scripts throw': () => entry('scripts'),
+    'an entry is a proxy that throws': () => ({ 'api-env': new Proxy({}, { get: boom, has: boom, ownKeys: boom, getPrototypeOf: boom }) }),
+    'it throws what throws again when asked what it is': () => { throw new Proxy({}, { getPrototypeOf: boom, get: boom }); },
+    'it throws a string': () => { throw MARK; },
+  };
+  let answer = () => null;
+  const { call } = await startConsole(t, { envSources: { view: async () => answer(), forSession: async () => null } });
+  const expected = (await call('mia-dev', 'GET', '/api/console-settings/repos/app')).body;
+  assert.equal(expected.envFiles[0].source, undefined);
+  for (const [what, make] of Object.entries(answers)) {
+    answer = make;
+    let got;
+    const lines = await captureLog(async () => { got = await call('mia-dev', 'GET', '/api/console-settings/repos/app'); });
+    assert.equal(got.status, 200, `${what}: the page is still shown`);
+    assert.deepEqual(got.body, expected, `${what}: as with no source`);
+    assert.equal(lines.filter((l) => l.includes('repoSettings: the program\'s env sources not given')).length, 1, `${what}: said so`);
+    assert.ok(!lines.join('\n').includes(SECRET_MARK) && !lines.join('\n').includes('was refused'), `${what}: ${lines.filter((l) => l.includes(SECRET_MARK) || l.includes('was refused')).join(' | ').replaceAll(SECRET_MARK, '<the text>')}`);
+    assert.ok(!lines.some((l) => l.includes('the secret store did not answer')), `${what}: nothing left for the route to catch and log`);
+  }
+});
+
+test('an env file whose key is a name every object has gets no source it was not given', async () => {
+  // `constructor` is a key the project file may name; `__proto__` is not one, and is here for the lookup alone.
+  const files = { ...FILES, app: { envFiles: ['constructor', '__proto__', 'api-env'].map((key) => ({ key, path: `${key}/.env`, secret: null, defaults: [], overrides: [] })), env: {} } };
+  const plain = await setup({ files }).repoSettings.view('app');
+  assert.deepEqual(plain.envFiles.map((f) => [f.key, Object.hasOwn(f, 'source')]), [['constructor', false], ['__proto__', false], ['api-env', false]], 'no hook: no source');
+  const asked = [];
+  const envSources = { view: async ({ keys }) => { asked.push(keys); return { 'api-env': { label: 'Vault', on: true, keys: ['API_URL'] } }; }, forSession: async () => ({ 'api-env': 'API_URL=http://vault\n', constructor: 'A=1' }) };
+  const withHook = setup({ files, envSources });
+  const view = await withHook.repoSettings.view('app', { controls: true });
+  assert.deepEqual(view.envFiles.map((f) => [f.key, f.source?.label ?? null]), [['constructor', null], ['__proto__', null], ['api-env', 'Vault']], 'a hook naming another file: none for these');
+  assert.deepEqual(asked, [['constructor', '__proto__', 'api-env']]);
+  assert.equal(JSON.stringify(view).includes('"source":{}'), false);
+  // And a session: `constructor` is an env file here, so its source's text is its own, not something every object has.
+  let handed;
+  await captureLog(async () => { handed = await withHook.repoSettings.forSession({ id: 'a1', project: 'app', owner: null }); });
+  assert.deepEqual(handed.envFiles, { 'api-env': { installation: 'API_URL=http://vault\n', personal: null }, constructor: { installation: 'A=1', personal: null } });
+  const none = setup({ files, envSources: { view: async () => null, forSession: async () => ({}) } });
+  await captureLog(async () => { handed = await none.repoSettings.forSession({ id: 'a1', project: 'app', owner: null }); });
+  assert.deepEqual(handed.envFiles, {}, 'an answer naming none hands out none');
+});
+
+test('a source\'s answer and the check of its keys share one wait: a slow answer, then a project file that is slow to read, still answer in time', async () => {
+  let reads = 0;
+  const store = { state: { sessions: [] }, save() {} };
+  const config = { projects: PROJECTS, repo: 'acme/app' };
+  // The hook takes most of the wait; the project file, which a key with no record needs, never comes.
+  const repoSettings = createRepoSettings({
+    store, secrets: memorySecrets(), config, envSourcesTimeoutMs: 120,
+    readerOf: () => ({ repoLayer: () => { reads += 1; return new Promise(() => {}); } }),
+    envSources: { view: async () => null, forSession: () => new Promise((resolve) => { setTimeout(() => resolve({ 'web-env-local': 'B=2' }), 80); }) },
+  });
+  let handed;
+  const started = Date.now();
+  const lines = await captureLog(async () => { handed = await repoSettings.forSession({ id: 'a1', project: 'app', owner: null }); });
+  const took = Date.now() - started;
+  assert.ok(took < 120 + 100, `within the one wait, not the hook's and then the read's (${took} ms)`);
+  assert.ok(took >= 80, 'the hook was waited for');
+  assert.equal(reads, 1);
+  assert.deepEqual(handed.envFiles, {}, 'the key, unchecked, is dropped: as a project file that could not be read');
+  assert.match(lines[0], /repoSettings: project file not read, a source's keys the console keeps no values for are dropped/);
+  assert.match(lines[0], /no answer in what was left of the 120 ms a source has/);
+  assert.match(lines.at(-1), /fromSource: \[\],\s+sourceKeysDropped: 1/);
+  // A key the console keeps values for needs no read, so a slow project file costs it nothing.
+  const kept = setup({ envSourcesTimeoutMs: 120, envSources: { view: async () => null, forSession: async () => ({ 'api-env': VAULT_ENV }) } });
+  await kept.repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
+  await captureLog(async () => { handed = await kept.repoSettings.forSession({ id: 'b2', project: 'app', owner: null }); });
+  assert.equal(handed.envFiles['api-env'].installation, VAULT_ENV);
 });

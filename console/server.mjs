@@ -3545,7 +3545,7 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
  *   `repos` and `projectReadiness` are an embedding program's hooks, passed on to createInstallation (installation.mjs):
  *   only the dev console's stand-in (scripts/devHostConsole.mjs) passes them here
  */
-export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null, hostApp = null, repoPage = null }) {
+export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null, hostApp = null, repoPage = null, envSources = null }) {
   const first = given ?? loadConfig();
   const store = openStore(first.stateDir);
   // An App saved on the setup page is the console's own from the next start.
@@ -3555,7 +3555,7 @@ export async function startConsole({ provider, config: given = null, repos = nul
   const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
   console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
   await checkGh();
-  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness, hostApp, repoPage });
+  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness, hostApp, repoPage, envSources });
   const { config, handle } = installation;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
