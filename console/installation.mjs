@@ -89,6 +89,9 @@ const DELIVERED_WEBHOOKS_ALIVE_MS = 20_000;
  * @returns {{every: (ms: number, what: string, fn: () => unknown) => void, wait: (ms: number) => Promise<boolean>,
  *            stop: () => void, stopped: () => boolean}}
  */
+// How long after start the Analytics read is warmed, so it does not compete with the start.
+const ANALYTICS_WARM_MS = 10_000;
+
 export function createLoops() {
   const timers = new Set();
   const waiting = new Set();
@@ -546,6 +549,13 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (!reviewSources.has(key)) reviewSources.set(key, createReviewSource({ github: githubFor(project) }));
     return reviewSources.get(key)(session);
   };
+  // The Analytics page's read is kept in memory, so a restart (each deploy) empties it and the first viewer waits for the
+  // whole 90 days from GitHub. Read it once the console is up, in the background, so that view finds it warm.
+  const analytics = createAnalytics({
+    config, sessions: () => fleet.sessions(), state: () => store.state, githubFor, gatesOf: fileGatesOf,
+    members: () => (members ? members.view().members.map((m) => m.login) : []),
+  });
+  setTimeout(() => analytics.refresh(), ANALYTICS_WARM_MS).unref();
   // Session apps on ports of the console's own name, where it has one name and nobody signs in (appPorts.mjs).
   const appPorts = config.appPorts?.length ? createAppPorts({
     store, config, isActive: (id) => ACTIVE_STATUSES.has(fleet.find(id)?.status),
@@ -580,10 +590,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     slackSetup,
     cli,
     // The Analytics page: the fleet's sessions and those kept since they left its list, and each repo's pull requests.
-    analytics: createAnalytics({
-      config, sessions: () => fleet.sessions(), state: () => store.state, githubFor, gatesOf: fileGatesOf,
-      members: () => (members ? members.view().members.map((m) => m.login) : []),
-    }),
+    analytics,
     // Whether a repo's review can run in a session, for `woodshed review`: none with no GitHub App to run it.
     reviewReadiness: config.githubApp || hostApp ? createReviewReadiness({
       publicUrl: config.publicUrl, reviewer: reviewerApp, ownReviewer: !hostApp, appLogin: () => appIdentity.login(),
