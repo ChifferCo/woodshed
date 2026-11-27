@@ -593,3 +593,34 @@ test('a Woodshed session\'s person who reviewed their own App-opened pull reques
   const { pulls: { recent } } = analyticsReport({ records, pulls, days: 30, now: NOW });
   assert.deepEqual(recent[0].humanReviewers, ['bo']);
 });
+
+test('POST /api/analytics/refresh is an admin\'s, and starts reads only for the repos the viewer may open', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const { createMembers } = await import('./members.mjs');
+  const store = { state: { members: {
+    mia: { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true },
+    sam: { addedBy: 'mia', addedAt: '2026-10-01T00:00:00.000Z', how: 'invited' },
+  } }, save() {} };
+  const members = createMembers({ store });
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: REPO, label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const loginOf = (cookie) => /woodshed_session=(\w+)/.exec(String(cookie))?.[1] ?? null;
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (c) => (members.isMember(loginOf(c)) ? { login: loginOf(c) } : null), visitorFor: async () => null };
+  const asked = [];
+  const analytics = { report: async () => ({}), refresh: ({ repos }) => { asked.push(repos); return repos?.length ?? 0; } };
+  const projectAccess = { startable: async (login) => (login === 'mia' ? [{ name: 'app', repo: REPO }] : []) };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, analytics, projectAccess });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => { server.listen(0, '127.0.0.1', resolve); });
+  t.after(() => server.close());
+  const origin = () => `http://127.0.0.1:${server.address().port}`;
+  const post = (login, headers = { origin: origin(), 'x-woodshed': '1' }) => fetch(`http://127.0.0.1:${server.address().port}/api/analytics/refresh`, {
+    method: 'POST', headers: { cookie: `woodshed_session=${login}`, 'content-type': 'application/json', ...headers }, body: '{}',
+  });
+  assert.equal((await post('sam')).status, 403, 'a member who is not an admin');
+  assert.equal((await post('mia', { origin: 'https://evil.example', 'x-woodshed': '1' })).status, 403, 'another site\'s page');
+  assert.deepEqual(asked, [], 'a refused call starts no read');
+  const res = await post('mia');
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { started: 1 });
+  assert.deepEqual(asked, [[REPO]], 'only the repos the viewer may open');
+});
