@@ -755,7 +755,9 @@ never reached claude, or one stopped before sessions kept their own homes.
 A launcher that keeps the session's machine between runs (`keptMachine`, "Embedding the console") resumes it on the image
 that machine was made from, which may no longer start a branch that took a newer project file: when it says so, the page
 offers **Resume on the latest image** too, which asks first, then leaves that machine, with its databases and whatever
-else the session kept there, for a new one; the branch and the conversation go along as on any Resume.
+else the session kept there, for a new one; the branch and the conversation go along as on any Resume. On a session that
+failed, the page says the failure may come from that older image, and **Resume on the latest image** is its primary
+action, with Resume beside it (`public/keptMachine.cjs`).
 **Remove**, on a stopped private session's page, takes it off the list and
 deletes the home it kept; its branch stays on GitHub. **Forget it** on My
 settings and Remove My Woodshed delete your kept home and every one of your

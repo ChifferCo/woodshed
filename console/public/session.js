@@ -679,15 +679,22 @@
   // of its repo than a new session gets resumes on that image, which may no longer start the branch. Resume on the latest
   // image leaves it, with what it held, for a new one; the branch and the conversation go along as on any Resume.
   // A settled answer is read again after a minute, so a newer image pushed while the page stays open shows.
+  // What it offers is keptMachine.cjs's: a failed session leads with the latest image, its note beside the failure, in
+  // the slot above the buttons, and its Resume steps back to plain; a stopped one keeps the quiet note and button under them.
   const keptMachines = new Map();
   const KEPT_MACHINE_MS = 60_000;
-  function keptMachineRow(s) {
+  function keptMachineRow(s, row, resume) {
     const key = `${s.id}@${s.stoppedAt ?? ''}`;
-    const slot = h('div');
+    // Hidden until an offer fills it: an empty one would still take the panel's gap beside the buttons.
+    const slot = h('div', { hidden: true });
     const fill = (kept) => {
-      if (!kept?.outdated) return;
+      // A page whose keptMachine.cjs did not load (a deploy mid-load) offers what it did before #410: Resume alone.
+      const offer = window.WoodshedKeptMachine?.offer(s, kept);
+      if (!offer) return;
+      slot.hidden = false;
+      const leads = offer.lead === 'latest';
       const button = h('button', {
-        type: 'button', class: 'btn btn-plain', title: 'Start it on a new machine from its repo\u2019s latest image',
+        type: 'button', class: `btn ${leads ? 'btn-primary' : 'btn-plain'}`, title: 'Start it on a new machine from its repo\u2019s latest image',
         onclick: async (e) => {
           e.preventDefault();
           // What goes along is what a Resume keeps anywhere but the machine: the branch, and claude's saved conversation.
@@ -700,8 +707,15 @@
           if (!(await resumePrivate(s, { latestImage: true }))) button.disabled = false;
         },
       }, 'Resume on the latest image');
+      if (leads && row && resume) {
+        // Orange stays on one action: the latest image takes the lead, and Resume (that same older image) goes plain.
+        resume.className = 'btn btn-plain';
+        row.prepend(button);
+        slot.replaceChildren(h('p', null, h('strong', null, offer.head), ' ', offer.note));
+        return;
+      }
       slot.replaceChildren(
-        h('p', { class: 'hint' }, 'Its machine was made from an older image of its repo, which Resume starts again. If that no longer starts the branch, resume it on the latest image.'),
+        h('p', { class: 'hint' }, offer.note),
         h('div', { class: 'row' }, button));
     };
     // The read itself is kept, so a panel drawn again before it answers fills from the same answer.
@@ -2618,6 +2632,16 @@
       W.isAdmin() && h('p', { class: 'hint' }, 'Need more at once? ', h('a', { href: '/console-settings' }, 'Raise the limit in Settings'), '.'));
   }
 
+  // A stopped private session's Resume and Remove, with what its kept machine adds: a failed one's note goes above
+  // the buttons, where it is read with the failure, and a stopped one's quiet row below them (keptMachineRow).
+  function privateActions(s) {
+    if (!W.canResumePrivate(s)) return h('div', { class: 'row' }, removeButton(s));
+    const resume = resumeButton(s, false);
+    const row = h('div', { class: 'row' }, resume, removeButton(s));
+    const kept = keptMachineRow(s, row, resume);
+    return s.status === 'failed' ? [kept, row] : [row, kept];
+  }
+
   function terminalBody(s) {
     if (s.status === 'starting' && s.startedAt) return startingBody(s);
     if (W.linePlace(s, data.sessions)) return lineBody(s);
@@ -2646,8 +2670,7 @@
         ? [h('p', null, W.agentOf(s) !== 'claude'
           ? `Work in progress is committed and pushed to the branch before a stop. Resume starts ${W.agentOf(s)} again on the same branch, in a new conversation: ${W.agentTitle(s)} keeps none between runs.`
           : 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
-          h('div', { class: 'row' }, W.canResumePrivate(s) && resumeButton(s, false), removeButton(s)),
-          W.canResumePrivate(s) && keptMachineRow(s)]
+          privateActions(s)]
         : s.kind === 'ask' ? h('p', null, 'Its conversation is deleted. Mention the bot in a Slack thread to ask again.')
           : s.trigger === 'qa' ? h('p', null, s.qa?.conclusion
             ? `A QA session pushes nothing: its report is the QA comment and check on ${W.ref(s)}. Add the QA label to the pull request again to run QA again.`
