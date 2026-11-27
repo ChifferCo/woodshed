@@ -830,7 +830,7 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .btn-danger { border: 1px solid var(--bad); background: transparent; color: var(--bad); }
 .pill.is-work { background: var(--slate-tint); color: var(--slate); }
 .pill.is-bad { background: var(--del-tint); color: var(--bad); }
-.pill:not(.is-ok):not(.is-warn):not(.is-work):not(.is-bad) { background: var(--stopped); color: var(--meta); }
+.pill:not(.is-ok):not(.is-warn):not(.is-work):not(.is-bad):not(.is-woodshed):not(.is-model) { background: var(--stopped); color: var(--meta); }
 .set-card.is-wide { max-width: 880px; }
 /* My settings: groups of rows that open in place (designSystem/components/SettingsRows). */
 .set-group { display: flex; flex-direction: column; gap: 6px; max-width: 780px; scroll-margin-top: 12px; }
@@ -1440,7 +1440,8 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 .trend-max { margin-left: auto; font-size: 11.5px; color: var(--meta); }
 .trend-svg { display: block; width: 100%; height: 120px; overflow: visible; }
 .trend-bar.is-woodshed, .trend-key.is-woodshed { fill: var(--slate); background: var(--slate); }
-.trend-bar.is-other, .trend-key.is-other { fill: var(--idle-dot); background: var(--idle-dot); }
+.trend-bar.is-violet, .trend-key.is-violet { fill: var(--proj-violet); background: var(--proj-violet); }
+.trend-bar.is-other, .trend-key.is-other { fill: var(--proj-teal); background: var(--proj-teal); }
 .trend-hit { fill: transparent; }
 .trend-svg g:hover .trend-bar { opacity: 0.8; }
 .trend-base { stroke: var(--line); stroke-width: 1; }
@@ -1725,3 +1726,41 @@ h1.title .pill { vertical-align: middle; font-family: "Red Hat Display", system-
 .peek-rows dt { color: var(--meta); }
 .peek-rows dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .peek-rows dd.is-mono { font-family: var(--mono); font-size: 11.5px; line-height: 1.6; }
+
+/* Analytics colour and icons (analytics.js): a tone for each figure and icon, tier and state pills, green and red lines,
+   the merge risk bar, the repo split bar, and Show more. Each tone is a project colour or a status colour on its tint. */
+.a-ico { display: inline-flex; vertical-align: -3px; margin-right: 6px; color: var(--meta); }
+.a-ico.is-slate { color: var(--slate); } .a-ico.is-violet { color: var(--proj-violet); } .a-ico.is-teal { color: var(--proj-teal); }
+.a-ico.is-green { color: var(--green); } .a-ico.is-amber { color: var(--amber-ink); } .a-ico.is-rose { color: var(--proj-rose); }
+.analytics-page .figure { border-top: 2px solid var(--line-soft); }
+.analytics-page .figure.is-slate { border-top-color: var(--slate); } .analytics-page .figure.is-violet { border-top-color: var(--proj-violet); }
+.analytics-page .figure.is-teal { border-top-color: var(--proj-teal); } .analytics-page .figure.is-green { border-top-color: var(--green); }
+.analytics-page .figure.is-amber { border-top-color: var(--amber); } .analytics-page .figure.is-rose { border-top-color: var(--proj-rose); }
+.analytics-page .figure.is-slate .figure-value { color: var(--slate); } .analytics-page .figure.is-violet .figure-value { color: var(--proj-violet); }
+.analytics-page .figure.is-teal .figure-value { color: var(--proj-teal); } .analytics-page .figure.is-green .figure-value { color: var(--green); }
+.analytics-page .figure.is-amber .figure-value { color: var(--amber-ink); } .analytics-page .figure.is-rose .figure-value { color: var(--proj-rose); }
+.lines { white-space: nowrap; } .lines-add { color: var(--add); font-weight: 600; } .lines-del { color: var(--del); font-weight: 600; }
+.analytics-table td.num.is-violet-ink { color: var(--proj-violet); font-weight: 600; } .analytics-table td.num.is-green-ink { color: var(--green); font-weight: 600; }
+.pill.is-woodshed { background: var(--proj-violet-tint); color: var(--proj-violet); } .pill.is-woodshed a { color: inherit; text-decoration: none; font-weight: 600; }
+.pill.is-model { background: var(--proj-teal-tint); color: var(--proj-teal); } .pill.is-model .a-ico { color: inherit; margin-right: 4px; vertical-align: -3px; }
+.reviewers { white-space: nowrap; }
+.agent-tag { font-size: 11.5px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--stopped); color: var(--sub); white-space: nowrap; }
+.agent-tag.is-claude { background: var(--amber-tint); color: var(--amber-ink); } .agent-tag.is-codex { background: var(--proj-teal-tint); color: var(--proj-teal); }
+.agent-tag.is-grok { background: var(--proj-violet-tint); color: var(--proj-violet); } .agent-tag.is-opencode { background: var(--proj-rose-tint); color: var(--proj-rose); }
+.risk { padding: 12px 14px; border-top: 1px solid var(--line-soft); }
+.risk-row { display: grid; grid-template-columns: minmax(150px, 220px) 1fr auto; gap: 6px 14px; align-items: center; margin-top: 8px; }
+.risk-name { font-size: 13px; font-weight: 600; } .risk-name .quiet { font-weight: 400; }
+.risk-bar { display: flex; gap: 2px; height: 12px; border-radius: 6px; overflow: hidden; background: var(--stopped); }
+.risk-seg.is-low { background: var(--add); } .risk-seg.is-medium { background: var(--amber); } .risk-seg.is-high { background: var(--del); } .risk-seg.is-none { background: var(--idle-dot); }
+.risk-counts { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 700px) { .risk-row { grid-template-columns: 1fr; } }
+.share-bar { display: flex; height: 8px; min-width: 120px; border-radius: 4px; overflow: hidden; background: var(--stopped); }
+.share-w { background: var(--proj-violet); } .share-o { background: var(--proj-teal); }
+.analytics-table .bar-cell { width: 28%; }
+.analytics-table .link-btn .a-ico { margin-right: 6px; }
+.analytics-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.analytics-more-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 10px 14px; }
+.analytics-btn { display: inline-flex; align-items: center; gap: 2px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--ground); color: var(--slate); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.analytics-btn:hover { background: var(--slate-tint); } .analytics-btn .a-ico { margin-right: 4px; color: inherit; }
+.person-pick { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--sub); }
+.person-pick select { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--ground); color: var(--ink); }

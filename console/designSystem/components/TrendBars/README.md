@@ -11,3 +11,19 @@ Analytics page (`console/public/analytics.js`) uses them under its figures.
 - A bar's numbers are in its tooltip (`From Nov 3: 9 through Woodshed, 4 without`) and the chart's `aria-label`; the
   colour never says them alone, and the legend names each series.
 - Never two scales on one chart: a second measure is a second chart.
+
+On Analytics a chart may take a colour of its own (a day-by-day bar chart of pull requests opened, one of sessions started) (still never a status colour or orange): sessions started in `proj-violet`, pull requests
+through Woodshed in `slate` or violet and without in `proj-teal`. The page's figures carry a 2px top rule, an icon and a
+value in one of the project colours; tier pills are green, amber and red; lines added are `add`, removed `del`.
+
+Also on Analytics, in the same box as the bars:
+
+- **Risk bar**: a 12px stacked bar, one for each kind of pull request, split into Low (`add`), Medium (`amber`), High (`del`) and
+  Not reviewed (`idle-dot`) with 2px between, and under or beside it a pill with the count for each level, in words. The
+  count is in the pill and the bar's `aria-label`, never the colour alone.
+- **Split bar**: an 8px bar in the by-repo table, `proj-violet` through Woodshed and `proj-teal` without, widths against the largest repo.
+- **Agent tag** (Claude amber, Codex teal, Grok violet, OpenCode rose) and **Woodshed / models pills**: a pill on the tint of the
+  colour, the agent's name in it.
+- **Person menu**: a plain select beside the window's buttons, `Everyone` first; picking a person filters every group below it.
+- **Show more / Show all**: outline buttons (`analytics-btn`, only on this page) under a list of more than 25 rows.
+- **Lines**: `+added` in `add` and `−removed` in `del`, in mono, bold.

@@ -26,7 +26,6 @@ const RETRY_MS = 60_000;
 // Kept records older than this are dropped; the widest window is 90 days.
 const KEEP_MS = 180 * DAY_MS;
 const KEEP_MAX = 5000;
-const LIST_MAX = 500;
 // The newest pull requests with no merge risk label whose check is asked (github.mjs, checkTiers).
 const CHECK_MAX = 100;
 const TIERS = ['Low', 'Medium', 'High'];
@@ -64,6 +63,11 @@ export function usageRecord(session, project = null) {
     createdAt: session.createdAt ?? null, title: session.owner || tainted ? null : String(session.title ?? '').slice(0, 200) || null,
     branch: tainted ? null : session.branch ?? null, prUrls: tainted ? [] : prUrlsOf(session), number: session.number ?? null,
     tier: session.review?.tier ?? null, status: session.status ?? null,
+    // The models a review session ran (none named: the default, Claude), once it reported.
+    // Done once it reported a verdict (a run that wrote none ran nothing to count): a queued or failed review ran nothing to count.
+    reviewDone: isReview(session) ? Boolean(session.review?.reported) && session.review?.conclusion !== null : null,
+    // The agents its report named, else those scheduled: one that timed out reported nothing.
+    reviewAgents: isReview(session) ? (session.review?.reportedAgents?.length ? session.review.reportedAgents : session.review?.agents?.length ? session.review.agents : ['claude']) : null,
   };
 }
 
@@ -138,8 +142,17 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
   const byBranch = new Map();
   // A review's tier for each pull request: the newest review's.
   const reviewTier = new Map();
+  // The models Woodshed's review sessions ran on each pull request.
+  const reviewModels = new Map();
   for (const r of [...records].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))) {
-    if (r.kind === 'review' && r.tier && r.number) reviewTier.set(`${lower(r.repo)}#${r.number}`, r.tier);
+    if (r.kind === 'review' && r.number) {
+      const key = `${lower(r.repo)}#${r.number}`;
+      if (r.tier) reviewTier.set(key, r.tier);
+      const models = reviewModels.get(key) ?? new Set();
+      // A record kept before `reviewDone` counts when its review gave a tier.
+      if (r.reviewDone ?? Boolean(r.tier)) for (const a of r.reviewAgents ?? ['claude']) models.add(a);
+      reviewModels.set(key, models);
+    }
     if (r.kind !== 'work') continue;
     for (const url of r.prUrls ?? []) byUrl.set(lower(url), r);
     // Every session on the branch, oldest first (records are sorted above): a pull request is the newest one's that had
@@ -184,6 +197,12 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
       const via = session ? 'woodshed' : 'other';
       const login = session?.login ?? pull.author;
       const tier = pull.tier ?? reviewTier.get(`${lower(repo)}#${pull.number}`) ?? null;
+      // Models: the agents of Woodshed's own reviews when there were any (they post as a bot too, so the bots are not
+      // counted again), else the distinct bots that reviewed on GitHub.
+      const ran = reviewModels.get(`${lower(repo)}#${pull.number}`);
+      const models = ran?.size ? [...ran] : pull.botReviewers ?? [];
+      // Not the session's person: on a pull request the App opened, their own review of their own change is no second pair of eyes.
+      const humanReviewers = (pull.humanReviewers ?? []).filter((l) => lower(l) !== lower(login));
       const add = (p) => {
         p.opened++;
         if (pull.state === 'merged') {
@@ -200,7 +219,7 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
       list.push({
         project, number: pull.number, url: pull.url, title: pull.title, login, via, state: pull.state, createdAt: pull.createdAt,
         mergedAt: pull.mergedAt, mergeHours: pull.mergedAt ? hoursBetween(pull.createdAt, pull.mergedAt) : null, tier,
-        additions: pull.additions, deletions: pull.deletions, sessionId: session?.id ?? null,
+        additions: pull.additions, deletions: pull.deletions, repo, humanReviewers, humanUnknown: Boolean(pull.reviewsPartial) && !humanReviewers.length, models, sessionId: session?.id ?? null,
         // A page to open only for a shared session still on the list: a kept one is gone, a private one its owner's.
         sessionLink: session && !session.kept && !session.private ? session.id : null,
       });
@@ -228,7 +247,7 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
     sessions: {
       ...counts, people: peopleRows.filter((p) => p.sessions).length, members: members.length, agents,
       activeMembers: peopleRows.filter((p) => p.sessions && members.some((m) => lower(m) === lower(p.login))).length,
-      recent: sessions.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, LIST_MAX).map((r) => ({
+      recent: sessions.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((r) => ({
         id: r.id, createdAt: r.createdAt, login: r.login, project: r.project, private: r.private, agent: r.agent,
         title: r.private ? null : r.title, prUrls: r.prUrls, status: r.status, kept: Boolean(r.kept),
       })),
@@ -236,7 +255,7 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
     pulls: {
       woodshed: pullsView(totals.woodshed), other: pullsView(totals.other),
       mergedShare: merged ? totals.woodshed.merged / merged : null,
-      recent: list.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, LIST_MAX),
+      recent: list.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       tiered: list.filter((p) => p.tier).length,
     },
     trend,

@@ -3218,14 +3218,21 @@ work without it, not for ranking people:
 
 - **Sessions**: work sessions started in the window (My Woodshed and shared ones; reviews, QA runs and questions from
   Slack counted apart), how many members started one, which agents they ran, and a bar a week (a day for 7 days).
+  Each figure has an icon and a colour; lists show 25 rows with **Show more** and **Show all**.
 - **Pull requests**: those opened in the window on the console's repos, through Woodshed and without it, how many of
   the merged ones went through Woodshed, the median time from opened to merged for each, and the merge risk of each
   kind, with a bar a week of those merged.
+- **Pull requests, more**: how many had a person review them (a user other than the author, not a pending or
+  dismissed review; one with more than 100 reviews that shows none is "not known", not "no human") and how many models reviewed each (the agents of Woodshed's own review sessions when there were
+  any, else the distinct review bots on GitHub), merge risk counted at every level (low, medium, high, not reviewed)
+  for each kind, and bars of those opened each day and those merged.
+- **By repo**: pull requests for each repo, through Woodshed and without; a repo name filters the list below.
 - **By person**: each member, those who started nothing included, with their sessions, the days they started one, their
-  pull requests each way, the share through Woodshed, their time to merge and their high-risk count. Picking a name
-  shows only their sessions and pull requests in the two lists under it.
+  pull requests each way, the share through Woodshed, their time to merge and their high-risk count. Picking a name (here, or in the
+  Person menu at the top) shows only their sessions, pull requests, daily opens and repos.
 - **Sessions started** and **Pull requests**: the records behind the numbers, newest first, the pull requests filtered by
-  through Woodshed, without, or medium or high risk.
+  through Woodshed, without, medium or high risk, human reviewed or not, with the reviewers, models and coloured lines
+  changed (green added, red removed).
 
 A pull request is through Woodshed when a session reported it, or worked on its branch, and it is then that session's
 person's, whoever GitHub says opened it (a shared session's opens as the App). One opened by a bot with no session is
@@ -3244,8 +3251,9 @@ nothing it held outlives it, and while it is on the list it is counted with no b
 Woodshed takes every record of its person's My Woodshed sessions, those removed one by one before included; shared
 sessions they started stay, as the team's. A branch is matched only on the repo it was pushed to, so a fork's pull
 request on the same branch name is not the session's. Pull requests are read from GitHub's search, each repo once for the widest
-window (90 days) that all three windows share, and at most its newest 500 of those (a window is flagged cut off only when the
-500 do not reach back past its start). The saved read is always shown at once, however old, with when the data is as of and a
+window (90 days) that all three windows share, and at most its newest 2,000 of those (GitHub's search answers 1,000 at most, so a
+repo with more is read in date ranges, halved until each fits; a window is flagged cut off only when the 2,000 do not reach back
+past its start). The saved read is always shown at once, however old, with when the data is as of and a
 **Refresh** button (`POST /api/analytics/refresh`, off while a read runs, the page asking again every 3 s until it is done); a view
 of a read over an hour old also starts one in the background, and one that fails keeps the last read, says so on the page and is
 not tried on its own again for a minute (`analytics: refresh failed, keeping the last read`; `analytics: refresh asked` says who

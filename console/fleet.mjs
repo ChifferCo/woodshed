@@ -2962,7 +2962,7 @@ export function createFleet({
     }
     const held = hold && ours ? { sha, heading, summary, inlineComments, resolved } : null;
     // `posted`: GitHub took the verdict (or the console holds it for QA), which an ask for the same head stands on.
-    update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd, held, posted: Boolean(ours), tier: mergeRisk?.tier ?? null } });
+    update(session, { review: { ...session.review, conclusion, reported: true, reportedAgents: agents?.length ? agents : null, reviewedSha: sha, costUsd, held, posted: Boolean(ours), tier: mergeRisk?.tier ?? null } });
     console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours, held: Boolean(held) });
     stop(session, conclusion ? `Review finished: ${conclusion}` : 'Review finished without a verdict')
       .catch((err) => console.warn('fleet: stopping a finished review session failed', { id: session.id, message: firstLine(err) }));

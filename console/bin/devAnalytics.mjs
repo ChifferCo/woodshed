@@ -47,6 +47,11 @@ export function devAnalytics(now) {
     const closed = !merged && ageDays > 5 && rand() < 0.3;
     const size = Math.round(20 + rand() * (woodshed ? 400 : 250));
     const tier = rand() < 0.8 ? TIERS[Math.floor(rand() * TIERS.length)] : null;
+    // Who reviewed, made up: a teammate about half the time, and one or two review bots.
+    const reviews = [];
+    if (rand() < 0.5) reviews.push({ state: 'APPROVED', author: { login: TEAM[Math.floor(rand() * TEAM.length)].login === login ? 'sam-ops' : TEAM[Math.floor(rand() * TEAM.length)].login, __typename: 'User' } });
+    if (rand() < 0.7) reviews.push({ state: 'COMMENTED', author: { login: 'claude[bot]', __typename: 'Bot' } });
+    if (rand() < 0.35) reviews.push({ state: 'COMMENTED', author: { login: 'codex-reviewer[bot]', __typename: 'Bot' } });
     pulls.push({
       number, url: `https://github.com/${REPO}/pull/${number}`, title: TITLES[number % TITLES.length],
       createdAt: new Date(at).toISOString(), mergedAt: merged ? new Date(at + mergeHours * 3_600_000).toISOString() : null,
@@ -54,6 +59,7 @@ export function devAnalytics(now) {
       state: merged ? 'MERGED' : closed ? 'CLOSED' : 'OPEN', isDraft: false, additions: size, deletions: Math.round(size * rand() * 0.6),
       headRefName: branch, author: bot ? { login: 'renovate', __typename: 'Bot' } : { login: woodshed && rand() < 0.5 ? 'woodshed-dev' : login, __typename: woodshed ? 'Bot' : 'User' },
       // The review's label, as a review in a session puts on (github.mjs reads the tier from it).
+      reviews: { nodes: reviews },
       labels: { nodes: tier ? [{ name: `merge risk: ${tier.toLowerCase()}` }] : [] },
     });
     return pulls.at(-1);
