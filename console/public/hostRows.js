@@ -91,13 +91,13 @@
       }
     });
     // A secret left shown is masked again as its form is sent: a browser may keep a text field's value in its form
-    // history, and offer the secret again later, but never a password field's.
+    // history, and offer the secret again later, but never a password field's. The form's own list of fields, not
+    // what it holds, so a field outside it that names it (`form=`) is masked too.
     root.addEventListener('submit', (e) => {
-      e.target.querySelectorAll?.('.secret-field').forEach((secret) => {
-        const field = secret.querySelector('input');
-        const button = secret.querySelector('[data-reveal]');
-        if (field && button && field.type === 'text') showSecret(field, button, false);
-      });
+      for (const field of e.target.elements ?? []) {
+        const button = field.closest?.('.secret-field')?.querySelector('[data-reveal]');
+        if (button && field.type === 'text') showSecret(field, button, false);
+      }
     });
     root.addEventListener('change', (e) => {
       const pick = e.target.closest('.repo-pick');

@@ -171,8 +171,10 @@ test('Show shows a secret field\'s paste, and Hide or sending its form masks it 
   assert.deepEqual([field.type, show.textContent, show.attrs['aria-pressed']], ['password', 'Show', 'false']);
   // Shown, then sent: it is masked again before the browser can keep the paste in its form history.
   click({ target });
-  const secret = { querySelector: (q) => (q === 'input' ? field : q === '[data-reveal]' ? show : null) };
-  listeners.submit({ target: { querySelectorAll: (q) => (q === '.secret-field' ? [secret] : []) } });
+  const secret = { querySelector: (q) => (q === '[data-reveal]' ? show : null) };
+  field.closest = (q) => (q === '.secret-field' ? secret : null);
+  // A form's `elements`, which also lists a field outside it that names it with `form=`.
+  listeners.submit({ target: { elements: [{ type: 'text', closest: () => null }, field] } });
   assert.deepEqual([field.type, show.textContent, show.attrs['aria-pressed']], ['password', 'Show', 'false']);
 });
 
