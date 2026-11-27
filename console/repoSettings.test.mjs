@@ -45,9 +45,9 @@ function memorySecrets(initial = {}) {
   };
 }
 
-function setup({ state = {}, secrets = memorySecrets(), files = FILES, envSources = null, envSourcesTimeoutMs = undefined } = {}) {
+function setup({ state = {}, secrets = memorySecrets(), files = FILES, projects = PROJECTS, envSources = null, envSourcesTimeoutMs = undefined } = {}) {
   const store = { state: { sessions: [], ...state }, save() {} };
-  const config = { projects: PROJECTS, repo: 'acme/app' };
+  const config = { projects, repo: 'acme/app' };
   const readerOf = (name) => ({
     async repoLayer() {
       if (files[name] instanceof Error) throw files[name];
@@ -827,4 +827,113 @@ test('a source\'s answer and the check of its keys share one wait: a slow answer
   await kept.repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
   await captureLog(async () => { handed = await kept.repoSettings.forSession({ id: 'b2', project: 'app', owner: null }); });
   assert.equal(handed.envFiles['api-env'].installation, VAULT_ENV);
+});
+
+// Records are kept by names people choose: an env file's key, a project's name and a login. `constructor` is a valid
+// one of each, and every plain object has it. (`__proto__` is none of them: the key and project rules refuse it.)
+const PROTO_FILES = {
+  constructor: parseProject({ version: 1, envFiles: [{ path: 'a/.env', secret: 'constructor' }, { path: 'b/.env', secret: 'api-env' }] }),
+  app: FILES.app,
+};
+const PROTO_PROJECTS = [{ name: 'app', repo: 'acme/app', default: true }, { name: 'constructor', repo: 'acme/constructor', default: false }];
+const protoSetup = () => setup({ files: PROTO_FILES, projects: PROTO_PROJECTS });
+
+test('an env file keyed `constructor`, in a project named `constructor`, with nothing saved reads as nothing saved', async () => {
+  const { store, repoSettings } = protoSetup();
+  // Another file of each layer saved, so each layer's records are there to look `constructor` up in.
+  await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
+  await repoSettings.saveInstallation({ project: 'constructor', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
+  for (const login of ['sam-ops', 'constructor']) {
+    await repoSettings.saveOwn({ login, project: 'app', key: 'api-env', text: OWN_ENV });
+    await repoSettings.saveOwn({ login, project: 'constructor', key: 'api-env', text: OWN_ENV });
+  }
+  const before = structuredClone(store.state);
+  for (const login of [null, 'sam-ops', 'constructor']) {
+    const view = await repoSettings.view('constructor', { login });
+    const saved = (f) => [f.key, f.installation?.bytes ?? null, ...(login ? [f.personal?.bytes ?? null] : [])];
+    assert.deepEqual(view.envFiles.map(saved), [['constructor', null, ...(login ? [null] : [])], ['api-env', Buffer.byteLength(INSTALLATION_ENV), ...(login ? [Buffer.byteLength(OWN_ENV)] : [])]], `the view for ${login ?? 'an admin'}`);
+    assert.deepEqual(view.unnamed, []);
+    assert.equal(view.instructions.installation, null);
+    if (login) assert.equal(view.instructions.personal, null);
+    if (login) assert.deepEqual(view.files, []);
+    if (login) assert.deepEqual(repoSettings.summary(login, PROTO_PROJECTS[1]), { project: 'constructor', repo: 'acme/constructor', envFiles: ['api-env'], instructions: false, files: 0 });
+  }
+  for (const owner of [null, 'sam-ops', 'constructor']) {
+    let handed;
+    await captureLog(async () => { handed = await repoSettings.forSession({ id: 'a1', project: 'constructor', owner }); });
+    assert.deepEqual(handed, { project: 'constructor', envFiles: { 'api-env': { installation: INSTALLATION_ENV, personal: owner ? OWN_ENV : null } }, instructions: { installation: null, personal: null }, personalFor: owner }, `a session of ${owner ?? 'nobody'}`);
+  }
+  assert.equal(await repoSettings.ownText({ login: 'constructor', project: 'constructor', key: 'constructor' }), null);
+  assert.equal(await repoSettings.installationText({ project: 'constructor', key: 'constructor', by: 'mia-dev' }), null);
+  assert.deepEqual(await repoSettings.ownFiles({ login: 'constructor', project: 'constructor' }), {});
+  assert.deepEqual(store.state, before, 'reading writes nothing');
+});
+
+test('saving and clearing `constructor` keeps an own record, touches no other, and never Object\'s', async () => {
+  const { store, secrets, repoSettings } = protoSetup();
+  await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
+  await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'api-env', text: OWN_ENV });
+  const before = structuredClone(store.state);
+
+  // Clearing what was never saved changes nothing.
+  await repoSettings.saveInstallation({ project: 'constructor', key: 'constructor', text: '', by: 'mia-dev' });
+  await repoSettings.saveOwn({ login: 'constructor', project: 'constructor', key: 'constructor', text: '' });
+  assert.deepEqual(store.state, before, 'nothing written for a clear of nothing');
+
+  await repoSettings.saveInstallation({ project: 'constructor', key: 'constructor', text: 'A=1\n', by: 'mia-dev' });
+  await repoSettings.saveInstallation({ project: 'constructor', text: INSTRUCTIONS, by: 'mia-dev' });
+  await repoSettings.saveOwn({ login: 'constructor', project: 'constructor', key: 'constructor', text: 'B=2\n' });
+  await repoSettings.saveOwnFile({ login: 'constructor', project: 'constructor', path: 'c/.env.local', text: 'C=3\n' });
+  assert.ok(Object.hasOwn(store.state.repoSettings, 'constructor') && Object.hasOwn(store.state.repoSettings.constructor.env, 'constructor'));
+  assert.ok(Object.hasOwn(store.state.people, 'constructor') && Object.hasOwn(store.state.people.constructor.repos, 'constructor'));
+  assert.deepEqual(store.state.repoSettings.constructor.env.constructor.keys, ['A']);
+  assert.deepEqual(store.state.people.constructor.repos.constructor.env.constructor.keys, ['B']);
+  for (const name of ['repos', 'env', 'instructions', 'files']) assert.equal(Object.hasOwn(Object, name), false, `Object.${name} untouched`);
+  assert.equal(secrets.values.get('repos/constructor/env/constructor'), 'A=1\n');
+  assert.equal(secrets.values.get('users/constructor/repos/constructor/env/constructor'), 'B=2\n');
+
+  const view = await repoSettings.view('constructor', { login: 'constructor' });
+  assert.equal(view.envFiles.find((f) => f.key === 'constructor').installation.keys[0], 'A');
+  assert.equal(view.envFiles.find((f) => f.key === 'constructor').personal.keys[0], 'B');
+  assert.equal(view.envFiles.find((f) => f.key === 'api-env').installation, null, 'the other file of the project stays unsaved');
+  let handed;
+  await captureLog(async () => { handed = await repoSettings.forSession({ id: 'a1', project: 'constructor', owner: 'constructor' }); });
+  assert.deepEqual(handed.envFiles, { constructor: { installation: 'A=1\n', personal: 'B=2\n' } });
+
+  await repoSettings.saveInstallation({ project: 'constructor', key: 'constructor', text: '', by: 'mia-dev' });
+  await repoSettings.saveInstallation({ project: 'constructor', text: '', by: 'mia-dev' });
+  await repoSettings.saveOwn({ login: 'constructor', project: 'constructor', key: 'constructor', text: '' });
+  await repoSettings.saveOwnFile({ login: 'constructor', project: 'constructor', path: 'c/.env.local', text: '' });
+  assert.deepEqual(store.state.repoSettings, before.repoSettings, 'the installation\'s other records as they were');
+  assert.deepEqual(store.state.people['sam-ops'], before.people['sam-ops'], 'another person\'s as they were');
+  assert.deepEqual(Object.keys(store.state.people.constructor), [], 'their own all cleared');
+  assert.equal(secrets.values.has('repos/constructor/env/constructor'), false);
+  assert.equal(secrets.values.has('users/constructor/repos/constructor/env/constructor'), false);
+  for (const name of ['repos', 'env', 'instructions', 'files']) assert.equal(Object.hasOwn(Object, name), false, `Object.${name} untouched`);
+});
+
+test('`__proto__` is no env file key and no project name: refused before any lookup', async () => {
+  const { repoSettings } = protoSetup();
+  await assert.rejects(repoSettings.saveInstallation({ project: 'constructor', key: '__proto__', text: 'A=1\n', by: 'mia-dev' }), /lowercase letters, digits and dashes/);
+  await assert.rejects(repoSettings.ownText({ login: 'sam-ops', project: 'constructor', key: '__proto__' }), /lowercase letters, digits and dashes/);
+  await assert.rejects(repoSettings.view('__proto__'), /no project called/);
+});
+
+test('own files at the paths `constructor` and `__proto__` are kept and cleared as any other, and change no other file', async () => {
+  const { store, secrets, repoSettings } = protoSetup();
+  await repoSettings.saveOwnFile({ login: 'sam-ops', project: 'app', path: 'notes.txt', text: 'N=1\n' });
+  assert.deepEqual(await repoSettings.saveOwnFile({ login: 'sam-ops', project: 'app', path: 'constructor', text: 'C=1\n' }), { 'notes.txt': 'N=1\n', constructor: 'C=1\n' });
+  const saved = await repoSettings.saveOwnFile({ login: 'sam-ops', project: 'app', path: '__proto__', text: 'P=1\n' });
+  assert.deepEqual(Object.keys(saved), ['notes.txt', 'constructor', '__proto__']);
+  assert.equal(Object.getPrototypeOf(saved), Object.prototype, 'a plain object, its prototype untouched');
+  assert.deepEqual(JSON.parse(secrets.values.get('users/sam-ops/repos/app/files')), JSON.parse('{"notes.txt":"N=1\\n","constructor":"C=1\\n","__proto__":"P=1\\n"}'));
+  const record = store.state.people['sam-ops'].repos.app.files;
+  assert.deepEqual(Object.keys(record), ['notes.txt', 'constructor', '__proto__']);
+  assert.ok(Object.values(record).every((at) => typeof at === 'string'), 'each saved date a date, never a function');
+  assert.deepEqual((await repoSettings.view('app', { login: 'sam-ops' })).files.map((f) => f.path), ['__proto__', 'constructor', 'notes.txt']);
+  assert.deepEqual(await repoSettings.filesForSession({ id: 'a1', project: 'app', owner: 'sam-ops' }), saved);
+
+  await repoSettings.saveOwnFile({ login: 'sam-ops', project: 'app', path: '__proto__', text: '' });
+  assert.deepEqual(await repoSettings.saveOwnFile({ login: 'sam-ops', project: 'app', path: 'constructor', text: '' }), { 'notes.txt': 'N=1\n' });
+  assert.deepEqual(Object.keys(store.state.people['sam-ops'].repos.app.files), ['notes.txt']);
 });

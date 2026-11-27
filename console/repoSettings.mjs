@@ -47,6 +47,9 @@ const MAX_BODY_BYTES = 160 * 1024;
 const shown = (message, status = 400) => Object.assign(new Error(message), { shown: true, status });
 const firstLine = (err) => String(err?.message ?? err).split('\n')[0];
 const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+// A record by a name people choose (a login, a project's name, an env file's key, an own file's path): an own property
+// alone, never one every object has, such as `constructor`, which is a valid name of each.
+const own = (records, name) => (isRecord(records) && Object.hasOwn(records, name) ? records[name] : undefined);
 
 // A script path on the console's own address: `/\host/x.js` is another site's to a browser, as `//host/x.js` is.
 function onConsole(src) {
@@ -208,23 +211,23 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       return store.state.repoSettings ?? null;
     }
     if (create) {
-      store.state.people ??= {};
-      store.state.people[loginKey(login)] ??= {};
-      store.state.people[loginKey(login)].repos ??= {};
+      const people = (store.state.people ??= {});
+      if (!isRecord(own(people, loginKey(login)))) people[loginKey(login)] = {};
+      people[loginKey(login)].repos ??= {};
     }
-    return store.state.people?.[loginKey(login)]?.repos ?? null;
+    return own(store.state.people, loginKey(login))?.repos ?? null;
   }
 
   function recordOf({ login, project, key }) {
-    const repo = rootFor(login)?.[project];
-    return (key ? repo?.env?.[key] : repo?.instructions) ?? null;
+    const repo = own(rootFor(login), project);
+    return (key ? own(repo?.env, key) : repo?.instructions) ?? null;
   }
 
   // `record` null removes it, and the project's entry with it once it holds nothing.
   function writeRecord({ login, project, key, record }) {
     if (!record && !recordOf({ login, project, key })) return;
     const root = rootFor(login, true);
-    const repo = root[project] ?? {};
+    const repo = own(root, project) ?? {};
     if (key) {
       const env = { ...repo.env };
       if (record) env[key] = record;
@@ -383,8 +386,8 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       error = firstLine(err);
       console.warn('repoSettings: project file not read, saved values shown alone', { project: project.name, message: error });
     }
-    const instEnv = rootFor(null)?.[project.name]?.env ?? {};
-    const ownEnv = login ? rootFor(login)?.[project.name]?.env ?? {} : {};
+    const instEnv = own(rootFor(null), project.name)?.env ?? {};
+    const ownEnv = login ? own(rootFor(login), project.name)?.env ?? {} : {};
     const named = layer?.envFiles ?? [];
     const saved = [...new Set([...Object.keys(instEnv), ...Object.keys(ownEnv)])].filter((key) => !named.some((f) => f.key === key));
     // Unread, the saved keys stand for the files: what they are for is unknown until the file is read.
@@ -396,7 +399,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       projectFile: { read: Boolean(layer), error, rules: layer?.rules ?? null, setup: layer?.setup ?? null },
       envFiles: byKey(files).map((group) => envFileView({ project, files: group, layer, login, source: sources.get(group[0].key) ?? null, controls })),
       // Saved for a key the project file no longer names: kept until someone deletes it.
-      unnamed: layer ? saved.map((key) => ({ key, installation: instEnv[key] ?? null, ...(login && { personal: ownEnv[key] ?? null }) })) : [],
+      unnamed: layer ? saved.map((key) => ({ key, installation: own(instEnv, key) ?? null, ...(login && { personal: own(ownEnv, key) ?? null }) })) : [],
       instructions: { installation: recordOf({ project: project.name }), ...(login && { personal: recordOf({ login, project: project.name }) }) },
       ...(login && {
         files: Object.entries(filesRecordOf(login, project.name) ?? {}).map(([file, savedAt]) => ({ path: file, savedAt })).sort((a, b) => a.path.localeCompare(b.path)),
@@ -408,8 +411,8 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
 
   /** @returns {{project: string, repo: string, envFiles: string[], instructions: boolean, files: number}}  a person's own records for a project */
   function summary(login, project) {
-    const own = rootFor(login)?.[project.name];
-    return { project: project.name, repo: project.repo, envFiles: Object.keys(own?.env ?? {}), instructions: Boolean(own?.instructions), files: Object.keys(own?.files ?? {}).length };
+    const repo = own(rootFor(login), project.name);
+    return { project: project.name, repo: project.repo, envFiles: Object.keys(repo?.env ?? {}), instructions: Boolean(repo?.instructions), files: Object.keys(repo?.files ?? {}).length };
   }
 
   async function installationText({ project: name, key = null, by, on = 'console settings' }) {
@@ -457,12 +460,12 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
   }
 
   // A person's own whole files for a project, by path, and when each was saved: state.json's record of them.
-  const filesRecordOf = (login, project) => rootFor(login)?.[project]?.files ?? null;
+  const filesRecordOf = (login, project) => own(rootFor(login), project)?.files ?? null;
 
   function writeFilesRecord(login, project, files) {
     if (!files && !filesRecordOf(login, project)) return;
     const root = rootFor(login, true);
-    const repo = { ...root[project] };
+    const repo = { ...own(root, project) };
     if (files) repo.files = files;
     else delete repo.files;
     if (Object.keys(repo).length) root[project] = repo;
@@ -519,9 +522,8 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       }
       if (layer.envFiles.some((f) => f.path === key)) throw shown(`${key} is one of ${project.repo}'s env files: set your values for it above`);
     }
-    const files = await readFiles(login, project.name);
-    if (value.trim()) files[key] = value;
-    else delete files[key];
+    // Made anew, not assigned into: a path may be `__proto__`, which an assignment would not keep as a file.
+    const files = Object.fromEntries([...Object.entries(await readFiles(login, project.name)).filter(([f]) => f !== key), ...(value.trim() ? [[key, value]] : [])]);
     if (Object.keys(files).length > MAX_OWN_FILES) throw shown(`you can keep ${MAX_OWN_FILES} files a repo at most`);
     const json = JSON.stringify(files);
     const limit = maxFilesBytes();
@@ -533,7 +535,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     else await secrets.remove(personalFilesName(login, project.name));
     const before = filesRecordOf(login, project.name);
     const at = new Date(now()).toISOString();
-    const kept = Object.fromEntries(Object.keys(files).map((f) => [f, f === key ? at : before?.[f] ?? at]));
+    const kept = Object.fromEntries(Object.keys(files).map((f) => [f, f === key ? at : own(before, f) ?? at]));
     writeFilesRecord(login, project.name, Object.keys(kept).length ? kept : null);
     console.log(value.trim() ? 'repoSettings: own file saved' : 'repoSettings: own file removed', {
       project: project.name, login, path: key, files: Object.keys(files).length, ...(value.trim() && { bytes: Buffer.byteLength(value) }),
@@ -576,8 +578,8 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     const sourced = new Map([...answered].filter(([key]) => known.has(key)));
     const dropped = answered.size - sourced.size;
     const keys = [...new Set([
-      ...Object.keys(rootFor(null)?.[project]?.env ?? {}),
-      ...(personalFor ? Object.keys(rootFor(personalFor)?.[project]?.env ?? {}) : []),
+      ...Object.keys(own(rootFor(null), project)?.env ?? {}),
+      ...(personalFor ? Object.keys(own(rootFor(personalFor), project)?.env ?? {}) : []),
       ...sourced.keys(),
     ])];
     const read = (login, key) => readValue({ login, project, key });
@@ -599,8 +601,8 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
   // others, those the project file names (on its default branch). That read is made only then; when it fails, a source's
   // key with no record is not known, and is dropped.
   async function knownKeys(project, sourcedKeys, until) {
-    const known = new Set(Object.keys(rootFor(null)?.[project]?.env ?? {}));
-    for (const person of Object.values(store.state.people ?? {})) for (const key of Object.keys(person?.repos?.[project]?.env ?? {})) known.add(key);
+    const known = new Set(Object.keys(own(rootFor(null), project)?.env ?? {}));
+    for (const person of Object.values(store.state.people ?? {})) for (const key of Object.keys(own(person?.repos, project)?.env ?? {})) known.add(key);
     if (sourcedKeys.every((key) => known.has(key))) return known;
     // The message is the console's own reader's (GitHub's answer), as its other lines log it, or that the wait the
     // source's answer began is over: the read goes on, and the next start finds it done.
@@ -676,14 +678,14 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       if (!old || typeof old !== 'object' || Array.isArray(old)) throw new Error('the old own files are not a JSON object');
     }
     const current = await readFiles(login, main.name);
-    const added = Object.keys(old).filter((file) => !(file in current));
+    const added = Object.keys(old).filter((file) => !Object.hasOwn(current, file));
     const merged = { ...current, ...Object.fromEntries(added.map((file) => [file, old[file]])) };
     const fits = Object.keys(merged).length <= MAX_OWN_FILES && Buffer.byteLength(JSON.stringify(merged)) <= maxFilesBytes();
     const moving = added.length && fits;
     if (moving) {
       await secrets.save(personalFilesName(login, main.name), JSON.stringify(merged), `Woodshed: @${login}'s own files for ${main.name}, for their private sessions only`);
       const at = new Date(now()).toISOString();
-      writeFilesRecord(login, main.name, { ...filesRecordOf(login, main.name), ...Object.fromEntries(added.map((file) => [file, person.ownFiles[file] ?? at])) });
+      writeFilesRecord(login, main.name, { ...filesRecordOf(login, main.name), ...Object.fromEntries(added.map((file) => [file, own(person.ownFiles, file) ?? at])) });
     }
     if (value) await secrets.remove(legacyOwnFilesName(login));
     delete person.ownFiles;
@@ -724,7 +726,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
 
   // Each record of a project in one layer, deleted secret first: one that fails is kept, to be deleted again.
   async function forgetLayer(login, project) {
-    const repo = rootFor(login)?.[project];
+    const repo = own(rootFor(login), project);
     if (!repo) return { deleted: 0, failed: 0 };
     let deleted = 0;
     let failed = 0;
