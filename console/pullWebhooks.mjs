@@ -40,7 +40,7 @@ export function createPullWebhooks({ now = Date.now } = {}) {
     flowing();
     const numbers = (Array.isArray(message?.numbers) ? message.numbers : [message?.number]).filter(Number.isInteger);
     const project = typeof message?.project === 'string' ? message.project : null;
-    const by = readers.filter((r) => r.stale(numbers, project).length).map((r) => r.name);
+    const by = readers.filter((r) => r.stale(numbers, project, message?.what).length).map((r) => r.name);
     if (!by.length) return { unrecorded: true };
     console.log('pullWebhooks: pull request marked due', { numbers, what: message?.what ?? null, by, ...(project ? { project } : {}) });
     return { outcome: 'refreshed', reason: by.join(', ') };

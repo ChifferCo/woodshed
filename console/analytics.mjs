@@ -248,7 +248,7 @@ export function analyticsReport({ records, pulls, members = [], days, now }) {
       ...counts, people: peopleRows.filter((p) => p.sessions).length, members: members.length, agents,
       activeMembers: peopleRows.filter((p) => p.sessions && members.some((m) => lower(m) === lower(p.login))).length,
       recent: sessions.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((r) => ({
-        id: r.id, createdAt: r.createdAt, login: r.login, project: r.project, private: r.private, agent: r.agent,
+        id: r.id, createdAt: r.createdAt, login: r.login, project: r.project, repo: r.repo ?? null, private: r.private, agent: r.agent,
         title: r.private ? null : r.title, prUrls: r.prUrls, status: r.status, kept: Boolean(r.kept),
       })),
     },
@@ -326,10 +326,10 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
    * @param {{repos?: string[]|null}} opts  as for report
    * @returns {number}  how many reads it started
    */
-  function refresh({ repos = null } = {}) {
+  function refresh({ repos = null, project: only = null } = {}) {
     const allowed = repos ? new Set(repos.map(lower)) : null;
     let started = 0;
-    for (const project of allProjects(config).filter((p) => p.repo && (!allowed || allowed.has(lower(p.repo))))) {
+    for (const project of allProjects(config).filter((p) => p.repo && (!allowed || allowed.has(lower(p.repo))) && (!only || p.name === only))) {
       const key = keyOf(project);
       const held = reads.get(key);
       if (held?.reading) continue;
@@ -383,5 +383,21 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
     };
   }
 
-  return { report, refresh };
+  /**
+   * A pull request changed on GitHub (pullWebhooks.mjs): once one closes, merged or not, its repo's read is stale, so it is
+   * read again now and the page does not wait for it. Only a repo read before is: with no read, the first view makes it.
+   * @returns {number[]}  the numbers it found stale, none when nothing was started
+   */
+  function pullChanged(numbers, projectName, what) {
+    if (what !== 'pull request closed') return [];
+    const projects = allProjects(config).filter((p) => p.repo && (!projectName || p.name === projectName) && reads.get(keyOf(p))?.value);
+    let started = 0;
+    for (const p of projects) started += refresh({ repos: [p.repo], project: p.name });
+    return started ? numbers : [];
+  }
+
+  /** Reads every repo once, so the first view of the page does not wait for GitHub. Failures are logged by the reads. */
+  const warm = () => refresh();
+
+  return { report, refresh, pullChanged, warm };
 }

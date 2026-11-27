@@ -160,10 +160,11 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
       h('div', { class: 'trend-axis mono' }, h('span', null, day(trend[0]?.start)), h('span', null, 'today')));
   }
 
-  // Everything below filters by the person picked (and, for the pull requests, the repo).
+  // Everything below filters by the person and the repo picked (the By repo table keeps every repo, to pick from).
   function mySessions() {
     const picked = who();
-    return data.sessions.recent.filter((s) => !picked || sameLogin(s.login, picked));
+    const repo = repoPick();
+    return data.sessions.recent.filter((s) => (!picked || sameLogin(s.login, picked)) && (!repo || s.repo === repo));
   }
   function myPulls({ byRepo = true } = {}) {
     const picked = who();
@@ -191,17 +192,19 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
   function sessionsGroup() {
     const s = data.sessions;
     const picked = who();
+    const repo = repoPick();
+    const narrowed = Boolean(picked || repo);
     const mine = mySessions();
-    const counted = picked ? mine.reduce((acc, r) => ({ ...acc, [r.agent]: (acc[r.agent] ?? 0) + 1 }), {}) : s.agents;
+    const counted = narrowed ? mine.reduce((acc, r) => ({ ...acc, [r.agent]: (acc[r.agent] ?? 0) + 1 }), {}) : s.agents;
     const agents = Object.entries(counted).sort((a, b) => b[1] - a[1]);
-    const total = picked ? mine.length : s.work;
-    const privateCount = picked ? mine.filter((r) => r.private).length : s.private;
+    const total = narrowed ? mine.length : s.work;
+    const privateCount = narrowed ? mine.filter((r) => r.private).length : s.private;
     const buckets = data.step === 'day' ? dayCounts(mine, (r) => r.createdAt, () => 'a') : bucketCounts(data.trend, mine, (r) => r.createdAt, () => 'a');
     return group({ id: 'analytics-totals', label: 'Sessions', note: 'Work sessions started in the window: My Woodshed, and shared ones from a label, a comment or the console.' },
       figures([
         { label: 'Sessions started', icon: 'sessions', tone: 'violet', value: n(total), sub: `${n(privateCount)} My Woodshed · ${n(total - privateCount)} shared` },
-        picked ? null : { label: 'People using it', icon: 'people', tone: 'teal', value: s.members ? `${n(s.activeMembers)} / ${n(s.members)}` : n(s.people), sub: s.members ? `members started a session${s.people > s.activeMembers ? `, and ${n(s.people - s.activeMembers)} not on People` : ''}` : 'started a session' },
-        picked ? null : { label: 'Reviews run', icon: 'review', tone: 'green', value: n(s.review), sub: `${n(s.qa)} QA runs · ${n(s.ask)} questions from Slack` },
+        narrowed ? null : { label: 'People using it', icon: 'people', tone: 'teal', value: s.members ? `${n(s.activeMembers)} / ${n(s.members)}` : n(s.people), sub: s.members ? `members started a session${s.people > s.activeMembers ? `, and ${n(s.people - s.activeMembers)} not on People` : ''}` : 'started a session' },
+        narrowed ? null : { label: 'Reviews run', icon: 'review', tone: 'green', value: n(s.review), sub: `${n(s.qa)} QA runs · ${n(s.ask)} questions from Slack` },
         { label: 'Most used agent', icon: 'agent', tone: 'amber', value: agents.length ? `${AGENT_NAMES[agents[0][0]] ?? agents[0][0]} ${pct(agents[0][1] / total)}` : '—', sub: total && agents.length ? 'of sessions, split below' : 'of sessions' },
       ]),
       agentMix(agents, total),
@@ -234,7 +237,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
   }
 
   function pullsGroup() {
-    const list = myPulls({ byRepo: false });
+    const list = myPulls();
     const w = stats(list.filter((p) => p.via === 'woodshed'));
     const o = stats(list.filter((p) => p.via !== 'woodshed'));
     const all = stats(list);
@@ -306,10 +309,28 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
   }
 
   // Each person beside the others: what they started, and how their pull requests went, through Woodshed and not.
+  // With a repo picked each person's row is worked out again from that repo's sessions and pull requests alone.
+  function peopleOf(repo) {
+    if (!repo) return data.people;
+    const view = (list) => { const st = stats(list); return { opened: st.opened, merged: st.merged, medianMergeHours: median(st.mergeHours), tiers: st.tiers, added: st.added, removed: st.removed }; };
+    return data.people.map((p) => {
+      const sessions = data.sessions.recent.filter((s) => s.repo === repo && sameLogin(s.login, p.login));
+      const pulls = data.pulls.recent.filter((x) => x.repo === repo && sameLogin(x.login, p.login));
+      const w = view(pulls.filter((x) => x.via === 'woodshed'));
+      const o = view(pulls.filter((x) => x.via !== 'woodshed'));
+      return {
+        login: p.login, sessions: sessions.length, activeDays: new Set(sessions.map((s) => s.createdAt.slice(0, 10))).size,
+        lastAt: sessions.reduce((a, s) => (!a || s.createdAt > a ? s.createdAt : a), null), woodshed: w, other: o,
+        share: w.opened + o.opened ? w.opened / (w.opened + o.opened) : null,
+      };
+    }).filter((p) => p.sessions || p.woodshed.opened || p.other.opened);
+  }
+
   function peopleGroup() {
     const picked = who();
-    const mostSessions = Math.max(1, ...data.people.map((p) => p.sessions));
-    const rows = data.people.map((p) => {
+    const people = peopleOf(repoPick());
+    const mostSessions = Math.max(1, ...people.map((p) => p.sessions));
+    const rows = people.map((p) => {
       const opened = p.woodshed.opened + p.other.opened;
       const risky = p.woodshed.tiers.High + p.other.tiers.High;
       const reviewed = (t) => t.Low + t.Medium + t.High;
@@ -329,8 +350,8 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
         h('td', null, risky ? h('span', { class: 'pill is-bad' }, `${risky} high`) : h('span', { class: 'quiet' }, reviewed(p.woodshed.tiers) + reviewed(p.other.tiers) ? 'none high' : '—')),
         h('td', { class: 'num' }, lines(p.woodshed.added + p.other.added, p.woodshed.removed + p.other.removed)));
     });
-    return group({ id: 'analytics-people', label: `By person · ${data.people.length}`, note: 'Pick a name to see only their sessions, pull requests and repos below. Members who started nothing are listed too.' },
-      data.people.length ? h('div', { class: 'table-scroll' }, h('table', { class: 'people-table analytics-table' },
+    return group({ id: 'analytics-people', label: `By person · ${people.length}`, note: repoPick() ? `Each person's sessions and pull requests on ${repoPick()}.` : 'Pick a name to see only their sessions, pull requests and repos below. Members who started nothing are listed too.' },
+      people.length ? h('div', { class: 'table-scroll' }, h('table', { class: 'people-table analytics-table' },
         h('thead', null, h('tr', null,
           h('th', { scope: 'col' }, 'Person'),
           h('th', { scope: 'col', class: 'num' }, 'Sessions'),
@@ -463,6 +484,18 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     return h('label', { class: 'person-pick' }, icon('human', 'slate'), h('span', null, 'Person'), select);
   }
 
+  function repoPicker() {
+    if (data.projects.length < 2) return null;
+    const picked = repoPick();
+    const repos = [...new Set([...data.pulls.recent.map((p) => p.repo), ...data.sessions.recent.map((s) => s.repo)].filter(Boolean))].sort();
+    if (picked && !repos.includes(picked)) repos.push(picked);
+    const select = h('select', { 'aria-label': 'Repo', onchange: (e) => pick('repo', e.target.value || null, null) },
+      h('option', { value: '' }, 'All repos'),
+      repos.map((repo) => h('option', { value: repo, selected: repo === picked }, repo)));
+    if (picked) select.value = picked;
+    return h('label', { class: 'person-pick' }, icon('repo', 'slate'), h('span', null, 'Repo'), select);
+  }
+
   // What the pull request data is as of, and a button to read GitHub again, off while a read is running.
   function freshness() {
     // With every repo failed on a first visit there is no time to show, but the button still lets them try again.
@@ -482,6 +515,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
         h('p', { class: 'sub' }, 'How the team uses Woodshed: who starts sessions, and how their pull requests go.')));
     const windowSeg = h('div', { class: 'filters' },
       h('p', { class: 'foot' }, data ? `From ${day(data.since)} to today${loading ? ' · reading…' : ''}.` : ''),
+      data && repoPicker(),
       data && personPicker(),
       freshness(),
       h('div', { class: 'seg', role: 'group', 'aria-label': 'Window' }, (data?.windows ?? [7, 30, 90]).map((d) =>

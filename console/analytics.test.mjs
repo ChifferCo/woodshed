@@ -331,6 +331,22 @@ test('the Refresh button reads again now, once, and only the repos the person ma
   assert.deepEqual([after.refreshing, after.asOf], [false, new Date(clock.now).toISOString()]);
 });
 
+test('a pull request closing reads its repo again, but only one already read, and an opened one does not', async () => {
+  const clock = { now: NOW };
+  let reads = 0;
+  const gh = { recentPulls: async () => { reads++; return { pulls: [], total: 0, truncated: false }; } };
+  const analytics = cachedAnalytics(gh, clock);
+  assert.deepEqual(analytics.pullChanged([5], null, 'pull request closed'), [], 'no read yet: the first view makes it');
+  await analytics.report({ days: 7 });
+  assert.equal(reads, 1);
+  assert.deepEqual(analytics.pullChanged([5], null, 'pull request opened'), []);
+  assert.deepEqual(analytics.pullChanged([5], 'nope', 'pull request closed'), [], 'a project this console has not');
+  assert.deepEqual(analytics.pullChanged([5], null, 'pull request closed'), [5]);
+  await nextTick();
+  await nextTick();
+  assert.equal(reads, 2);
+});
+
 test('a failed refresh keeps the old read, says so, and is not tried on its own again for a minute; the first read still fails the page', async () => {
   const clock = { now: NOW };
   let reads = 0;

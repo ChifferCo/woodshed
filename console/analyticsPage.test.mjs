@@ -112,9 +112,28 @@ test('a repo picked in the by-repo table keeps only its pull requests in the lis
   web.listeners.click();
   assert.match(page.location.search, /repo=o%2Fweb/);
   page.click('Show all 60');
-  const listed = page.rows('pulls');
+  // Every session ran on o/api, so with o/web picked there is no sessions table and the pull requests' is the last.
+  const tables = page.walk().filter((e) => e.tag === 'table');
+  assert.equal(tables.length, 3, 'repos, people, pull requests');
+  const listed = tables.at(-1).children.find((c) => c.tag === 'tbody').children;
   assert.equal(listed.length, 60);
   assert.ok(listed.every((r) => textOf(r.children[1]).includes('o/web')));
+});
+
+test('the Repo menu narrows sessions, figures and people to one repo, and All repos puts them back', async () => {
+  const page = await loadPage(report());
+  const menu = () => page.walk().find((e) => e.tag === 'select' && e.attrs['aria-label'] === 'Repo');
+  assert.ok(menu(), 'offered with more than one repo');
+  assert.deepEqual(menu().children.map(textOf), ['All repos', 'o/api', 'o/web']);
+  menu().listeners.change({ target: { value: 'o/api' } });
+  assert.match(page.location.search, /repo=o%2Fapi/);
+  assert.equal(page.rows('sessions').length, 25, 'o/api has all 70 sessions');
+  assert.ok(page.walk().some((e) => textOf(e) === 'Sessions started · 70'));
+  menu().listeners.change({ target: { value: 'o/web' } });
+  assert.equal(page.walk().filter((e) => e.tag === 'table').length, 3, 'no sessions on o/web');
+  menu().listeners.change({ target: { value: '' } });
+  assert.equal(page.location.search.includes('repo='), false);
+  assert.equal(page.walk().filter((e) => e.tag === 'table').length, 4);
 });
 
 test('Human reviewed keeps those a person reviewed, No human review keeps those with none read, and those whose reviews were not all read are in neither', async () => {
