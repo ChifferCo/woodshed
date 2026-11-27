@@ -77,17 +77,14 @@ class BadAnswer extends Error {
 
 const notByKey = (given) => new BadAnswer(`answered ${Array.isArray(given) ? 'a list' : typeof given}, not an object by env file key`);
 
-// What the log says of a hook that failed. Nothing the program wrote: a message it threw, a name it gave its error, a
-// key or a value it answered could hold a credential (its secret manager's error quoting a token, a value under the
-// wrong name). Of an error of its own, which of JavaScript's error classes it is, and its code where that is one in
-// Node's shape (ECONNREFUSED, ERR_INVALID_URL): capitals from E, which a token is not.
+// What the log says of a hook that failed. Nothing the program wrote: a message it threw, a name or a code it gave
+// its error, a key or a value it answered could hold a credential (its secret manager's error quoting a token, a value
+// under the wrong name). Of an error of its own, only which of JavaScript's error classes it is.
 const ERROR_CLASSES = [TypeError, RangeError, SyntaxError, ReferenceError, URIError, EvalError, AggregateError, Error];
-const ERROR_CODE = /^E[A-Z]{1,20}(?:_[A-Z0-9]{1,20}){0,5}$/;
 function failureOf(err) {
   if (err instanceof BadAnswer) return { why: err.why, ...(err.key && { key: err.key }) };
   const kind = ERROR_CLASSES.find((c) => err instanceof c)?.name ?? null;
-  const code = typeof err?.code === 'string' && ERROR_CODE.test(err.code) ? err.code : null;
-  return { why: 'the hook threw', ...(kind && { error: kind }), ...(code && { code }) };
+  return { why: 'the hook threw', ...(kind && { error: kind }) };
 }
 
 // One env file's source as the program's `envSources.view` gave it, checked: what the pages are told of it. `key` is
@@ -538,7 +535,8 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
    * A person's only in their own private session: a shared or QA session, which anyone signed in can type into, gets
    * none. Every key the console holds for the project: the session uses those its checkout's project file names.
    * Where a program's source is on for an env file (`envSources`), its installation text is the source's, never the
-   * typed one, which is not read: a source's text that cannot be used leaves the layer with none.
+   * typed one, which is not read: a source's text that cannot be used leaves the layer with none. A source's key is one
+   * the console knows as an env file's (knownKeys): any other is dropped, since the session's own log names its keys.
    * @returns {Promise<{project: string, envFiles: Record<string, {installation: string|null, personal: string|null}>,
    *   instructions: {installation: string|null, personal: string|null}, personalFor: string|null}|null>}  null for an ask session
    * @throws {Error}  when the store did not answer
@@ -547,7 +545,12 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     if (isAsk(session)) return null;
     const project = projectFor(config, session).name;
     const personalFor = session.owner && !isQa(session) ? session.owner : null;
-    const sourced = await sourcedFor(session, project);
+    const answered = await sourcedFor(session, project);
+    // A key only the program gave is its text until the console knows it as an env file's: never handed on, where the
+    // session's log would name it, and never named here. Dropped and counted.
+    const known = answered.size ? await knownKeys(project, [...answered.keys()]) : new Set();
+    const sourced = new Map([...answered].filter(([key]) => known.has(key)));
+    const dropped = answered.size - sourced.size;
     const keys = [...new Set([
       ...Object.keys(rootFor(null)?.[project]?.env ?? {}),
       ...(personalFor ? Object.keys(rootFor(personalFor)?.[project]?.env ?? {}) : []),
@@ -559,21 +562,18 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       Promise.all([read(null, null), personalFor ? read(personalFor, null) : null]),
     ]);
     const envFiles = Object.fromEntries(envValues);
-    // A key only the program gave is handed on and counted, never named: it is the program's text until the console
-    // knows it as an env file's.
-    const known = await knownKeys(project, keys.filter((key) => sourced.has(key)));
-    const set = (layer) => Object.keys(envFiles).filter((k) => envFiles[k][layer] !== null && known.has(k));
-    const unnamed = [...sourced.keys()].filter((key) => !known.has(key)).length;
+    const set = (layer) => Object.keys(envFiles).filter((k) => envFiles[k][layer] !== null);
     console.log('repoSettings: handed out', {
       sessionId: session.id, project, installation: set('installation'), personal: set('personal'),
-      ...(envSources && { fromSource: [...sourced.keys()].filter((key) => known.has(key)), ...(unnamed && { fromSourceUnnamed: unnamed }) }),
+      ...(envSources && { fromSource: [...sourced.keys()], ...(dropped && { sourceKeysDropped: dropped }) }),
       instructions: { installation: instructions[0] !== null, personal: instructions[1] !== null }, personalFor,
     });
     return { project, envFiles, instructions: { installation: instructions[0], personal: instructions[1] ?? null }, personalFor };
   }
 
-  // The keys of a project the log may name: those the console keeps a record for, and, where a source answered others,
-  // those of the project file's env files. That read is made only then, and one that fails names fewer.
+  // The keys the console knows as a project's env files: those it keeps a record for, and, where a source answered
+  // others, those the project file names (on its default branch). That read is made only then; when it fails, a source's
+  // key with no record is not known, and is dropped.
   async function knownKeys(project, sourcedKeys) {
     const known = new Set(Object.keys(rootFor(null)?.[project]?.env ?? {}));
     for (const person of Object.values(store.state.people ?? {})) for (const key of Object.keys(person?.repos?.[project]?.env ?? {})) known.add(key);

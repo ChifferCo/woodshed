@@ -2389,27 +2389,30 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
     people read it ("Vault", 1 to 40 characters); `on`, `true` when sessions get this file's installation values from
     the source; `keys`, the names of the variables it sets while on, never a value; `markup`, its own controls for this
     file, made with `settingsMarkup.mjs` (never a string), which the repo's page draws inside the file's installation
-    layer; `scripts`, as `repoPage`'s, loaded once. Its forms post to the program, which sends the page back to
+    layer; `scripts`, as `repoPage`'s, loaded once into the page's head when the repo's page is drawn, whichever rows
+    are open. Its forms post to the program, which sends the page back to
     `/console-settings/repos/<project>?file=<key>`. The views carry `source: {label, on, keys}` on the env file, and
     the admin's `html` and `scripts` too; My settings never gets the controls. A hook that throws, or answers anything
     else (a label too long, a key that is no variable's name, markup that is a string), adds nothing for the repo and
     logs `repoSettings: the program's env sources not given`; the pages are then the typed values' alone.
     The line says what kind of thing was wrong (`why`, and the env file's `key` from the project file), or for a
-    throw which of JavaScript's error classes it is (`error`) and a `code` in Node's shape (`ECONNREFUSED`): never
-    its message or the name it gave itself, nor anything else the program wrote.
+    throw which of JavaScript's error classes it is (`error`): never its message, the name or the code it gave
+    itself, nor anything else the program wrote.
   - `forSession({name, repo, session: {id, owner}})` answers `null`, or the text (`NAME=value` lines) of each env file
     whose source is on, by key. A session is handed that text as the file's installation layer, in place of the typed
-    one, which stays kept and is not read; a key with no typed values is handed out too. The program keeps its own
+    one, which stays kept and is not read; a key with no typed values is handed out too. A key must be one the console
+    knows as an env file's: one the repo's project file names (on its default branch), or one the console keeps values
+    for. Any other is dropped and counted (`sourceKeysDropped` on `repoSettings: handed out`), never handed on or named,
+    since a session's own log names the keys it gets; with the project file unread, that is every key the console keeps
+    no values for. The program keeps its own
     fallback for a source that does not answer: text that is not a string, or over the 64 KB a typed value may be, leaves
     that file's installation layer with none, never the typed text, since the page says it is not used; an answer under
     a name that is no env file's key is dropped. `repoSettings: env source text refused, the installation layer handed
     out as none` counts them (`refused`, and `notAKey`, `notText`, `tooLarge`) and names none. A hook that throws,
     answers no object, or has not answered in 10 seconds (`ENV_SOURCES_TIMEOUT_MS` in `repoSettings.mjs`, under the 15 a
     session waits) says nothing of which sources are on, so the typed values are handed out (`repoSettings: env sources
-    not read, the typed values handed out`, with `why`, and for a throw the error's class and `code`, never its
-    message). The console keeps none of a source's text and logs nothing the program wrote: `repoSettings: handed out`
-    names under `fromSource` the keys it knows as env files (one it keeps values for, or one the project file names)
-    and counts any other under `fromSourceUnnamed`.
+    not read, the typed values handed out`, with `why`, and for a throw the error's class, never its message or
+    code). The console keeps none of a source's text and logs nothing the program wrote.
 - `standalonePage({title, body, brand: {label, href, icon?}, groups?, current?, login?, signOut?, dialog?, refresh?, styles?, scripts?})`
   from `server.mjs`: a page of the program's that stands outside any console, such as a first visit before there is a
   console to be in. It is the settings pages' frame drawn by the server, the program's name (and its mark, `icon`, a path) heading the side list in
@@ -3215,8 +3218,8 @@ filled only in a private session, from its owner's names; a shared or QA session
 404, and 503 while the store does not answer. The console logs `repoSettings: handed out` with the session, the project,
 the keys each layer gave and whether each has instructions. Where a program gives env files' installation values from
 a source of its own ("A program's source" above), `installation` is the source's text for each file it is on for, and
-the line also has `fromSource`, those files' keys (and `fromSourceUnnamed`, how many more the program answered that
-the console does not know as env files). The session writes them into its env files and rules
+the line also has `fromSource`, those files' keys (and `sourceKeysDropped`, how many keys the program answered that
+the console does not know as env files, which no session is handed). The session writes them into its env files and rules
 (session/README.md, "What a container does").
 
 The database template's seed (`session/dbAdmin.mjs`, `seedEnvFiles`) writes the env files its databases name from the

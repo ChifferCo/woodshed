@@ -578,17 +578,17 @@ test('a source that is off, or names no file, leaves the typed values; text that
   let answer;
   const warned = await captureLog(async () => { answer = await bad.repoSettings.forSession({ id: 'b2', project: 'app', owner: null }); });
   assert.deepEqual(answer.envFiles, {
-    'api-env': { installation: null, personal: null }, 'web-env-local': { installation: null, personal: null }, tools: { installation: null, personal: null },
+    'api-env': { installation: null, personal: null }, 'web-env-local': { installation: null, personal: null },
   }, 'none, never the typed text: the page says it is not used while the source is on');
   const refusals = warned.filter((l) => l.includes('repoSettings: env source text refused, the installation layer handed out as none'));
   assert.equal(refusals.length, 1, 'one line, counting them');
   assert.match(refusals[0], /refused: 3,\s+notAKey: 1,\s+notText: 1,\s+tooLarge: 1/);
   assert.ok(!refusals[0].includes('api-env') && !refusals[0].includes('Not A Key'), 'and naming none: a key is the program\'s text');
-  assert.match(warned.at(-1), /fromSource: \[ 'api-env', 'web-env-local' \],\s+fromSourceUnnamed: 1/, 'the project file\'s env files by name; one it does not name is handed on and counted');
+  assert.match(warned.at(-1), /fromSource: \[ 'api-env', 'web-env-local' \],\s+sourceKeysDropped: 1/, 'the project file\'s env files; a key it does not name is dropped and counted');
 
   // A hook that throws, or answers no object, says nothing of which sources are on.
   const thrown = Object.assign(new TypeError(`the vault is away\n${SECRET_MARK}`), { code: 'ECONNREFUSED' });
-  for (const [fail, said] of [[() => { throw thrown; }, /why: 'the hook threw',\s+error: 'TypeError',\s+code: 'ECONNREFUSED'/], [() => 'api-env', /why: 'answered string, not an object by env file key'/]]) {
+  for (const [fail, said] of [[() => { throw thrown; }, /why: 'the hook threw',\s+error: 'TypeError'\s+\}/], [() => 'api-env', /why: 'answered string, not an object by env file key'/]]) {
     const failing = setup({ envSources: { view: async () => null, forSession: async () => fail() } });
     await failing.repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
     const lines = await captureLog(async () => { answer = await failing.repoSettings.forSession({ id: 'c3', project: 'app', owner: null }); });
@@ -615,11 +615,15 @@ test('nothing a program\'s source wrote reaches the log: not a thrown message, a
   ];
   for (const answer of forSession) {
     const { repoSettings } = setup({ envSources: { view: async () => null, forSession: async () => answer() } });
+    let handed;
     const lines = await captureLog(async () => {
       await typed(repoSettings);
-      await repoSettings.forSession({ id: 'a1', project: 'app', owner: null });
+      handed = await repoSettings.forSession({ id: 'a1', project: 'app', owner: null });
     });
     assert.ok(lines.some((l) => /repoSettings: env source(s not read| text refused)/.test(l)), 'the failure is logged');
+    // Nor the session, whose own start log names the keys it was handed: only env files the console knows.
+    assert.ok(Object.keys(handed.envFiles).every((key) => ['api-env', 'web-env-local'].includes(key)), 'a key the console does not know as an env file is not handed on');
+    assert.ok(!JSON.stringify(handed).includes(SECRET_MARK), 'and nothing of it is in the answer');
     assert.ok(!lines.join('\n').includes(SECRET_MARK), `forSession ${String(answer).slice(0, 40)}: ${lines.filter((l) => l.includes(SECRET_MARK)).join(' | ').replaceAll(SECRET_MARK, '<the secret>')}`);
   }
   const view = [
@@ -637,6 +641,16 @@ test('nothing a program\'s source wrote reaches the log: not a thrown message, a
     assert.equal(lines.filter((l) => l.includes('repoSettings: the program\'s env sources not given')).length, 1, 'the failure is logged');
     assert.ok(!lines.join('\n').includes(SECRET_MARK), `view ${String(answer).slice(0, 40)}: ${lines.filter((l) => l.includes(SECRET_MARK)).join(' | ').replaceAll(SECRET_MARK, '<the secret>')}`);
   }
+  // A key in an env file key's shape that the project file does not name, with text that could be used: dropped, counted.
+  const shaped = setup({ envSources: { view: async () => null, forSession: async () => ({ [LEAK]: 'A=1', 'web-env-local': 'B=2' }) } });
+  let handed;
+  const dropLines = await captureLog(async () => { handed = await shaped.repoSettings.forSession({ id: 'a1', project: 'app', owner: null }); });
+  assert.deepEqual(handed.envFiles, { 'web-env-local': { installation: 'B=2', personal: null } });
+  assert.match(dropLines.at(-1), /fromSource: \[ 'web-env-local' \],\s+sourceKeysDropped: 1/);
+  // With the project file unread, a source's key the console keeps no record for is not known either.
+  const unread = setup({ files: { ...FILES, app: new Error('GitHub did not answer') }, envSources: { view: async () => null, forSession: async () => ({ 'web-env-local': 'B=2' }) } });
+  await captureLog(async () => { handed = await unread.repoSettings.forSession({ id: 'a1', project: 'app', owner: null }); });
+  assert.deepEqual(handed.envFiles, {});
   // What the lines do say: the kind of thing that was wrong, in the console's words, and an error's class where it is a name.
   const said = setup({ envSources: { view: async () => ({ 'api-env': { label: '', on: true } }), forSession: async () => { throw Object.assign(new RangeError(LEAK), { code: 'ERR_VAULT_AWAY' }); } } });
   const lines = await captureLog(async () => {
@@ -644,7 +658,7 @@ test('nothing a program\'s source wrote reaches the log: not a thrown message, a
     await said.repoSettings.forSession({ id: 'a1', project: 'app', owner: null });
   });
   assert.match(lines[0], /the program's env sources not given \{\s+project: 'app',\s+why: 'a label is not 1 to 40 characters',\s+key: 'api-env'\s+\}/);
-  assert.match(lines[1], /env sources not read, the typed values handed out \{\s+sessionId: 'a1',\s+project: 'app',\s+why: 'the hook threw',\s+error: 'RangeError',\s+code: 'ERR_VAULT_AWAY'\s+\}/);
+  assert.match(lines[1], /env sources not read, the typed values handed out \{\s+sessionId: 'a1',\s+project: 'app',\s+why: 'the hook threw',\s+error: 'RangeError'\s+\}/, 'the class alone: a code is the program\'s text too');
 });
 
 test('a source that does not answer in time costs the session its source, not its start: the typed values are handed out', async () => {

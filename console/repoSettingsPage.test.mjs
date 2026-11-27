@@ -186,7 +186,7 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
       dispatchEvent: (e) => events.push({ type: e.type, inPage: walk(app).includes(e.detail?.node) }),
     }, console, location, history, URL, URLSearchParams, TextEncoder,
     CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init?.detail; } },
-    document: { getElementById: (id) => walk(app).find((e) => e.attrs.id === id) ?? null, activeElement: null, createElement: (tag) => (tag === 'template' ? template() : element(tag)) },
+    document: { head: element('head'), getElementById: (id) => walk(app).find((e) => e.attrs.id === id) ?? null, activeElement: null, createElement: (tag) => (tag === 'template' ? template() : element(tag)) },
     setTimeout: (fn) => setImmediate(fn), clearTimeout: () => {},
   });
   vm.runInContext(pickerSource, context);
@@ -791,17 +791,40 @@ test('a source that is off opens on the typed values, as they are used; its side
   assert.match(textOf(rowOf(bare.app, 'file-api-env')), /Vault sets API_URL\./, 'on with no controls: the keys it sets');
 });
 
-test('a source\'s controls stay the same node when the page is drawn again, and its scripts are loaded once', async () => {
-  const page = await loadPage({ envSources: vault({ scripts: ['/assets/vault.js', 'https://x.test/a.js'] }), opened: ['file-api-env'] });
-  const controls = walk(page.app).find((e) => e.className === 'host-groups');
-  assert.deepEqual(walk(controls).filter((e) => e.tag === 'script').map((e) => e.attrs.src), ['/assets/vault.js'], 'paths on the console\'s address alone');
+test('a source\'s controls stay the same node when the page is drawn again, and its scripts are loaded once, whichever rows are open', async () => {
+  // Two sources name one script, and neither row is open: it is loaded all the same, into the page's head.
+  const shared = { view: async () => ({ 'api-env': { label: 'Vault', on: true, keys: [], markup: trusted(VAULT_MARKUP), scripts: ['/assets/vault.js', 'https://x.test/a.js'] }, 'web-env-local': { label: 'Vault', on: true, keys: [], markup: trusted(VAULT_MARKUP), scripts: ['/assets/vault.js'] } }), forSession: async () => null };
+  const page = await loadPage({ envSources: shared, opened: [] });
+  const head = page.context.document.head;
+  assert.deepEqual(walk(head).filter((e) => e.tag === 'script').map((e) => e.attrs.src), ['/assets/vault.js'], 'once, a path on the console\'s address alone, with every row closed');
+  assert.equal(walk(page.app).some((e) => e.tag === 'script'), false, 'not in a panel, which is in the page only while its row is open');
+  // The second file's row alone is opened: its controls are drawn, and said.
+  openRow(page.app, 'file-web-env-local');
+  await settle();
+  const controls = walk(rowOf(page.app, 'file-web-env-local')).find((e) => e.className === 'host-groups');
+  assert.ok(controls);
+  assert.deepEqual(page.events, [{ type: 'woodshed:host-groups', inPage: true }]);
   page.context.window.Woodshed.postJson('/api/console-settings/repos/app/instructions', { text: 'Be brief.' });
-  pick(rowOf(page.app, 'file-api-env'), 'Typed here');
-  pick(rowOf(page.app, 'file-api-env'), 'Vault');
+  pick(rowOf(page.app, 'file-web-env-local'), 'Typed here');
+  pick(rowOf(page.app, 'file-web-env-local'), 'Vault');
   await settle();
   assert.equal(walk(page.app).find((e) => e.className === 'host-groups'), controls, 'kept, with what was typed in its forms');
   assert.equal(page.events.length, 1, 'drawn anew once');
-  assert.equal(page.wired.length, 1);
+  assert.equal(page.wired.filter((w) => w.node === controls).length, 1, 'wired once');
+  assert.equal(walk(head).filter((e) => e.tag === 'script').length, 1, 'not loaded again by a redraw');
+});
+
+test('clearing the typed values while a source is on says sessions still get the source\'s', async () => {
+  const page = await loadPage({ envSources: vault(), before: saveTyped, opened: ['file-api-env'] });
+  pick(rowOf(page.app, 'file-api-env'), 'Typed here');
+  await settle();
+  button(rowOf(page.app, 'file-api-env'), 'Show and edit').listeners.click();
+  await settle();
+  button(rowOf(page.app, 'file-api-env'), 'Clear').listeners.click();
+  await settle();
+  assert.match(textOf(rowOf(page.app, 'file-api-env')), /Cleared\. Sessions still get this file's values from Vault\./);
+  assert.doesNotMatch(textOf(rowOf(page.app, 'file-api-env')), /the repo's defaults alone/);
+  assert.equal(page.secrets.values.has('repos/app/env/api-env'), false);
 });
 
 // Everything a page draws, as text: its tags, attributes, classes and words, but when a value was saved, which is each load's own.

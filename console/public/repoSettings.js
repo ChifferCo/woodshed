@@ -161,6 +161,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
       const f = fileOf(key);
       if (text.trim() && f?.source?.on) return `Saved. They are kept, but no session gets them while ${f.source.label} is on.`;
       if (text.trim()) return `Saved. The next session on ${view.repo} writes them into ${f ? andList(pathsOf(f)) : key}; running ones keep theirs.`;
+      if (f?.source?.on) return `Cleared. Sessions still get this file's values from ${f.source.label}.`;
       return 'Cleared. Sessions get the repo\'s defaults alone.';
     });
   }
@@ -202,7 +203,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
   // are (hostGroups): the same node until the markup changes, so what is typed in its forms survives a redraw. With
   // no controls, the keys it sets.
   function sourcePanel(f) {
-    const { html, scripts } = f.source;
+    const { html } = f.source;
     if (!html) return f.source.on ? L.sourceKeys(f.source) : h('p', { class: 'layer-text is-none' }, `${f.source.label} is off for this file.`);
     let kept = sourceNodes.get(f.key);
     if (kept?.html !== html) {
@@ -211,11 +212,6 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
       const node = h('div', { class: 'host-groups' });
       node.append(template.content);
       window.WoodshedHostRows?.wire(node, { hash: false });
-      for (const src of scripts ?? []) {
-        if (repoPageScripts.has(src)) continue;
-        repoPageScripts.add(src);
-        node.append(h('script', { src }));
-      }
       kept = { html, node, said: false };
       sourceNodes.set(f.key, kept);
     }
@@ -225,6 +221,18 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
       sourcesRedrawn.push(kept.node);
     }
     return kept.node;
+  }
+
+  // The scripts the sources' controls name, loaded once for the document, into its head: not into a panel, which is in
+  // the page only while its row is open on the source's side, so a script two sources share would wait on the first's.
+  function loadSourceScripts() {
+    for (const f of view.envFiles) {
+      for (const src of f.source?.scripts ?? []) {
+        if (repoPageScripts.has(src)) continue;
+        repoPageScripts.add(src);
+        document.head.append(h('script', { src }));
+      }
+    }
   }
 
   // The typed values while a source is on: kept, and handed to no session, the keys the source leaves out included.
@@ -557,6 +565,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
       hostRedrawn = false;
       window.dispatchEvent(new CustomEvent('woodshed:host-groups', { detail: { node: hostNode } }));
     }
+    loadSourceScripts();
     // The same for each env file's source whose controls were drawn anew.
     for (const node of sourcesRedrawn.splice(0)) window.dispatchEvent(new CustomEvent('woodshed:host-groups', { detail: { node } }));
     for (const key of editors.keys()) updateCounts(key);
