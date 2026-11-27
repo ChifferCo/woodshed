@@ -286,7 +286,7 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
   }
 
   const keyOf = (project) => `${project.name}\n${project.repo}`;
-  const logRefreshFailed = (project) => (err) => console.warn('analytics: refresh failed, keeping the last read', { project: project.name, message: ghSaid(err) });
+  const logRefreshFailed = (project, kept = true) => (err) => console.warn(kept ? 'analytics: refresh failed, keeping the last read' : 'analytics: first read failed', { project: project.name, message: ghSaid(err) });
 
   // The saved read at once, whatever its age. With none the viewer waits for the first. One past REFRESH_MS old starts a
   // new read in the background, unless one is running or just failed.
@@ -311,7 +311,7 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
       const key = keyOf(project);
       const held = reads.get(key);
       if (held?.reading) continue;
-      startRead(project, key, held).catch(logRefreshFailed(project));
+      startRead(project, key, held).catch(logRefreshFailed(project, Boolean(held?.value)));
       started++;
     }
     return started;

@@ -282,12 +282,17 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
       h('p', { class: 'foot' }, 'Lines changed are a rough size of each pull request, not a measure of anyone\'s work. A pull request opened by a bot is left out unless a session opened it.')));
   }
 
-  // Only the answer for the window picked last is drawn: an older read that lands after it is dropped.
+  // Only the answer for the window picked last is drawn: an older read that lands after it is dropped, whichever call asked.
+  // Every answer kept that says a refresh is running schedules the next ask, so the page follows it to its end whether it
+  // was the first load, a window click, the button or an earlier ask.
   let asking = 0;
-  async function refresh() {
+  async function refresh({ quiet = false } = {}) {
+    clearTimeout(pollTimer);
     const mine = ++asking;
-    loading = true;
-    render();
+    if (!quiet) {
+      loading = true;
+      render();
+    }
     try {
       const body = await W.getJson(`/api/analytics?days=${days()}`);
       if (mine !== asking || life.ended) return;
@@ -298,12 +303,18 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
       loadError = err.message;
     }
     loading = false;
+    // Keep asking while a read runs. After a failed ask, only while the button's own read is awaited (a bounded few tries).
+    if (data?.refreshing || (clickedRefresh && loadError && ++retries <= 5)) pollTimer = setTimeout(() => refresh({ quiet: true }), 3000);
+    else clickedRefresh = false;
+    if (!loadError && data?.refreshing === false) retries = 0;
     render();
   }
 
-  // The button: the console reads GitHub again in the background, and the page asks every few seconds until it is done.
+  // The button: the console reads GitHub again in the background, then the page follows it.
+  let retries = 0;
   async function refreshNow() {
     clickedRefresh = true;
+    retries = 0;
     render();
     try {
       await W.postJson('/api/analytics/refresh', {});
@@ -313,25 +324,9 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
       render();
       return;
     }
-    await poll();
-  }
-  // Reads the page's data again while a refresh runs, so the new numbers and time appear by themselves.
-  async function poll() {
-    clearTimeout(pollTimer);
-    if (life.ended) return;
-    try {
-      const body = await W.getJson(`/api/analytics?days=${days()}`);
-      if (life.ended) return;
-      data = body;
-      loadError = null;
-    } catch (err) {
-      loadError = err.message;
-    }
-    if (data?.refreshing) pollTimer = setTimeout(poll, 3000);
-    else clickedRefresh = false;
-    render();
+    await refresh({ quiet: true });
   }
 
   render();
-  refresh().then(() => { if (data?.refreshing) pollTimer = setTimeout(poll, 3000); });
+  refresh();
 });
