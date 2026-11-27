@@ -46,7 +46,7 @@ function report() {
   return { ...analyticsReport({ records, pulls, members: ['ana', 'bo'], days: 30, now: NOW }), windows: [7, 30, 90], projects: ['api', 'web'], failed: [], truncated: false };
 }
 
-async function loadPage(data) {
+async function loadPage(data, { getJson = async () => data, postJson, timers = { setTimeout, clearTimeout } } = {}) {
   const app = element('div');
   const h = (tag, attrs, ...children) => {
     const el = element(tag);
@@ -63,10 +63,10 @@ async function loadPage(data) {
   const W = {
     h, scopePill: () => element('span'), person: (l) => `@${l}`, personText: (l) => `@${l}`,
     settingsPage: (_match, start) => start(app, { nav: () => element('nav'), ended: false }),
-    getJson: async () => data,
+    getJson, ...(postJson ? { postJson } : {}),
   };
   const window = { Woodshed: W, location, history: { replaceState: (_a, _b, url) => { location.search = url.includes('?') ? url.slice(url.indexOf('?')) : ''; } } };
-  const context = vm.createContext({ window, document: { createElementNS: (_ns, tag) => element(tag) }, URLSearchParams, setTimeout, clearTimeout });
+  const context = vm.createContext({ window, document: { createElementNS: (_ns, tag) => element(tag) }, URLSearchParams, ...timers });
   for (const f of ['settingsRows.js', 'analyticsDays.js', 'analytics.js']) vm.runInContext(read(f), context);
   for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
   const buttons = () => walk(app).filter((e) => e.tag === 'button');
@@ -130,4 +130,33 @@ test('Human reviewed keeps those a person reviewed, No human review keeps those 
   assert.equal(none.length, 64);
   assert.ok(none.every((r) => textOf(r).includes('No human') && !textOf(r).includes('Not known')));
   assert.equal(page.walk().filter((e) => e.tag === 'span' && textOf(e) === 'Not known').length, 0);
+});
+
+test('Refresh posts to the console, shows Refreshing… while the read runs, and returns with the new time', async () => {
+  const before = { ...report(), asOf: '2026-11-01T00:00:00.000Z', refreshing: false, refreshFailed: false };
+  const after = { ...before, asOf: '2026-11-02T00:00:00.000Z' };
+  const answers = [{ ...before, refreshing: true }, after];
+  const posts = [];
+  let gets = 0;
+  const queue = [];
+  const page = await loadPage(before, {
+    getJson: async () => { gets += 1; return gets === 1 ? before : answers.shift(); },
+    postJson: async (url, body) => { posts.push([url, body]); return { started: 1 }; },
+    timers: { setTimeout: (fn) => { queue.push(fn); return queue.length; }, clearTimeout() {} },
+  });
+  const label = () => page.buttons().map((b) => textOf(b).trim()).filter((t) => /^Refresh/.test(t));
+  const asOf = () => textOf(page.walk().find((e) => /analytics-asof/.test(e.className))).replace(/\s*Refresh.*$/, '');
+  const first = asOf();
+  assert.deepEqual(label(), ['Refresh']);
+  page.click('Refresh');
+  assert.equal(JSON.stringify(posts), '[["/api/analytics/refresh",{}]]', 'the click posts to the console');
+  for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(label(), ['Refreshing…'], 'disabled while the console reads');
+  assert.equal(page.buttons().find((b) => /^Refreshing/.test(textOf(b))).attrs.disabled, '');
+  assert.equal(queue.length, 1, 'the page asks again later');
+  queue.shift()();
+  for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(label(), ['Refresh'], 'enabled again');
+  assert.ok(first.startsWith('Pull requests as of') && asOf() !== first, 'with the page showing the data as of the new read');
+  assert.equal(queue.length, 0, 'and it stops asking');
 });

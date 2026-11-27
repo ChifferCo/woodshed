@@ -323,16 +323,16 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
 
   /**
    * Reads the repos again now, in the background, for the button on the page: those not already being read.
-   * @param {{repos?: string[]|null}} opts  as for report
+   * @param {{repos?: string[]|null, missing?: boolean}} opts  as for report; `missing`: only those with no read yet
    * @returns {number}  how many reads it started
    */
-  function refresh({ repos = null } = {}) {
+  function refresh({ repos = null, missing = false } = {}) {
     const allowed = repos ? new Set(repos.map(lower)) : null;
     let started = 0;
     for (const project of allProjects(config).filter((p) => p.repo && (!allowed || allowed.has(lower(p.repo))))) {
       const key = keyOf(project);
       const held = reads.get(key);
-      if (held?.reading) continue;
+      if (held?.reading || (missing && held?.value)) continue;
       startRead(project, key, held).catch(logRefreshFailed(project, Boolean(held?.value)));
       started++;
     }

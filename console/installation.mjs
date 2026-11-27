@@ -550,12 +550,11 @@ export async function createInstallation({ config: loaded, store, provider, trus
     return reviewSources.get(key)(session);
   };
   // The Analytics page's read is kept in memory, so a restart (each deploy) empties it and the first viewer waits for the
-  // whole 90 days from GitHub. Read it once the console is up, in the background, so that view finds it warm.
+  // whole 90 days from GitHub. start() reads it in the background, so that view finds it warm.
   const analytics = createAnalytics({
     config, sessions: () => fleet.sessions(), state: () => store.state, githubFor, gatesOf: fileGatesOf,
     members: () => (members ? members.view().members.map((m) => m.login) : []),
   });
-  setTimeout(() => analytics.refresh(), ANALYTICS_WARM_MS).unref();
   // Session apps on ports of the console's own name, where it has one name and nobody signs in (appPorts.mjs).
   const appPorts = config.appPorts?.length ? createAppPorts({
     store, config, isActive: (id) => ACTIVE_STATUSES.has(fleet.find(id)?.status),
@@ -661,6 +660,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (config.launcher.kind === 'docker' && !tokens && !config.sessionEnv.GH_TOKEN) {
       console.warn('console: sessions push with the console\'s own gh token; set GH_TOKEN in the session env file to give them a narrower one');
     }
+    setTimeout(() => analytics.refresh({ missing: true }), ANALYTICS_WARM_MS).unref();
     repoSettings.moveOwnFiles().catch((err) => console.error('repoSettings: own files not moved', { message: String(err?.message ?? err).split('\n')[0] }));
     loops.every(60 * 60_000, 'attachments sweep', () => attachments.sweep());
     if (qaRecordings) loops.every(60 * 60_000, 'QA recordings sweep', () => qaRecordings.sweep());
@@ -692,6 +692,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     // The port a tainted session leaves through, on the session API's address (server.mjs listens).
     egressProxy: egressProxy && sessionApi ? { server: egressProxy, port: loaded.egress.port } : null,
     appPorts,
+    analytics,
     start,
     /** Stops the loops; requests already in flight finish. */
     stop: () => { members?.stop?.(); loops.stop(); },
