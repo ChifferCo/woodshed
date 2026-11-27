@@ -404,7 +404,7 @@ is seen at the next tick, up to 10 s.
 The page keeps the stream only while its tab shows: over HTTP/1 a browser allows six connections to the console for
 all its tabs. It polls `GET /api/sessions` every 30 s while the stream is open, and every 5 s as before when it is
 not (refused by a console from before it, cut by a proxy, or reconnecting: the browser opens it again a second after
-it drops). Before each send the stream's own request is signed in again, as every request is: someone signed out or
+it drops). Before the opening list and each send after it, the stream's own request is signed in again, as every request is (a check that has not answered in 2 s is a no, and holds up no other stream): someone signed out or
 taken off People gets nothing more and the stream ends, and so does a stream opened with no sign-in once the console
 starts requiring one. Behind a hosting proxy the console cannot tell on its own that the program took someone out
 while their identity header is still good, so a hosted console pushes the list only when the program gives the
@@ -2408,8 +2408,8 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   and logs `repoSettings: the program's groups not given`; the page is shown without them.
 - `stillSignedIn({login, headers})`, behind `trusted` only: whether the person who opened a page's live session list
   (`GET /api/sessions/live`, "How the rail keeps up" above) is still signed in with the program, `true` or a promise of
-  it. The console asks it before each change it sends on that stream, with the headers of the request that opened it,
-  and ends the stream on anything but `true` or a throw. The identity header the stream opened with stays good for its
+  it. The console asks it before the opening list and each change it sends on that stream, with the headers of the request that opened it,
+  and refuses or ends the stream on anything but `true`, a throw, or no answer in 2 s. The identity header the stream opened with stays good for its
   minute after the program took someone out, so without this hook a hosted console sends no live list at all
   (`GET /api/sessions/live` answers 404) and its pages poll every 5 s, each poll signed in afresh by the program. It is
   asked often, up to ten times a second for each open page while sessions change: answer from memory.

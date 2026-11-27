@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 
-import { createLiveSessions, DEBOUNCE_MS, diffList, MAX_AGE_MS, SWEEP_MS } from './liveSessions.mjs';
+import { CHECK_TIMEOUT_MS, createLiveSessions, DEBOUNCE_MS, diffList, MAX_AGE_MS, SWEEP_MS } from './liveSessions.mjs';
 
 const list = (sessions, extra = {}) => ({ login: 'joel', running: sessions.filter((s) => s.state === 'working').length, ...extra, sessions });
 
@@ -60,9 +60,9 @@ function setup(sessions) {
     onChange: (fn) => { listener = fn; },
     later: timers.later, cancel: timers.cancel, now: () => clock,
   });
-  const open = (login = 'joel', opts = {}) => {
+  const open = async (login = 'joel', opts = {}) => {
     const res = fakeResponse();
-    live.handle(new EventEmitter(), res, login, opts);
+    await live.handle(new EventEmitter(), res, login, opts);
     return res;
   };
   return { live, timers, open, asked, changed: () => listener(), advance: (ms) => { clock += ms; } };
@@ -71,7 +71,7 @@ function setup(sessions) {
 test('a page gets the whole list first, then each change within a moment of the fleet making it', async () => {
   const sessions = [{ id: 'aaaa1111', state: 'done' }];
   const { live, open, timers, changed, asked } = setup(sessions);
-  const res = open();
+  const res = await open();
   assert.equal(res.head.status, 200);
   assert.equal(res.head.headers['content-type'], 'text/event-stream; charset=utf-8');
   assert.equal(res.head.headers['x-accel-buffering'], 'no', 'a proxy in front would hold the events back');
@@ -89,7 +89,7 @@ test('a page gets the whole list first, then each change within a moment of the 
 test('what changes outside the fleet is found by the sweep, and a quiet list sends nothing', async () => {
   const sessions = [{ id: 'aaaa1111', state: 'done', pr: null }];
   const { live, open, timers } = setup(sessions);
-  const res = open();
+  const res = await open();
   timers.run(SWEEP_MS);
   await live.settled();
   assert.equal(res.events().length, 1);
@@ -102,9 +102,9 @@ test('what changes outside the fleet is found by the sweep, and a quiet list sen
 
 test('a stream ends after five minutes, for the browser to open it again signed in afresh, and all end at the stop', async () => {
   const { live, open, timers, advance } = setup([{ id: 'aaaa1111', state: 'done' }]);
-  const old = open();
+  const old = await open();
   advance(MAX_AGE_MS);
-  const fresh = open();
+  const fresh = await open();
   timers.run(SWEEP_MS);
   await live.settled();
   assert.equal(old.ended, true);
@@ -119,7 +119,7 @@ test('a stream ends after five minutes, for the browser to open it again signed 
 test('a page that went is not written to again', async () => {
   const sessions = [{ id: 'aaaa1111', state: 'done' }];
   const { live, open, timers, changed } = setup(sessions);
-  const res = open();
+  const res = await open();
   res.emit('close');
   assert.equal(live.open(), 0);
   sessions[0].state = 'working';
@@ -133,7 +133,7 @@ test('a stream whose sign-in no longer lets it in gets nothing more, and ends', 
   const sessions = [{ id: 'aaaa1111', state: 'done' }];
   const { live, open, timers, changed } = setup(sessions);
   let member = true;
-  const res = open('joel', { stillAllowed: async () => member });
+  const res = await open('joel', { stillAllowed: async () => member });
   member = false;
   sessions[0].state = 'working';
   changed();
@@ -142,4 +142,36 @@ test('a stream whose sign-in no longer lets it in gets nothing more, and ends', 
   assert.equal(res.events().length, 1, 'only the list it had when it was let in');
   assert.equal(res.ended, true);
   assert.equal(live.open(), 0);
+});
+
+test('a stream whose sign-in no longer lets it in when it opens is refused before the list is read', async () => {
+  const { live, open, asked } = setup([{ id: 'aaaa1111', state: 'done', owner: 'joel' }]);
+  for (const stillAllowed of [async () => false, async () => { throw new Error('the host did not answer'); }]) {
+    const res = await open('joel', { stillAllowed });
+    assert.equal(res.head.status, 401);
+    assert.equal(res.events().length, 0);
+    assert.ok(!res.chunks.join('').includes('aaaa1111'), 'no session in it');
+  }
+  assert.deepEqual(asked, [], 'the list was never read');
+  assert.equal(live.open(), 0);
+});
+
+test('a sign-in check that does not answer ends its own stream, and holds up no other', async () => {
+  const sessions = [{ id: 'aaaa1111', state: 'done' }];
+  const { live, open, timers, changed } = setup(sessions);
+  let stall = false;
+  const slow = await open('joel', { stillAllowed: () => (stall ? new Promise(() => {}) : true) });
+  const other = await open('mia');
+  stall = true;
+  sessions[0].state = 'working';
+  changed();
+  timers.run(DEBOUNCE_MS);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(other.events().map((e) => e.event), ['full', 'patch'], 'sent while the other check still waits');
+  assert.equal(slow.events().length, 1);
+  timers.run(CHECK_TIMEOUT_MS);
+  await live.settled();
+  assert.equal(slow.ended, true, 'no answer in time is a no');
+  assert.equal(slow.events().length, 1);
+  assert.equal(other.ended, false);
 });

@@ -3352,8 +3352,14 @@ test('a hosted console pushes the live list only when its host says who is still
   assert.equal((await getWith(unasked.port, '/api/sessions', { [IDENTITY_HEADER]: identity() })).status, 200);
 
   const asked = [];
-  let signedIn = true;
+  let signedIn = false;
   const hosted = await serve({ stillSignedIn: async ({ login, headers }) => { asked.push({ login, identity: Boolean(headers[IDENTITY_HEADER]) }); return signedIn; } });
+  // Signed by the proxy just before the program took them out: the identity checks out, the program says no.
+  const refused = await openLiveStream(hosted.port, { [IDENTITY_HEADER]: identity() });
+  assert.equal(refused.res.statusCode, 401);
+  assert.ok(await refused.until(() => refused.ended()));
+  assert.ok(!refused.body().includes(mine.id), 'no session in the answer');
+  signedIn = true;
   const stream = await openLiveStream(hosted.port, { [IDENTITY_HEADER]: identity() });
   assert.equal(stream.res.statusCode, 200);
   assert.ok(await stream.until(() => stream.body().includes('event: full')));

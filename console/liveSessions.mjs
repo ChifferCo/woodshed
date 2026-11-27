@@ -19,6 +19,9 @@ export const HEARTBEAT_MS = 25_000;
 export const MAX_AGE_MS = 5 * 60_000;
 // How soon the browser opens a stream again after it ends.
 const RETRY_MS = 1_000;
+// A sign-in check (an embedding program's stillSignedIn among them) that has not answered in this long is a no: the
+// stream ends, and the browser opens it again, checked afresh.
+export const CHECK_TIMEOUT_MS = 2_000;
 
 /**
  * What changed between two lists, as a patch, or null when nothing did. Each session is compared field by field, and
@@ -95,32 +98,39 @@ export function createLiveSessions({ bodyFor, onChange = null, later = setTimeou
     return flushing;
   }
 
+  // Every stream on its own: one whose sign-in check is slow holds up none of the others.
   async function flushAll() {
-    for (const stream of [...streams]) {
-      if (now() - stream.openedAt >= MAX_AGE_MS) {
-        end(stream);
-        continue;
-      }
-      let allowed;
-      try {
-        allowed = await stream.stillAllowed();
-      } catch {
-        allowed = false;
-      }
-      if (!streams.has(stream)) continue;
-      if (!allowed) {
-        console.log('liveSessions: stream ended, its sign-in no longer lets it in', { login: stream.login });
-        end(stream);
-        continue;
-      }
-      try {
-        const { patch, sent } = diffList(stream.sent, bodyFor(stream.login));
-        stream.sent = sent;
-        if (patch) write(stream, 'patch', patch);
-      } catch (err) {
-        console.error('liveSessions: list not sent', { login: stream.login, message: String(err?.message ?? err).split('\n')[0] });
-        end(stream);
-      }
+    await Promise.all([...streams].map(flushOne));
+  }
+
+  async function flushOne(stream) {
+    if (now() - stream.openedAt >= MAX_AGE_MS) return end(stream);
+    const allowed = await allows(stream.stillAllowed);
+    if (!streams.has(stream)) return;
+    if (!allowed) {
+      console.log('liveSessions: stream ended, its sign-in no longer lets it in', { login: stream.login });
+      return end(stream);
+    }
+    try {
+      const { patch, sent } = diffList(stream.sent, bodyFor(stream.login));
+      stream.sent = sent;
+      if (patch) write(stream, 'patch', patch);
+    } catch (err) {
+      console.error('liveSessions: list not sent', { login: stream.login, message: String(err?.message ?? err).split('\n')[0] });
+      end(stream);
+    }
+  }
+
+  // Whether a sign-in check says yes, in time: anything but true, a throw or no answer in CHECK_TIMEOUT_MS is a no.
+  async function allows(check) {
+    let timer = null;
+    const late = new Promise((resolve) => { timer = unref(later(() => resolve(false), CHECK_TIMEOUT_MS)); });
+    try {
+      return (await Promise.race([Promise.resolve().then(check), late])) === true;
+    } catch {
+      return false;
+    } finally {
+      cancel(timer);
     }
   }
 
@@ -158,9 +168,18 @@ export function createLiveSessions({ bodyFor, onChange = null, later = setTimeou
      * @param {import('node:http').ServerResponse} res
      * @param {string|null} login
      * @param {{stillAllowed?: () => boolean|Promise<boolean>}} [opts]  whether the request that opened the stream still
-     *   signs in as `login`, asked before each send
+     *   signs in as `login`, asked before anything is sent, the opening list included, and before each send after
+     * @returns {Promise<void>}
      */
-    handle(req, res, login, { stillAllowed = () => true } = {}) {
+    async handle(req, res, login, { stillAllowed = () => true } = {}) {
+      // A hosted request signed just before the program took its person out passes the console's own check: the
+      // program's is asked before the list is so much as read.
+      if (!(await allows(stillAllowed))) {
+        console.log('liveSessions: stream refused, its sign-in no longer lets it in', { login });
+        res.writeHead(401, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ error: 'sign in first' }));
+        return;
+      }
       let body;
       try {
         body = bodyFor(login);
