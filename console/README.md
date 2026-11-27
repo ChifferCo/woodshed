@@ -608,7 +608,21 @@ And what the shed shows about each session:
   the browser, and whether a session opens on Chat or TUI, one choice for a
   desktop and one for a phone, kept for you on every device; **⇧⌘O** (or **N**) is
   New session; **G** then **M**, **E** or **S** goes to My Woodshed, shared
-  sessions or My settings. Ctrl works for ⌘ outside a terminal, and the pages
+  sessions or My settings. On the session pages, **⌘ tapped twice** (Ctrl off a
+  Mac), alone and within 0.4 s, turns on a mode for moving through the
+  sessions, as Herdr's prefix and navigate mode, wherever the focus is, typing
+  in Chat or in a terminal (a modifier alone sends a terminal nothing, and no
+  browser or OS takes the double tap): **J** and **K** (or **↓** and **↑**) open
+  the next and previous session in the rail as it is drawn, skipping folded
+  zones; **1** to **4** pick the pane bar's tabs by their place and end the
+  mode, the tab taking the keys; **N** opens the next session that needs you.
+  The mode stays on, the toast's place saying so, until Esc (which goes no
+  further, not to a terminal), a click, a toast, the double tap again, or any
+  other key, which then does what it would have. Outside the mode these keys
+  move nothing and keep what they did before: **N** alone is still New
+  session. A tap is the key pressed and let go with nothing else pressed between,
+  so ⌘K or Ctrl+C twice is never one.
+  Ctrl works for ⌘ outside a terminal, and the pages
   write the keys as Ctrl on Windows and Linux. A key alone works only while
   nothing takes typing, and never inside a terminal or the Review, whose
   frame gets the ⌘ keys alone. Which key does what is

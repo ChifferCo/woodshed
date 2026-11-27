@@ -23,6 +23,9 @@
   // Which page: /, /all or a session's. They are one page, so moving between them changes these, not the document
   // (navigate, below). /?new=1 is New session as a screen of its own on a phone, where / is the list alone.
   let id = null;
+  // The mode's moves (moveSession, below) keep focus out of the session they open, and whether the navigate running now is one.
+  let movingByKey = false;
+  let keyMove = false;
   let onMy = false;
   let onShared = false;
   let onNew = false;
@@ -389,6 +392,9 @@
   // and nothing flashes while a new document loads. The address changes as a link's would, and Back returns.
   const SHELL_PATH_RE = /^\/(all|s\/[0-9a-f]{8})?$/;
   function navigate(href) {
+    // Any move but the mode's own (moveTo) lets a session take focus again, so a session opened from the palette or a card
+    // focuses its Chat field as before.
+    if (!keyMove) movingByKey = false;
     const url = new URL(href, window.location.href);
     if (url.origin !== window.location.origin || !SHELL_PATH_RE.test(url.pathname)) {
       window.location.href = url.href;
@@ -420,7 +426,7 @@
     // For what follows the page's address without drawing it (notificationBell.js).
     window.dispatchEvent(new Event('woodshed:route'));
   }
-  window.addEventListener('popstate', moved);
+  window.addEventListener('popstate', () => { movingByKey = false; moved(); });
   // Going away altogether (My settings, another page of the console, a reload, closing the browser tab) puts the tab
   // aside for the next shell page, which keeps it unless that was a reload (sessionTabs.cjs, takeLeaving). After a
   // sign-out or an account change nothing is put aside (W.signingOut).
@@ -1891,8 +1897,101 @@
   // For a menu another module draws a button for, such as Start app's pick of several apps (common.js).
   W.openMenu = openCardMenu;
 
+  // The keys of the double tap's mode that move through the sessions (keys.cjs): J and K go down and up the rail as it is drawn, so a
+  // folded zone is skipped as the eye skips it, and N goes to the next session after this one that needs you, in the same
+  // order, then any of the rail's folded zones hide. Each cycles round at the end.
+  // A session is where its own card is; a copy (one asking its person, in Needs you) counts only when its own card is
+  // not drawn, as when its group is folded.
+  function railOrder() {
+    const cards = slots.railBody ? [...slots.railBody.querySelectorAll('.rcard[data-session]')] : [];
+    const own = new Set(cards.filter((c) => !c.classList.contains('is-copy')).map((c) => c.dataset.session));
+    const ids = [...new Set(cards.filter((c) => !c.classList.contains('is-copy') || !own.has(c.dataset.session)).map((c) => c.dataset.session))];
+    return ids.map((sid) => data?.sessions.find((s) => s.id === sid)).filter(Boolean);
+  }
+  function after(list, step) {
+    if (!list.length) return null;
+    const at = list.findIndex((s) => s.id === id);
+    if (at < 0) return step > 0 ? list[0] : list[list.length - 1];
+    return list[(at + step + list.length) % list.length];
+  }
+  // As in Herdr, moving is a mode of its own: the session a key opened takes no focus (Chat's field, its terminal), so
+  // the next J moves on rather than typing a j. A tab key, or a click anywhere, ends it.
+  W.movingByKey = () => movingByKey;
+  document.addEventListener('pointerdown', () => { movingByKey = false; }, true);
+  function moveTo(s) {
+    movingByKey = true;
+    // The field or terminal the focus was in stays on the page for the next session: it must let go of it.
+    document.activeElement?.blur?.();
+    window.focus();
+    keyMove = true;
+    // On a phone, Everyone's status chip lives in the address (railStatus): the session opened keeps it, so the next key
+    // moves within it still.
+    const status = !railMine() && narrow.matches ? railStatus() : 'all';
+    const href = sessionHref(s);
+    const to = status === 'all' ? href : `${href}${href.includes('?') ? '&' : '?'}status=${encodeURIComponent(status)}`;
+    try {
+      navigate(to);
+    } finally {
+      keyMove = false;
+    }
+  }
+  function moveSession(step) {
+    const next = after(railOrder(), step);
+    if (next && next.id !== id) moveTo(next);
+  }
+  // The sessions this rail lists (Mine or Everyone, on the project picked), so N never opens one the other rail has:
+  // those drawn first, in their order, then the ones in folded zones.
+  function nextNeedsYou() {
+    const drawn = railOrder();
+    const onProject = railProject();
+    // As railBody draws it: on a phone, Everyone's status chip leaves out the other statuses (Unassigned stays).
+    const status = !railMine() && narrow.matches ? railStatus() : 'all';
+    const inStatus = (s) => status === 'all' || W.group(s) === status || (!railMine() && W.isUnassigned(s) && !W.isPullCheck(s));
+    const listed = data ? railListing().filter((s) => (!onProject || s.project === onProject) && inStatus(s)) : [];
+    const order = [...drawn, ...listed.filter((s) => !drawn.includes(s))];
+    // The one shown stays in the list, so the next is the one after it, and it alone is "nothing else".
+    const waiting = order.filter((s) => W.needsYou(s) || s.id === id);
+    const next = after(waiting, 1);
+    if (!next || next.id === id) W.shell.toast('Nothing else needs you');
+    else moveTo(next);
+  }
+  // The pane bar's tabs, by their place on it: a click on the button, so a pair (Terminal, Review) opens the view of it
+  // last open, as a click does. `onlyAsk` says whether there is such a tab without pressing it.
+  function showTab(n, onlyAsk = false) {
+    const button = id ? slots.head?.querySelectorAll('.ptabs .ptab')[n - 1] : null;
+    if (onlyAsk || !button) return Boolean(button);
+    if (button.disabled) {
+      W.shell.toast(button.title || `${button.textContent} is not there now`, { ms: 4000 });
+      return true;
+    }
+    movingByKey = false;
+    button.click();
+    // Into the tab, as Herdr's terminal mode: the chat's field, or the terminal, takes the keys (never on a phone).
+    if (!narrow.matches) {
+      requestAnimationFrame(() => {
+        if (tab === 'chat') chat.focus();
+        else if (tab === 'tui' || tab === 'terminal') shownTerminal()?.contentWindow?.term?.focus();
+        else {
+          // Review is a framed page: the frame takes the keys. Diff and App log are this page's panels: the panel does,
+          // so the arrows and Page Down scroll it.
+          const frame = tab === 'review' ? slots.review.querySelector('iframe') : null;
+          // A stopped session's Review is drawn into the pane itself, with no frame: the pane takes the keys then.
+          const panel = frame ? null : ({ diff: slots.diff, applog: slots.applog, review: slots.review })[tab];
+          if (frame) frame.focus();
+          else if (panel) {
+            panel.tabIndex = -1;
+            panel.focus({ preventScroll: true });
+          }
+        }
+      });
+    }
+    return true;
+  }
+
   W.shell.register({
-    sessions: paletteSessions, actions: paletteActions, toggleRail, railShown: () => !railHidden,
+    sessions: paletteSessions, actions: paletteActions, toggleRail, railShown: () => !railHidden, moveSession, nextNeedsYou, showTab,
+    // The mode ended (Esc, another key, a toast): the session shown may take focus again.
+    endMoving: () => { movingByKey = false; },
   });
 
   // What a phone's top bar puts in its ⋯ ahead of the card's: the app, the databases, and the key bar's switch.
@@ -2450,7 +2549,7 @@
       if (!frame) return;
       requestAnimationFrame(() => {
         frame.contentWindow?.dispatchEvent(new Event('resize'));
-        if (focus && !narrow.matches) frame.contentWindow?.term?.focus();
+        if (focus && !narrow.matches && !W.movingByKey?.()) frame.contentWindow?.term?.focus();
       });
     }
 
