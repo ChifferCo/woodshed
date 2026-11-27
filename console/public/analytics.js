@@ -451,10 +451,11 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
 
   // What the pull request data is as of, and a button to read GitHub again, off while a read is running.
   function freshness() {
-    if (!data?.asOf) return null;
+    // With every repo failed on a first visit there is no time to show, but the button still lets them try again.
+    if (!data?.asOf && !data?.failed?.length) return null;
     const running = data.refreshing || clickedRefresh;
     return h('p', { class: 'foot analytics-asof' },
-      `Pull requests as of ${stamp(data.asOf)}`,
+      data.asOf ? `Pull requests as of ${stamp(data.asOf)}` : 'Pull requests not read yet',
       !running && data.refreshFailed ? ' · the last refresh failed, showing the earlier read' : '',
       ' ',
       h('button', { type: 'button', class: 'btn btn-plain', disabled: running, onclick: refreshNow }, running ? 'Refreshing…' : 'Refresh'));
@@ -497,6 +498,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
   let asking = 0;
   async function refresh({ quiet = false } = {}) {
     clearTimeout(pollTimer);
+    if (life.ended) return;
     const mine = ++asking;
     if (!quiet) {
       loading = true;
@@ -513,9 +515,11 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     }
     loading = false;
     // Keep asking while a read runs. After a failed ask, only while the button's own read is awaited (a bounded few tries).
-    if (data?.refreshing || (clickedRefresh && loadError && ++retries <= 5)) pollTimer = setTimeout(() => refresh({ quiet: true }), 3000);
+    // A failed ask is tried again a few times in a row, whatever it was waiting for, then the page stops asking.
+    const again = loadError ? (data?.refreshing || clickedRefresh) && ++retries <= 5 : Boolean(data?.refreshing);
+    if (again) pollTimer = setTimeout(() => refresh({ quiet: true }), 3000);
     else clickedRefresh = false;
-    if (!loadError && data?.refreshing === false) retries = 0;
+    if (!loadError) retries = 0;
     render();
   }
 
