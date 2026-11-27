@@ -77,6 +77,7 @@ import { promisify } from 'node:util';
 
 import { parseTranscriptTail } from '../shared/sessionState.mjs';
 import { STATE_FILE } from './hookState.mjs';
+import { CHECK_EVERY_MS as STATE_CHECK_EVERY_MS, announcesState, createStateAnnouncer } from './stateAnnounce.mjs';
 import { readOpened } from './openedPulls.mjs';
 import { STOP_TIMEOUT_MS, SYNC_EVERY_MS, exchange, readState, syncOnce, writeState } from './settingsSync.mjs';
 import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs';
@@ -2212,6 +2213,17 @@ function main() {
     }), HOME_SAVE_EVERY_MS);
     // As the home's: none after the checkpoint, which may be Remove My Woodshed deleting what it kept.
     if (KEEPS_CONVERSATION) setInterval(() => { if (!homeSavesOver) saveConversationInTurn('periodic'); }, HOME_SAVE_EVERY_MS);
+  }
+  // The agents whose own hooks say what they do tell the console the moment it changes (stateAnnounce.mjs). A QA run's
+  // state is its script's, read from its pane.
+  if (announcesState({ consoleUrl: CONSOLE_URL, token: TOKEN, agent: AGENT, qa: QA })) {
+    const announcer = createStateAnnouncer({ stateFile: STATE_FILE, consoleUrl: CONSOLE_URL, token: TOKEN });
+    let checking = false;
+    setInterval(() => {
+      if (checking) return;
+      checking = true;
+      announcer.check().finally(() => { checking = false; });
+    }, STATE_CHECK_EVERY_MS).unref();
   }
   if (CONSOLE_URL && process.env.SESSION_KIND === 'private') {
     setInterval(() => syncSettings().catch((err) => {

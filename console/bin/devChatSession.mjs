@@ -143,7 +143,7 @@ function restoreEarlierHome(recordDir, restoredFile) {
  * restoredHome: the session starts from a Claude home holding an earlier session's conversation (restoreEarlierHome),
  * as a private session started while another runs does, and its stand-in writes nothing until it is sent a message
  */
-export async function startDevChatSession({ id, token, agent, nextPath, real = false, terminalToken = '', restoredHome = false }) {
+export async function startDevChatSession({ id, token, agent, nextPath, real = false, terminalToken = '', restoredHome = false, consoleUrl = '' }) {
   if (!onPath('tmux') || (real && (!onPath(agent) || !onPath('ttyd')))) return null;
   const ownCodexAuth = path.join(os.homedir(), '.codex', 'auth.json');
   if (real && agent === 'codex' && !fs.existsSync(ownCodexAuth)) {
@@ -263,7 +263,7 @@ exec '${process.execPath}' '${AGENT}' codex "\${CODEX_HOME:-$HOME/.codex}" "$PWD
   const child = spawn(process.execPath, [STATUSD], {
     env: {
       ...tmuxEnv, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, CODEX_HOME: codexHome,
-      AGENT: agent === 'claude' ? '' : agent, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
+      AGENT: agent === 'claude' ? '' : agent, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: consoleUrl,
       ...(grokHome ? { GROK_HOME: grokHome } : {}),
       // An ordinary session's, whatever kind of session the dev console itself runs in (a QA one's would never say done).
       SESSION_MODE: '',

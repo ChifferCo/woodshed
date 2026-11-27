@@ -108,7 +108,11 @@ const liveTerminal = await startDevTerminal({ id: TERMINAL_ID, terminalToken: `x
 const CODEX_CHAT_ID = 'c0de5e55';
 const CLAUDE_CHAT_ID = 'c1a0de00';
 const codexChat = await startDevChatSession({ id: CODEX_CHAT_ID, ...tokensOf(CODEX_CHAT_ID), agent: 'codex', nextPath: [twoApps.binDir, basePath].join(path.delimiter) });
-const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, ...tokensOf(CLAUDE_CHAT_ID), agent: 'claude', nextPath: [codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
+// With DEV_CONSOLE_SESSION_API_PORT, the stand-in claude's statusd reaches the console's session API there, as a
+// session's does: it tells the console of each state change (session/stateAnnounce.mjs), and saves its home and
+// conversation there too. Without it, it reaches no console, and is read at the console's own looks alone.
+const chatConsoleUrl = process.env.DEV_CONSOLE_SESSION_API_PORT ? `http://127.0.0.1:${process.env.DEV_CONSOLE_SESSION_API_PORT}` : '';
+const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, ...tokensOf(CLAUDE_CHAT_ID), agent: 'claude', consoleUrl: chatConsoleUrl, nextPath: [codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
 // Grok Build and OpenCode, private sessions of @local's: their records in their own shapes (devChatAgent.mjs).
 const GROK_CHAT_ID = '62000c0d';
 const OPENCODE_CHAT_ID = '0c0de0c0';

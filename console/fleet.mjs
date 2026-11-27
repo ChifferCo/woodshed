@@ -47,6 +47,12 @@ const STATUS_READS_AT_ONCE = 8;
 const LIVE_AFTER_SEND_MS = 30_000;
 // The first read after a send: claude's hook says it works a moment after the message is in.
 const FIRST_LIVE_READ_MS = 400;
+// A session that tells the console of its own state changes (session/stateAnnounce.mjs) is read for them at most this
+// often: one that told again sooner is read once more when it is up, so its last change is never missed.
+const ANNOUNCED_READ_EVERY_MS = 300;
+// While it works, such a session is still read this often: an Esc typed in its TUI tab, Herdr's own word, or a
+// background agent ending changes its state with no hook to tell of it.
+const ANNOUNCING_WORKING_READ_MS = 6_000;
 // How long statusd may take to type a private session's review feedback after getting it (it reads GitHub first).
 const GUARDED_SEND_WITHIN_MS = 20_000;
 // The quick look at a starting session: statusd answers at once on the same network, or is not up yet.
@@ -337,6 +343,10 @@ export function createFleet({
   const statusAskedAt = new Map();
   // Sessions read often until then (checkLive): the console sent them something.
   const liveUntil = new Map();
+  // Sessions that tell the console of their own state changes (stateChanged), and when each was last read for one: the
+  // live check leaves their working to them. Kept in memory: after a restart a session is read as before until it tells.
+  const announcing = new Map();
+  const announcedReadDue = new Set();
   // Sessions to read again as soon as the read in flight ends: it was asked for before what is to be seen happened.
   const readAgain = new Set();
   // Told of every change to a session, for the page's live list (liveSessions.mjs).
@@ -1370,14 +1380,43 @@ export function createFleet({
   // is skipped (readStatus), so it delays only its own.
   function checkLive() {
     for (const [id, until] of liveUntil) if (until <= now()) liveUntil.delete(id);
-    for (const id of statusAskedAt.keys()) {
-      const session = find(id);
-      if (!session || !ACTIVE_STATUSES.has(session.status)) statusAskedAt.delete(id);
+    for (const map of [statusAskedAt, announcing]) {
+      for (const id of map.keys()) {
+        const session = find(id);
+        if (!session || !ACTIVE_STATUSES.has(session.status)) map.delete(id);
+      }
     }
-    const live = state.sessions.filter((s) => s.status === 'running' && s.endpoint && (s.state === 'working' || liveUntil.has(s.id)));
+    // A session that tells of its own changes is read for them only every ANNOUNCING_WORKING_READ_MS while it works, for
+    // the changes no hook tells of; one just sent something, or holding a message back for it, every pass, since only a
+    // read sends what is held.
+    const workingDue = (s) => !announcing.has(s.id) || now() - (statusAskedAt.get(s.id) ?? -Infinity) >= ANNOUNCING_WORKING_READ_MS;
+    const live = state.sessions.filter((s) => s.status === 'running' && s.endpoint
+      && ((s.state === 'working' && workingDue(s)) || liveUntil.has(s.id) || s.pendingMessages?.length));
     for (const session of live) {
       readStatus(session).catch((err) => console.error('fleet: session check failed', { id: session.id, message: firstLine(err) }));
     }
+  }
+
+  /**
+   * The session says its agent's state changed (POST /state-changed, session/stateAnnounce.mjs): read it now, as the
+   * live check would, at most every ANNOUNCED_READ_EVERY_MS. What the card shows is still what the console reads.
+   * @param {object} session  the session whose token made the call
+   */
+  function stateChanged(session) {
+    if (session.status !== 'running' || !session.endpoint) return;
+    if (!announcing.has(session.id)) console.log('fleet: session tells of its own state changes', { id: session.id });
+    const last = announcing.get(session.id) ?? -Infinity;
+    if (now() - last < ANNOUNCED_READ_EVERY_MS) {
+      if (announcedReadDue.has(session.id)) return;
+      announcedReadDue.add(session.id);
+      later(() => {
+        announcedReadDue.delete(session.id);
+        stateChanged(session);
+      }, ANNOUNCED_READ_EVERY_MS - (now() - last));
+      return;
+    }
+    announcing.set(session.id, now());
+    readStatus(session, STATUS_TIMEOUT_MS, null, { again: true }).catch((err) => console.error('fleet: session check failed', { id: session.id, message: firstLine(err) }));
   }
 
   // While a start waits for room (waitsForRetry), its launcher may say how the wait is going, as steps: an embedding
@@ -3485,7 +3524,7 @@ export function createFleet({
 
   return {
     noteMessage, noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
-    onChange, soon, checkLive, createSession, conversationSaved, forgetConversations, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, keptMachine, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    onChange, soon, checkLive, stateChanged, createSession, conversationSaved, forgetConversations, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, keptMachine, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaLog, reviewLog, qaVideo, qaPoster, publicQaVideo, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

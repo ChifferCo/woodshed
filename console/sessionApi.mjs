@@ -34,6 +34,9 @@
 //                        404 when none is saved
 //   POST /progress       {"step": "<one of START_STEPS>"}  ->  204: a start step has finished, for the session page's
 //                        checklist. Sent in the background, so nothing in the session waits on it
+//   POST /state-changed  ->  204: the session's agent changed state (session/stateAnnounce.mjs), so the console reads
+//                        its statusd now (fleet.stateChanged) rather than at its next look. Says nothing of what
+//                        changed: the card shows only what the console reads
 //   POST /claude-settings  {"version", "changed", "removed"}  ->  {"version", "items"?}: a private session's changes to
 //                        its owner's shared Claude settings, and theirs from the owner's other sessions
 //                        (claudeSettings.mjs); 404 for a shared session, which has none
@@ -230,7 +233,7 @@ export function createSessionApi({
     }
     // Its own token, not the session token (sessionStarts.mjs).
     if (sessionStarts?.isPath(pathname)) return sessionStarts.handle(req, res);
-    const routes = ['/codex-auth', '/agent-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/conversation', '/progress', '/claude-settings', '/attachments', '/answer', '/issues', '/qa-report', '/qa-log', '/review-log', '/qa-video', '/qa-poster', '/review-report', '/egress'];
+    const routes = ['/codex-auth', '/agent-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/conversation', '/progress', '/claude-settings', '/attachments', '/answer', '/issues', '/qa-report', '/qa-log', '/review-log', '/qa-video', '/qa-poster', '/review-report', '/egress', '/state-changed'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -242,6 +245,13 @@ export function createSessionApi({
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings, fleet);
     if (pathname === '/agent-auth') return agentAuthReply(req, res, session, userSettings);
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
+    // The session's agent changed state (session/stateAnnounce.mjs): nothing in the call is read but its token.
+    if (pathname === '/state-changed') {
+      req.resume();
+      fleet.stateChanged?.(session);
+      res.writeHead(204).end();
+      return;
+    }
     if (pathname === '/answer') return answerReply(req, res, session, asks);
     if (pathname === '/issues') return issueReply(req, res, session, asks);
     if (pathname === '/qa-report') return qaReportReply(req, res, session, fleet);
