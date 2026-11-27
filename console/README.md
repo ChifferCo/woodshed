@@ -72,11 +72,12 @@ whose it is: **My repo settings** and **My session timeouts** are yours; Setting
   (`public/sessionTabs.cjs`: sessionStorage, read only by the login that picked it and dropped at sign-out), and on
   one it was never left on, the person's default view: Chat or TUI, one for a desktop and one for a phone (under
   720px), from My settings' Display card (`viewPrefs.mjs`, `GET` and `POST /api/my/session-view`; the console logs
-  `viewPrefs: session view changed`). Chat unless they changed it. Until a tab is picked it follows the window's width. The page
+  `viewPrefs: session view changed`). Chat unless they changed it. Resume and Hand off open the session they start
+  on that default view too, whatever tab it was left on. Until a tab is picked it follows the window's width. The page
   never writes `?tab` itself: a tab picked lives in the history entry's state, so a reload, Back and Forward keep it
   (the entry's tab wins over its address), and an address only ever carries a link's tab, kept as it came after a pick
   or a fallback (it goes through sign-in as it came, and a ?tab nobody linked to never reaches someone else).
-  `?tab=chat` asks for Chat itself, as Open the chat and Resume do; a tab remembered as `agent` before TUI's rename
+  `?tab=chat` asks for Chat itself, as Open the chat does; a tab remembered as `agent` before TUI's rename
   opens TUI. A tab the session cannot show now opens the other view of its pair where that one can show, as the bar's
   tab does (Diff once it stopped opens Review, Terminal with no shell App log), and TUI otherwise; a remembered one is
   then remembered as the tab it opened. Until the route's lookup answers, the list may be the kept snapshot's, so the tab is held and tried again first.
@@ -389,6 +390,31 @@ page has a tab for each:
 review and the agent suite (see Slack below). The page shows when a waiting
 session pauses.
 
+### How the rail keeps up
+
+The console reads each session's state from its statusd (`GET /status`) and pushes what changed to every open page
+(`GET /api/sessions/live`, server-sent events, `liveSessions.mjs`): the whole list as the stream opens, then each
+session's changed fields within 100 ms of the console knowing them. A session the console just sent something to (a
+message, an answer, an interrupt) is read 400 ms later and every 2 s for 30 s after (`fleet.soon`, `checkLive`), and
+so is every session working, which is when Done or Needs you comes; the rest are read at the 10 s tick, all at once,
+eight at a time. A status read costs a session about a tenth of a second of CPU (git and `gh`'s cached lookups),
+which is why sessions not likely to change are not read every 2 s. So a card says Working within about a second of a
+message from the page, and Done or Needs you within about 2 s of the agent saying so. A message typed in the TUI tab
+is seen at the next tick, up to 10 s.
+
+The page keeps the stream only while its tab shows: over HTTP/1 a browser allows six connections to the console for
+all its tabs. It polls `GET /api/sessions` every 30 s while the stream is open, and every 5 s as before when it is
+not (refused by a console from before it, cut by a proxy, or reconnecting: the browser opens it again a second after
+it drops). Before the opening list and each send after it, the stream's own request is signed in again, as every request is (a check that has not answered in 2 s is a no, and holds up no other stream): someone signed out or
+taken off People gets nothing more and the stream ends, and so does a stream opened with no sign-in once the console
+starts requiring one. Behind a hosting proxy the console cannot tell on its own that the program took someone out
+while their identity header is still good, so a hosted console pushes the list only when the program gives the
+`stillSignedIn` hook ("Embedding the console"); otherwise its pages poll. A stream also ends after 5 minutes and the
+browser opens it again. The console's stop ends every stream. A proxy in front
+must pass `text/event-stream` through unbuffered (the console sends `X-Accel-Buffering: no` for nginx); one that holds
+it back leaves the page on the poll, a little later than the stream but never wrong. The browser's notifications
+(`browserNotifications.js`) still read the list every 20 s from one tab of their own, which may be hidden.
+
 Every stop of a shared session that ran keeps it (`kept` in `state.json`): its
 databases (`woodshed__<id>`) stay, and statusd saves its Claude home to the
 homes bucket at `_sessions/<id>/claude-home.tar.gz`, a name no GitHub login can
@@ -608,7 +634,21 @@ And what the shed shows about each session:
   the browser, and whether a session opens on Chat or TUI, one choice for a
   desktop and one for a phone, kept for you on every device; **⇧⌘O** (or **N**) is
   New session; **G** then **M**, **E** or **S** goes to My Woodshed, shared
-  sessions or My settings. Ctrl works for ⌘ outside a terminal, and the pages
+  sessions or My settings. On the session pages, **⌘ tapped twice** (Ctrl off a
+  Mac), alone and within 0.4 s, turns on a mode for moving through the
+  sessions, as Herdr's prefix and navigate mode, wherever the focus is, typing
+  in Chat or in a terminal (a modifier alone sends a terminal nothing, and no
+  browser or OS takes the double tap): **J** and **K** (or **↓** and **↑**) open
+  the next and previous session in the rail as it is drawn, skipping folded
+  zones; **1** to **4** pick the pane bar's tabs by their place and end the
+  mode, the tab taking the keys; **N** opens the next session that needs you.
+  The mode stays on, the toast's place saying so, until Esc (which goes no
+  further, not to a terminal), a click, a toast, the double tap again, or any
+  other key, which then does what it would have. Outside the mode these keys
+  move nothing and keep what they did before: **N** alone is still New
+  session. A tap is the key pressed and let go with nothing else pressed between,
+  so ⌘K or Ctrl+C twice is never one.
+  Ctrl works for ⌘ outside a terminal, and the pages
   write the keys as Ctrl on Windows and Linux. A key alone works only while
   nothing takes typing, and never inside a terminal or the Review, whose
   frame gets the ⌘ keys alone. Which key does what is
@@ -740,7 +780,9 @@ never reached claude, or one stopped before sessions kept their own homes.
 A launcher that keeps the session's machine between runs (`keptMachine`, "Embedding the console") resumes it on the image
 that machine was made from, which may no longer start a branch that took a newer project file: when it says so, the page
 offers **Resume on the latest image** too, which asks first, then leaves that machine, with its databases and whatever
-else the session kept there, for a new one; the branch and the conversation go along as on any Resume.
+else the session kept there, for a new one; the branch and the conversation go along as on any Resume. On a session that
+failed, the page says the failure may come from that older image, and **Resume on the latest image** is its primary
+action, with Resume beside it (`public/keptMachine.cjs`).
 **Remove**, on a stopped private session's page, takes it off the list and
 deletes the home it kept; its branch stays on GitHub. **Forget it** on My
 settings and Remove My Woodshed delete your kept home and every one of your
@@ -2413,6 +2455,13 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
     session waits) says nothing of which sources are on, so the typed values are handed out (`repoSettings: env sources
     not read, the typed values handed out`, with `why`, and for a throw the error's class, never its message or
     code). The console keeps none of a source's text and logs nothing the program wrote.
+- `stillSignedIn({login, headers})`, behind `trusted` only: whether the person who opened a page's live session list
+  (`GET /api/sessions/live`, "How the rail keeps up" above) is still signed in with the program, `true` or a promise of
+  it. The console asks it before the opening list and each change it sends on that stream, with the headers of the request that opened it,
+  and refuses or ends the stream on anything but `true`, a throw, or no answer in 2 s. The identity header the stream opened with stays good for its
+  minute after the program took someone out, so without this hook a hosted console sends no live list at all
+  (`GET /api/sessions/live` answers 404) and its pages poll every 5 s, each poll signed in afresh by the program. It is
+  asked often, up to ten times a second for each open page while sessions change: answer from memory.
 - `standalonePage({title, body, brand: {label, href, icon?}, groups?, current?, login?, signOut?, dialog?, refresh?, styles?, scripts?})`
   from `server.mjs`: a page of the program's that stands outside any console, such as a first visit before there is a
   console to be in. It is the settings pages' frame drawn by the server, the program's name (and its mark, `icon`, a path) heading the side list in

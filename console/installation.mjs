@@ -266,6 +266,7 @@ function mcpAccess({ loaded: given, secrets, launcher }) {
  *            forSession: (args: {name: string, repo: string, session: {id: string, owner: string|null}}) => Promise<Record<string, string>|null>}|null,
  *          signOut?: ((req: object) => Promise<{location?: string, setCookie?: string|string[]}>)|null, newId?: () => string, repos?: object|null,
  *          projectReadiness?: ((project: {name: string, repo: string}) => Promise<object|null>)|null,
+ *          stillSignedIn?: ((who: {login: string, headers: object}) => boolean|Promise<boolean>)|null,
  *          hostApp?: object|null, woodshedUpdate?: boolean, slackEventsUrl?: (() => Promise<string|null>)|null,
  *          slackInstall?: {label: string, description?: string, available?: boolean|(() => boolean|Promise<boolean>),
  *            href?: string, installed?: () => boolean|Promise<boolean>}|null,
@@ -294,6 +295,10 @@ function mcpAccess({ loaded: given, secrets, launcher }) {
  *   console"): `{list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`. `projectReadiness` says why
  *   sessions cannot start on a project, where the program knows (its image not built, a secret missing): null, or
  *   `{reason, fix: [{text, href?, label?}], ask?: {who, text?}}` (databaseGate.mjs, README.md "Embedding the console").
+ *   `stillSignedIn({login, headers})`, behind `trusted` only, says whether the person who opened the page's live session
+ *   list (liveSessions.mjs) is still signed in with the program, asked before each change sent on it, with the headers
+ *   of the request that opened it. Without it a hosted console pushes no live list, and its pages poll (README.md
+ *   "Embedding the console").
  *   `woodshedUpdate: false` turns off the Console settings Woodshed card and its check, for a program that deploys
  *   Woodshed itself (README.md "Embedding the console").
  *   `githubConnect`, behind `trusted` only, is Connect GitHub on the host's GitHub App: My settings' Connect sends
@@ -312,12 +317,13 @@ function mcpAccess({ loaded: given, secrets, launcher }) {
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, repoPage = null, envSources = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null, mcpServers: mcpServersHook = null, cliDevices = undefined }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, repoPage = null, envSources = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, stillSignedIn = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null, mcpServers: mcpServersHook = null, cliDevices = undefined }) {
   checkMembersHook(memberList, trusted);
   if (mcpServersHook && ['list', 'save', 'remove'].some((f) => typeof mcpServersHook[f] !== 'function')) throw new Error('mcpServers needs list, save and remove');
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
   if (repoPage != null && typeof repoPage !== 'function') throw new Error('repoPage must be a function');
   checkEnvSources(envSources);
+  if (stillSignedIn != null && typeof stillSignedIn !== 'function') throw new Error('stillSignedIn must be a function');
   if (slackEventsUrl != null && typeof slackEventsUrl !== 'function') throw new Error('slackEventsUrl must be a function');
   checkSlackInstall(slackInstall);
   if (hostApp && (typeof hostApp.login !== 'function' || (hostApp.reviewer != null && ['login', 'configured', 'submitReview'].some((f) => typeof hostApp.reviewer[f] !== 'function')))) {
@@ -579,6 +585,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     userMenu,
     settingsTabs,
     repoPage,
+    stillSignedIn,
     signOut,
     appPorts,
     githubConnectHref: hostConnect ? githubConnect.href : null,
@@ -672,6 +679,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     loops.every(config.tickMs, 'app shares sweep', () => appShares.sweep(fleet.sessions().filter((s) => ACTIVE_STATUSES.has(s.status)).map((s) => s.id)));
     if (asks) loops.every(config.tickMs, 'asks', () => asks.tick());
     loops.every(config.startingCheckMs, 'starting check', () => fleet.checkStarting());
+    loops.every(config.liveCheckMs ?? 2_000, 'live check', () => fleet.checkLive());
     loops.every(config.startingCheckMs, 'wait progress', () => fleet.checkWaiting());
     if (woodshedUpdate) loops.every(CHECK_EVERY_MS, 'Woodshed update check', () => woodshedUpdate.check());
     if (databases.available) loops.every(databases.POLL_MS, 'databases', () => databases.poll());
@@ -694,7 +702,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     appPorts,
     start,
     /** Stops the loops; requests already in flight finish. */
-    stop: () => { members?.stop?.(); loops.stop(); },
+    stop: () => { members?.stop?.(); loops.stop(); handle.liveSessions?.closeAll(); },
     /**
      * `GET /api/cli/me`'s `sessionSignIns`, for a program that answers that route itself (a host serving several
      * installations passes it to handleCliApi): without it, `woodshed setup` cannot tell whether Claude Code and Codex

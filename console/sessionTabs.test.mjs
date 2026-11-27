@@ -398,3 +398,17 @@ test('a session asked for no tab opens on the person\'s default view for the wid
   assert.equal(tabs.defaultView({ desktop: 'chat', phone: 'tui' }, true), 'tui');
   assert.equal(tabs.defaultView({ desktop: 'review' }, false), 'chat', 'anything else is Chat');
 });
+
+test('a change the console pushed replaces the sessions it carries, keeps the rest, and takes its order when it has one', () => {
+  const a = { id: 'a', state: 'done' };
+  const b = { id: 'b', state: 'done' };
+  const list = { login: 'joel', running: 0, sessions: [a, b] };
+  const b2 = { id: 'b', state: 'done', title: 'Two', pr: null };
+  const two = { login: 'joel', running: 0, sessions: [a, b2] };
+  assert.deepEqual(tabs.withPatch(two, { top: { running: 1 }, sessions: [{ id: 'b', state: 'working' }], unset: { b: ['pr'] } }),
+    { login: 'joel', running: 1, sessions: [a, { id: 'b', state: 'working', title: 'Two' }] }, 'its other fields kept, and one it no longer has gone');
+  assert.deepEqual(two.sessions[1], { id: 'b', state: 'done', title: 'Two', pr: null }, 'the list it was given is left as it was');
+  const c = { id: 'c', state: 'done' };
+  assert.deepEqual(tabs.withPatch(list, { sessions: [c], ids: ['c', 'b'] }).sessions, [c, b], 'one came, one went');
+  assert.deepEqual(tabs.withPatch(list, { sessions: [c] }).sessions, [a, b, c], 'one new with no order goes last');
+});
