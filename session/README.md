@@ -159,6 +159,12 @@ with the session's address. The console also asks a starting
 session's statusd every 2 seconds, rather than every 10, so the terminal
 opens as soon as claude does.
 
+Once it runs, a session whose agent has hooks (claude, Grok Build) tells the console of each change of its agent's
+state: statusd looks at the hooks' state file (`/tmp/woodshed-claude-state.json`) every 250 ms, and calls the session
+API's `POST /state-changed` when the state there changed (`stateAnnounce.mjs`; console/README.md, "How the rail keeps
+up"). The call carries the session's token and nothing else, and one that fails is not tried again: the console still
+reads the session at its own looks.
+
 `entrypoint.sh seed` migrates and seeds the next database template, as its own
 user. Only the db-admin task runs it (`session/dbAdmin.mjs`), after emptying it. It writes the env files as a shared
 session does, from the repo settings db-admin read for the databases' env files (`WOODSHED_SEED_REPO_SETTINGS`).

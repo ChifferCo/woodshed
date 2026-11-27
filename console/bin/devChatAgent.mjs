@@ -27,6 +27,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 
 const [format, dir, repo, ...flags] = process.argv.slice(2);
 const now = () => new Date().toISOString();
@@ -277,11 +278,23 @@ function draw() {
   else if (screen === 'idle') out(`\n\x1b[1m›\x1b[0m ${typed || hint('Ask anything')}\n\n  stand-in codex · /tmp/fx/repo\n`);
 }
 
+// claude's hooks, as a session's fire them (session/claudeHooks.json): the same hookState.mjs, given the event on its
+// stdin, writing the state file the dev session names (WOODSHED_CLAUDE_STATE_FILE). statusd then reads its state from
+// the hooks as in a session, and tells the console of each change when it has the console's address
+// (session/stateAnnounce.mjs). Only for the claude a dev session starts, which names its own state file.
+const HOOK_STATE = path.join(import.meta.dirname, '..', '..', 'session', 'hookState.mjs');
+function hook(event) {
+  if (format !== 'claude' || !process.env.WOODSHED_CLAUDE_STATE_FILE) return;
+  const child = spawn(process.execPath, [HOOK_STATE], { stdio: ['pipe', 'ignore', 'ignore'] });
+  child.stdin.end(JSON.stringify({ hook_event_name: event, session_id: id }));
+}
+
 function after(ms, step) {
   timers.push(setTimeout(step, ms));
 }
 
 function stop({ next = true } = {}) {
+  if (screen !== 'idle') hook('Stop');
   for (const t of timers) clearTimeout(t);
   timers = [];
   clearInterval(clock);
@@ -314,7 +327,9 @@ function work(text) {
 function submit(text) {
   if (!text.trim()) return;
   said('user', text);
+  hook('UserPromptSubmit');
   if (/\bask\b/i.test(text)) {
+    hook('PermissionRequest');
     screen = 'asking';
     // Grok Build's highlight starts on `Yes, proceed`, past its always-approve row.
     approvalAt = format === 'grok' ? 1 : 0;

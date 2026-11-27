@@ -399,8 +399,18 @@ message, an answer, an interrupt) is read 400 ms later and every 2 s for 30 s af
 so is every session working, which is when Done or Needs you comes; the rest are read at the 10 s tick, all at once,
 eight at a time. A status read costs a session about a tenth of a second of CPU (git and `gh`'s cached lookups),
 which is why sessions not likely to change are not read every 2 s. So a card says Working within about a second of a
-message from the page, and Done or Needs you within about 2 s of the agent saying so. A message typed in the TUI tab
-is seen at the next tick, up to 10 s.
+message from the page, and Done or Needs you within about 2 s of the agent saying so.
+
+A session whose agent has hooks (claude, Grok Build) also tells the console the moment its state changes: its statusd
+looks at the hooks' state file every 250 ms and, when the state there changed, calls the session API's
+`POST /state-changed` with its own token (`session/stateAnnounce.mjs`). The console reads that session at once, at most
+every 300 ms (`fleet.stateChanged`), and from then on leaves its working to it: the live check reads it every 2 s only
+while a message waits for it or was just sent. Its card then changes within half a second of the agent, a message typed
+in the TUI tab included. The call says only that something changed, so the card still shows only what the console
+read. The console logs `fleet: session tells of its own state changes` once for each session, and statusd `statusd:
+the console is told of each state change`, or `state change not told to the console` with why (once per reason; a
+console from before the route answers 404). An Esc that cuts a turn short fires no hook, and codex and OpenCode have
+none: those changes wait for the console's reads, and a message typed in their TUI tab for the next tick, up to 10 s.
 
 The page keeps the stream only while its tab shows: over HTTP/1 a browser allows six connections to the console for
 all its tabs. It polls `GET /api/sessions` every 30 s while the stream is open, and every 5 s as before when it is

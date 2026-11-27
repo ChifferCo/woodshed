@@ -321,6 +321,23 @@ test('a session reports its start steps; anything else is refused', async (t) =>
   assert.deepEqual(reported, [['cccccccc', 'branch']]);
 });
 
+test('a session says its agent changed state with its own token alone, and the console reads it', async (t) => {
+  const told = [];
+  const fleet = { sessions: () => SESSIONS, stateChanged: (session) => told.push(session.id) };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({}) } });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const call = (token, method = 'POST') => fetch(`http://127.0.0.1:${port}/state-changed`, { method, headers: { authorization: `Bearer ${token}` } });
+
+  assert.equal((await call('new-token')).status, 204);
+  assert.equal((await call('old-token')).status, 401, 'a stopped session\'s token');
+  assert.equal((await call('nobody')).status, 401);
+  assert.equal((await call('new-token', 'GET')).status, 404);
+  assert.deepEqual(told, ['cccccccc']);
+});
+
 test('an ask session gets a read-only token, and posts its answer through /answer; no other session can', async (t) => {
   const sessions = [
     { id: 'aaaaaaaa', status: 'running', token: 'ask-token', kind: 'ask', slack: { channel: 'C1', threadTs: '1.1' } },

@@ -1285,7 +1285,9 @@ worktree) behind a stand-in `gh`: its card shows a chip for each (`devAppsSessio
 `/s/c0de5e55` (codex) and `/s/c1a0de00` (claude) open on a Chat tab that works: the real statusd over a private tmux,
 whose pane runs a stand-in agent (`devChatAgent.mjs`) writing the agents' real record formats. `/s/c1a0de02` is that
 claude started from a Claude home holding an earlier session's conversation, as a private session started while another
-runs is: its Chat stays empty until it is sent a message. `/s/62000c0d` (Grok Build) and `/s/0c0de0c0` (OpenCode) open
+runs is: its Chat stays empty until it is sent a message. The stand-in claude fires claude's hooks into a state file of
+its own, and with `DEV_CONSOLE_SESSION_API_PORT=<port>` its statusd reaches the session API there and tells the console
+of each state change, as a session does (session/stateAnnounce.mjs): typed into its tmux, its card turns at once. `/s/62000c0d` (Grok Build) and `/s/0c0de0c0` (OpenCode) open
 on a Chat tab that works the same way: the real statusd over a stand-in agent (`devChatAgent.mjs`) writing Grok Build's
 `updates.jsonl` and OpenCode's SQLite database. `/s/a6e1a6e1` is @local's own session on the stand-in codex, whose
 agent switch starts stand-in claudes and codexes beside it (`session/agents.mjs`), each with a Chat and a TUI tab that

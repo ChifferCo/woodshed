@@ -4956,3 +4956,60 @@ test('a working session slow to answer delays only its own next live read, as th
   answer({ state: 'working' });
   await settle();
 });
+
+test('a session that tells of its own state changes is read at once, at most every 300 ms, and not for its work', async () => {
+  const { fleet, sessions: [told, quiet], statuses, reads, runLater, advance } = await runningSessions(2, 'working');
+  statuses[told.id] = { state: 'done' };
+  const before = reads(told);
+  fleet.stateChanged(told);
+  await settle();
+  assert.equal(reads(told), before + 1, 'read straight away');
+  assert.equal(told.state, 'done');
+
+  // Two more changes within the 300 ms: one more read, when it is up.
+  statuses[told.id] = { state: 'working' };
+  fleet.stateChanged(told);
+  fleet.stateChanged(told);
+  await settle();
+  assert.equal(reads(told), before + 1);
+  advance(300);
+  assert.deepEqual(await runLater(), [300]);
+  await settle();
+  assert.equal(reads(told), before + 2);
+  assert.equal(told.state, 'working');
+
+  // Working, it is left to say when it is done; one that never told is still read for it.
+  const was = [reads(told), reads(quiet)];
+  fleet.checkLive();
+  await settle();
+  assert.deepEqual([reads(told), reads(quiet)], [was[0], was[1] + 1]);
+});
+
+test('a session that tells of its changes is still read often while a message waits for it, and after one is sent', async () => {
+  const { fleet, sessions: [session], statuses, reads, runLater, fail } = await runningSessions(1, 'working');
+  fleet.stateChanged(session);
+  await settle();
+  // Held: statusd refuses it while the agent works, so it waits for a read that finds the agent at its prompt.
+  fail.sendBusy = true;
+  assert.equal(await fleet.send(session, 'and then this'), 'queued');
+  fail.sendBusy = false;
+  await runLater();
+  await settle();
+  const before = reads(session);
+  fleet.checkLive();
+  await settle();
+  assert.equal(reads(session), before + 1);
+  statuses[session.id] = { state: 'done' };
+  fleet.checkLive();
+  await settle();
+  assert.equal(session.pendingMessages.length, 0, 'sent once a read found it done');
+});
+
+test('a stopped session\'s call to say it changed reads nothing', async () => {
+  const { fleet, sessions: [session], reads } = await runningSessions(1);
+  await fleet.stop(session, 'test');
+  const before = reads(session);
+  fleet.stateChanged(session);
+  await settle();
+  assert.equal(reads(session), before);
+});
