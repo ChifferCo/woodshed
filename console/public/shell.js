@@ -15,7 +15,9 @@
   // Where ⇧⌘, goes: the theme and the rest of what was the settings sheet are a card on My settings (mySettings.js).
   const DISPLAY_HREF = '/settings#my-display';
 
-  let page = { sessions: () => [], actions: () => [], toggleRail: null, railShown: () => true };
+  // moveSession(step), nextNeedsYou() and showTab(n, onlyAsk) are the session page's (keys.cjs, `page`): a page without
+  // them leaves the double tap and its mode's keys alone.
+  let page = { sessions: () => [], actions: () => [], toggleRail: null, railShown: () => true, moveSession: null, nextNeedsYou: null, showTab: null, endMoving: null };
 
   function register(next) {
     page = { ...page, ...next };
@@ -53,6 +55,8 @@
   let toastTimer = null;
   // `ms` keeps it up longer: an error needs time to be read on a phone.
   function toast(text, { ms = 2000 } = {}) {
+    // A toast in the mode's place (an upload's error, a tab's reason) ends the mode too: the next key is the page's.
+    stopMoving();
     toastEl ??= document.body.appendChild(h('div', { class: 'toast', role: 'status', hidden: true }));
     toastEl.textContent = text;
     toastEl.hidden = false;
@@ -189,7 +193,7 @@
   function sheet(title, body) {
     const dialog = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': title, tabindex: '-1' },
       h('div', { class: 'sheet-head' }, h('h3', null, title), h('span', { class: 'esc' }, 'esc to close')),
-      h('div', { class: 'sheet-body' }, body));
+      h('div', { class: 'sheet-body', tabindex: '-1' }, body));
     const el = overlay(dialog, () => closeSheet(record));
     const record = { el, dialog, onOpen: null };
     return record;
@@ -200,7 +204,8 @@
     notifications().close();
     s.onOpen?.();
     s.el.hidden = false;
-    takeFocus(s.dialog);
+    // The body takes the focus, so Page Down and the arrows scroll a list taller than the window.
+    takeFocus(s.dialog.querySelector('.sheet-body') ?? s.dialog);
   }
 
   function closeSheet(s) {
@@ -215,19 +220,62 @@
   }
 
   // A shortcut's keys as key caps: its combo, then its key alone. A sequence (G M) is its keys one after the other.
+  // The double tap's key, twice, as caps: ⌘ ⌘ on a Mac, Ctrl Ctrl elsewhere.
+  const tapCaps = () => [0, 1].map(() => h('kbd', null, K.caps(K.byId.prefix.tap, MAC)[0]));
   function keyCaps(shortcut) {
+    if (shortcut.tap) return tapCaps();
     const mod = MAC ? shortcut.mod : shortcut.modOther || shortcut.mod;
     const combo = mod && K.caps(mod, MAC).map((k) => h('kbd', null, k));
     const bare = shortcut.bare && shortcut.bare.split(' ').map((k) => h('kbd', null, k));
+    // A key of the mode: the double tap, then the key, or the other key it names (J or ↓).
+    if (shortcut.then) {
+      const then = shortcut.then.split(' ').flatMap((k, i) => [i > 0 && h('span', { class: 'kor' }, 'or'), h('kbd', null, k)]).filter(Boolean);
+      return [...tapCaps(), h('span', { class: 'kor' }, 'then'), ...then];
+    }
     return [combo, combo && bare && h('span', { class: 'kor' }, 'or'), bare].filter(Boolean);
   }
-  const keys = sheet('Keyboard shortcuts', [
-    K.SHORTCUTS.filter((s) => !s.bell || notifications().available).map((s) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, keyCaps(s)), h('div', null, s.id === 'keys' ? 'This list' : s.what, s.where && h('span', { class: 'kwhere' }, ` on ${s.where}`)))),
-    h('p', { class: 'sheet-note' }, MAC
-      ? 'Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal\'s. A key alone works while you are not typing. Sessions have no key of their own: ⌘K, then type a name.'
-      : 'A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal\'s: click outside it first. Sessions have no key of their own: Ctrl+K, then type a name.'),
-  ]);
+  // Drawn as it opens, from what the page registered: a page with no rail (My settings) lists no session keys, and
+  // says nothing of them in its note.
+  function keyRows() {
+    const moves = Boolean(page.moveSession);
+    const shown = K.SHORTCUTS.filter((s) => (!s.bell || notifications().available) && (!s.page || page[s.page]));
+    return [
+      shown.map((s) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, keyCaps(s)), h('div', null, s.id === 'keys' ? 'This list' : s.what, s.where && h('span', { class: 'kwhere' }, ` on ${s.where}`)))),
+      h('p', { class: 'sheet-note' }, MAC
+        ? `Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal's. A key alone works while you are not typing. ${moves ? 'Tap ⌘ twice, even while typing or in a terminal, and the keys after it move through the sessions until Esc, a click or another key. ' : ''}⌘K, then a name, jumps to any session.`
+        : `A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal's: click outside it first. ${moves ? 'Tap Ctrl twice, even while typing or in a terminal, and the keys after it move through the sessions until Esc, a click or another key. ' : ''}Ctrl+K, then a name, jumps to any session.`),
+    ];
+  }
+  const keys = sheet('Keyboard shortcuts', []);
+  keys.onOpen = () => keys.dialog.querySelector('.sheet-body').replaceChildren(...keyRows().flat());
 
+
+  // ---- the double tap's mode, as Herdr's navigate mode: on until Esc, a click, a toast or a key that is not one of its own ----
+  // The toast's place says it is on, and which keys it takes, for as long as it is.
+  let moving = false;
+  let movingEl = null;
+  function startMoving() {
+    moving = true;
+    // One toast at a time: the mode takes the place of one still up (a tab's reason).
+    if (toastEl) {
+      clearTimeout(toastTimer);
+      toastEl.hidden = true;
+    }
+    movingEl ??= document.body.appendChild(h('div', { class: 'toast', role: 'status', hidden: true }));
+    movingEl.replaceChildren(...tapCaps(), ' ', h('kbd', null, 'J'), ' ', h('kbd', null, 'K'), ' ', h('kbd', null, '1–4'), ' ', h('kbd', null, 'N'), ' · ', h('kbd', null, 'esc'), ' to stop');
+    movingEl.hidden = false;
+  }
+  function stopMoving() {
+    moving = false;
+    if (movingEl) movingEl.hidden = true;
+    // The session page's side of it (session.js, movingByKey): the session shown may take focus again.
+    page.endMoving?.();
+  }
+  // A click is the pointer's move, not the keyboard's: it ends the mode, in the page or in a frame (bindFrame).
+  function stopMovingOnClick() {
+    if (moving) stopMoving();
+  }
+  document.addEventListener('pointerdown', stopMovingOnClick, true);
 
   // ---- the keys ----
   // G waits this long for the second key of a sequence.
@@ -240,9 +288,70 @@
     settings: go(DISPLAY_HREF),
     rail: () => page.toggleRail?.(),
     new: go('/?new=1'),
+    nextSession: () => page.moveSession(1),
+    prevSession: () => page.moveSession(-1),
+    needsYou: () => page.nextNeedsYou(),
   };
+  // The keys of the mode (keys.cjs, AFTER_PREFIX and the tab keys), and its Esc.
+  // The tab key that ended the mode, while it is still held down (onTapKeyUp lets it go).
+  let heldCode = null;
+  const MOVING_IDS = new Set(['nextSession', 'prevSession', 'needsYou', 'tab', 'cancel']);
+  const MODIFIERS = new Set(['Shift', 'Meta', 'Control', 'Alt', 'AltGraph', 'CapsLock']);
+  // ---- the double tap: ⌘ (Ctrl off a Mac) pressed and let go twice, alone (keys.cjs, doubleTap) ----
+  // Read in the page and in every frame (bindFrame), with one count for all.
+  const taps = K.doubleTap({ mac: MAC });
+  const notATap = () => taps.reset();
+  // A key let go in another window is never seen let go here: leaving the window forgets the one held. The top window
+  // gets `blur` too when one of the page's own frames takes the focus (a tab key focusing the terminal), which leaves
+  // the page, and the held key, as they were.
+  window.addEventListener('blur', () => setTimeout(() => { if (!document.hasFocus()) heldCode = null; }));
+  function onTapKeyDown(e) {
+    taps.down(e, Date.now());
+  }
+  function onTapKeyUp(e) {
+    if (heldCode && e.code === heldCode) heldCode = null;
+    if (!taps.up(e, Date.now())) return;
+    // Only where the page moves through sessions (session.js): elsewhere a double tap is nothing.
+    if (!page.moveSession) return;
+    if (moving) stopMoving();
+    else {
+      closeAll();
+      startMoving();
+    }
+  }
+  window.addEventListener('blur', notATap);
+  // ⌘ or Ctrl with a click or the wheel (a new tab, a zoom) is that, not a tap.
+  for (const type of ['pointerdown', 'wheel']) document.addEventListener(type, notATap, { capture: true, passive: true });
+
   function onKey(e, inFrame, modOnly = false) {
+    onTapKeyDown(e);
     hideHint();
+    // Shift pressed on its way to a digit (AZERTY) is not a key of the mode. A modifier still ends a waiting G, as any
+    // key did before: G, Ctrl, then S is no sequence.
+    if (MODIFIERS.has(e.key)) {
+      gAt = 0;
+      return;
+    }
+    // A key held down in the mode acts once, and its repeats go nowhere: not into a field that has the focus still,
+    // nor into a terminal or a field the key itself focused or left the focus in once the mode ended (an Esc, a tab, an
+    // N with nothing to go to): heldCode keeps them out until that key is let go.
+    if (e.repeat && (moving || (heldCode && e.code === heldCode))) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    // Esc ends the mode and goes no further: not to a terminal, whose agent would take it as its own Esc. With the
+    // palette or the sheet open, it also closes that, below.
+    if (e.key === 'Escape' && moving) {
+      stopMoving();
+      heldCode = e.code || null;
+      // Open notifications take the same Esc and close (notificationBell.js), so it is not stopped here for them.
+      if (palette.hidden && keys.el.hidden && !notifications().isOpen()) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    }
     if (e.key === 'Escape' && (!palette.hidden || !keys.el.hidden)) {
       if (!palette.hidden && actionsFor) return;
       e.preventDefault();
@@ -250,24 +359,59 @@
       return;
     }
     if (e.repeat || e.isComposing) return;
-    // A page framed in the pane (the Review) keeps its keys alone for itself: only ⌘ or Ctrl ones are the shell's.
-    if (modOnly && !e.metaKey && !e.ctrlKey) return;
+    // A page framed in the pane (the Review) keeps its keys alone for itself: only ⌘ or Ctrl ones are the shell's, and
+    // the mode's own while it is on.
+    if (modOnly && !e.metaKey && !e.ctrlKey && !moving) return;
     const afterG = Date.now() - gAt < SEQUENCE_MS;
     gAt = 0;
     // A key alone is for the page, never for an open palette or sheet, whose own keys come first.
     const overlayOpen = !palette.hidden || !keys.el.hidden || notifications().isOpen();
-    const id = K.match(e, { inFrame, afterG, typing: overlayOpen || K.takesTyping(e.composedPath?.()[0] ?? e.target) });
+    const id = K.match(e, { inFrame, afterG, moving, typing: overlayOpen || K.takesTyping(e.composedPath?.()[0] ?? e.target) });
+    // Any other key ends the mode and is what it would have been: / opens the palette, a letter types.
+    const movingKey = moving && MOVING_IDS.has(id);
+    if (moving && !movingKey) stopMoving();
+    if (modOnly && !e.metaKey && !e.ctrlKey && !movingKey) return;
     // A form's own key (⌘↵ on New session) is left to the form, which reads it from its fields.
-    if (!id || K.byId[id]?.where || (id === 'rail' && !page.toggleRail) || (id === 'notifications' && !notifications().available)) return;
+    // A key the page does (K.byId[id].page) is nothing on a page that registered no such thing: no rail, no tabs.
+    const pageHook = K.byId[id]?.page;
+    const nothing = !id || K.byId[id]?.where || (pageHook && !page[pageHook]) || (id === 'rail' && !page.toggleRail) || (id === 'notifications' && !notifications().available)
+      // 3 on a session with no third tab is no key of the mode's either.
+      || (id === 'tab' && !page.showTab(K.tabOf(e), true));
+    if (nothing) {
+      if (movingKey) {
+        stopMoving();
+        // A key of the mode's that has nothing to do here (4 on a bar of three tabs) is still the mode's: it ends it,
+        // and types nothing into a field that has the focus still.
+        if (id !== 'cancel') {
+          // Its repeats too, while it is held: none types into the field.
+          heldCode = e.code || null;
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
     if (id === 'g') {
       gAt = Date.now();
       return;
     }
-    (ACTS[id] ?? go(K.byId[id].href))();
+    // A move or a tab picked with the palette or the sheet open closes it first, so the new session gets the keys.
+    // Notifications too: a move takes the focus from their list, whose own Esc would then never close it.
+    if (movingKey) {
+      heldCode = e.code || null;
+      closeAll();
+      notifications().close();
+    }
+    // A tab ends the mode: the tab takes the keys from there, to be typed in.
+    if (id === 'tab') {
+      stopMoving();
+      page.showTab(K.tabOf(e));
+    } else (ACTS[id] ?? go(K.byId[id].href))();
   }
   document.addEventListener('keydown', (e) => onKey(e, false), true);
+  document.addEventListener('keyup', onTapKeyUp, true);
 
   // A terminal frame is same-origin, so its document's keys can be read before xterm takes them. Another framed page
   // (the Review, { terminal: false }) gets the shell's ⌘ and Ctrl keys, as the page around it does, and keeps the rest.
@@ -277,6 +421,9 @@
       if (!doc || doc.__woodshedShell) return;
       doc.__woodshedShell = true;
       doc.addEventListener('keydown', (e) => onKey(e, terminal, !terminal), true);
+      doc.addEventListener('keyup', onTapKeyUp, true);
+      for (const type of ['pointerdown', 'wheel']) doc.addEventListener(type, notATap, { capture: true, passive: true });
+      doc.addEventListener('pointerdown', stopMovingOnClick, true);
     } catch {
       // Not same-origin after all: the page's own keys still work.
     }

@@ -379,6 +379,9 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     tickMs: 10_000,
     // A starting session's statusd alone, so its page opens claude's terminal within a couple of seconds.
     startingCheckMs: 2_000,
+    // The running sessions likely to change soon, working or just sent something (fleet.mjs, checkLive), so the
+    // page's rail says so within a couple of seconds.
+    liveCheckMs: 2_000,
     // Shared sessions at once, until the Console settings page says otherwise, as it does for the limits below.
     maxRunning: number(envValue(env, 'MAX_SESSIONS'), 5),
     limits: {

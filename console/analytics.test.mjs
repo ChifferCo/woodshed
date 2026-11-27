@@ -239,7 +239,7 @@ test('a merge risk batch GitHub fails is left out, and the other batches\' tiers
   await assert.rejects(createGitHub({ repo: REPO, run: allFail }).checkTiers([1, 2], 'Merge risk'), /502/, 'every batch failing is a failure');
 });
 
-test('the report reads each repo once for five minutes, and a repo GitHub did not answer is named, not a failure of the page', async () => {
+test('the report reads each repo once for an hour, and a repo GitHub did not answer is named, not a failure of the page', async () => {
   let reads = 0;
   let now = NOW;
   const ok = { recentPulls: async () => { reads++; return { pulls: [pull({ number: 9, url: url(9), createdAt: ago(1) })], total: 1, truncated: false }; } };
@@ -260,9 +260,115 @@ test('the report reads each repo once for five minutes, and a repo GitHub did no
   const theirs = await analytics.report({ days: 30, repos: ['o/web'] });
   assert.deepEqual([theirs.projects, theirs.pulls.other.opened, theirs.sessions.work], [['web'], 0, 0]);
   assert.equal(reads, 1, 'and its repo is not even read');
-  now += 6 * 60_000;
+  now += 30 * 60_000;
   await analytics.report({ days: 30 });
+  assert.equal(reads, 1, 'still the same read half an hour on');
+  now += 31 * 60_000;
+  await analytics.report({ days: 30 });
+  assert.equal(reads, 2, 'a view past an hour starts a new read');
+});
+
+const cachedAnalytics = (gh, clock) => createAnalytics({
+  config: { projects: [{ name: 'app', repo: REPO, default: true }] }, sessions: () => [], state: () => ({ usageKept: [] }), githubFor: () => gh, now: () => clock.now,
+});
+const nextTick = () => new Promise((r) => setImmediate(r));
+
+test('every window shares one read per repo', async () => {
+  const clock = { now: NOW };
+  let reads = 0;
+  const analytics = cachedAnalytics({ recentPulls: async () => { reads++; return { pulls: [pull({ number: 9, url: url(9), createdAt: ago(1) })], total: 1, truncated: false }; } }, clock);
+  for (const days of [7, 30, 90]) await analytics.report({ days });
+  assert.equal(reads, 1, 'the three windows are one search');
+});
+
+test('the saved read is shown at once however old, with when it is as of, and a refresh runs in the background', async () => {
+  const clock = { now: NOW };
+  let number = 9;
+  let release = null;
+  const gh = { recentPulls: async () => {
+    if (release) await new Promise((r) => { release = r; });
+    return { pulls: [pull({ number, url: url(number), createdAt: ago(1) })], total: 1, truncated: false };
+  } };
+  const analytics = cachedAnalytics(gh, clock);
+  const first = await analytics.report({ days: 7 });
+  assert.equal(first.asOf, new Date(NOW).toISOString());
+  assert.equal(first.refreshing, false);
+  clock.now += 3 * 24 * 60 * 60_000;
+  number = 10;
+  release = () => {};
+  const old = await analytics.report({ days: 90 });
+  assert.equal(old.pulls.recent[0].number, 9, 'the three-day-old read, not waited for');
+  assert.equal(old.asOf, new Date(NOW).toISOString(), 'and it says when it is from');
+  assert.equal(old.refreshing, true);
+  assert.equal((await analytics.report({ days: 90 })).refreshing, true, 'one refresh at a time');
+  release();
+  await nextTick();
+  await nextTick();
+  const fresh = await analytics.report({ days: 90 });
+  assert.equal(fresh.pulls.recent[0].number, 10);
+  assert.equal(fresh.asOf, new Date(clock.now).toISOString());
+  assert.equal(fresh.refreshing, false);
+});
+
+test('the Refresh button reads again now, once, and only the repos the person may open', async () => {
+  const clock = { now: NOW };
+  let reads = 0;
+  let release = null;
+  const gh = { recentPulls: async () => { reads++; if (release) await new Promise((r) => { release = r; }); return { pulls: [], total: 0, truncated: false }; } };
+  const analytics = cachedAnalytics(gh, clock);
+  await analytics.report({ days: 7 });
+  clock.now += 5 * 60_000;
+  assert.equal(analytics.refresh({ repos: ['o/other'] }), 0, 'not a repo they cannot open');
+  release = () => {};
+  assert.equal(analytics.refresh({ repos: [REPO] }), 1);
+  assert.equal(analytics.refresh({ repos: [REPO] }), 0, 'not while one runs');
+  assert.equal((await analytics.report({ days: 7 })).refreshing, true);
+  release();
+  await nextTick();
+  await nextTick();
   assert.equal(reads, 2);
+  const after = await analytics.report({ days: 7 });
+  assert.deepEqual([after.refreshing, after.asOf], [false, new Date(clock.now).toISOString()]);
+});
+
+test('a failed refresh keeps the old read, says so, and is not tried on its own again for a minute; the first read still fails the page', async () => {
+  const clock = { now: NOW };
+  let reads = 0;
+  let fail = false;
+  const gh = { recentPulls: async () => { reads++; if (fail) throw new Error('HTTP 502'); return { pulls: [pull({ number: 9, url: url(9), createdAt: ago(1) })], total: 1, truncated: false }; } };
+  const analytics = cachedAnalytics(gh, clock);
+  fail = true;
+  assert.equal((await analytics.report({ days: 7 })).failed.length, 1, 'with no read the page names the repo');
+  const failedReads = reads;
+  assert.equal((await analytics.report({ days: 7 })).failed.length, 1);
+  assert.equal(reads, failedReads, 'a first read that failed is not repeated within the minute');
+  fail = false;
+  analytics.refresh({ repos: [REPO] });
+  assert.equal(reads, failedReads + 1, 'but the button reads it at once');
+  assert.equal((await analytics.report({ days: 7 })).failed.length, 0, 'and the page waits for that read, not the old failure');
+  clock.now += 61_000;
+  fail = false;
+  await analytics.report({ days: 7 });
+  clock.now += 2 * 60 * 60_000;
+  fail = true;
+  await analytics.report({ days: 7 });
+  await nextTick();
+  await nextTick();
+  const before = reads;
+  const kept = await analytics.report({ days: 30 });
+  assert.equal(kept.pulls.recent[0].number, 9);
+  assert.deepEqual([kept.failed, kept.refreshFailed], [[], true]);
+  assert.equal(reads, before, 'paced for a minute');
+  clock.now += 61_000;
+  await analytics.report({ days: 30 });
+  assert.equal(reads, before + 1);
+});
+
+test('a capped read flags only the windows it does not reach back past', async () => {
+  const clock = { now: NOW };
+  const analytics = cachedAnalytics({ recentPulls: async () => ({ pulls: [pull({ number: 9, url: url(9), createdAt: ago(14) })], total: 900, truncated: true }) }, clock);
+  assert.equal((await analytics.report({ days: 7 })).truncated, false);
+  assert.equal((await analytics.report({ days: 30 })).truncated, true);
 });
 
 test('/api/analytics is an admin\'s, and answers the window asked for with each person\'s name', async (t) => {
@@ -368,4 +474,122 @@ test('with GitHub sign-in, an admin who loses write access to the default repo s
   clock += 61_000;
   const after = await projects();
   assert.deepEqual(after, ['web'], 'the default repo is asked too, not taken as proved by the sign-in');
+});
+
+test('a pull request carries who reviewed it: people, and the models (Woodshed reviews first, else review bots)', () => {
+  const records = [
+    record({ id: 'bbbb0001', kind: 'review', repo: REPO, number: 1, tier: 'Low', reviewAgents: ['claude', 'codex'], createdAt: ago(2) }),
+  ];
+  const pulls = [{ project: 'app', repo: REPO, pulls: [
+    pull({ number: 1, url: url(1), humanReviewers: ['bo'], botReviewers: ['claude'] }),
+    pull({ number: 2, url: url(2), humanReviewers: [], botReviewers: ['copilot', 'claude'] }),
+  ] }];
+  const { pulls: { recent } } = analyticsReport({ records, pulls, days: 30, now: NOW });
+  const one = recent.find((p) => p.number === 1);
+  const two = recent.find((p) => p.number === 2);
+  assert.deepEqual(one.humanReviewers, ['bo']);
+  assert.deepEqual(one.models.sort(), ['claude', 'codex']);
+  assert.deepEqual(two.humanReviewers, []);
+  assert.deepEqual(two.models, ['copilot', 'claude']);
+  assert.equal(one.repo, REPO);
+});
+
+test('the lists are not cut at 500', () => {
+  const many = Array.from({ length: 600 }, (_, i) => pull({ number: i + 1, url: url(i + 1), createdAt: ago(1) }));
+  const records = Array.from({ length: 600 }, (_, i) => record({ id: `cccc${String(i).padStart(4, '0')}` }));
+  const r = analyticsReport({ records, pulls: [{ project: 'app', repo: REPO, pulls: many }], days: 30, now: NOW });
+  assert.equal(r.pulls.recent.length, 600);
+  assert.equal(r.sessions.recent.length, 600);
+});
+
+test('recentPullRow reads human and bot reviewers, not the author, pending or dismissed ones', () => {
+  const row = recentPullRow({ number: 1, url: url(1), author: { login: 'ana', __typename: 'User' }, reviews: { nodes: [
+    { state: 'APPROVED', author: { login: 'bo', __typename: 'User' } }, { state: 'COMMENTED', author: { login: 'ana', __typename: 'User' } },
+    { state: 'COMMENTED', author: { login: 'claude[bot]', __typename: 'Bot' } }, { state: 'DISMISSED', author: { login: 'cy', __typename: 'User' } },
+    { state: 'PENDING', author: { login: 'di', __typename: 'User' } },
+  ] } });
+  assert.deepEqual(row.humanReviewers, ['bo']);
+  assert.deepEqual(row.botReviewers, ['claude']);
+});
+
+test('GitHub\'s search stops at 1,000 results, so a window with more is read in date ranges and every pull request comes', async () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const day = (i) => new Date(Date.parse(`${today}T12:00:00Z`) - (i % 30) * DAY).toISOString();
+  const all = Array.from({ length: 1200 }, (_, i) => ({
+    number: i + 1, url: url(i + 1), title: 'T', createdAt: day(i), mergedAt: null, closedAt: null, state: 'OPEN', isDraft: false, additions: 1, deletions: 0,
+    headRefName: 'b', author: { login: 'ana', __typename: 'User' },
+  }));
+  const queries = [];
+  const run = async (cmd, args) => {
+    const q = args.find((a) => a.startsWith('q=')).slice(2);
+    queries.push(q);
+    const created = /created:(\S+)/.exec(q)[1];
+    const [from, to] = created.startsWith('>=') ? [created.slice(2), '9999-12-31'] : created.split('..');
+    const hits = all.filter((n) => n.createdAt.slice(0, 10) >= from && n.createdAt.slice(0, 10) <= to).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const start = Number(args.find((a) => a.startsWith('after='))?.slice(6) ?? 0);
+    // GitHub answers the first 1,000 only, 100 a page.
+    const page = hits.slice(0, 1000).slice(start, start + 100);
+    const more = start + 100 < Math.min(1000, hits.length);
+    return { stdout: JSON.stringify({ data: { search: { issueCount: hits.length, pageInfo: { hasNextPage: more, endCursor: String(start + 100) }, nodes: page } } }) };
+  };
+  const since = new Date(Date.parse(`${today}T00:00:00Z`) - 40 * DAY).toISOString().slice(0, 10);
+  const found = await createGitHub({ repo: REPO, run }).recentPulls({ since });
+  assert.equal(found.pulls.length, 1200);
+  assert.equal(new Set(found.pulls.map((p) => p.number)).size, 1200, 'none twice');
+  assert.equal(found.truncated, false);
+  assert.ok(queries.some((q) => /created:\d{4}-\d\d-\d\d\.\.\d{4}-\d\d-\d\d/.test(q)), 'cut into date ranges');
+});
+
+test('a pull request with more reviews than were read is not said to have had no human review', () => {
+  const row = recentPullRow({ number: 1, url: url(1), author: { login: 'ana', __typename: 'User' }, reviews: { totalCount: 150, nodes: [{ state: 'COMMENTED', author: { login: 'claude[bot]', __typename: 'Bot' } }] } });
+  assert.equal(row.reviewsPartial, true);
+  const { pulls: { recent } } = analyticsReport({ records: [], pulls: [{ project: 'app', repo: REPO, pulls: [pull({ ...row, createdAt: ago(1) })] }], days: 30, now: NOW });
+  assert.equal(recent[0].humanUnknown, true);
+});
+
+test('the daily chart has one bucket for each local date and counts each series by the date it was opened, across a daylight-saving change', async () => {
+  const { dayCounts } = (await import('./public/analyticsDays.js')).default;
+  const was = process.env.TZ;
+  process.env.TZ = 'America/New_York';
+  try {
+    // 00:30 on Oct 31, 2026, local: the clocks go back on Nov 1.
+    const since = new Date(2026, 9, 31, 0, 30).toISOString();
+    const until = new Date(2026, 10, 3, 12, 0).toISOString();
+    const at = (m, d, h) => new Date(2026, m, d, h).toISOString();
+    const items = [
+      { at: at(9, 31, 9), k: 'a' }, { at: at(10, 1, 0), k: 'a' }, { at: at(10, 1, 23), k: 'b' }, { at: at(10, 1, 12), k: 'b' }, { at: at(10, 3, 8), k: 'a' }, { at: at(8, 1, 8), k: 'a' },
+    ];
+    const buckets = dayCounts(items, (i) => i.at, (i) => i.k, since, until);
+    assert.deepEqual(buckets.map((b) => [new Date(b.start).getDate(), b.a, b.b]), [[31, 1, 0], [1, 1, 2], [2, 0, 0], [3, 1, 0]]);
+    assert.equal(new Set(buckets.map((b) => b.key)).size, buckets.length, 'no date twice');
+    assert.equal(buckets.reduce((t, b) => t + b.a + b.b, 0), 5, 'the one before the window is not counted');
+  } finally {
+    if (was === undefined) delete process.env.TZ; else process.env.TZ = was;
+  }
+});
+
+test('a review that has not reported adds no models', () => {
+  const records = [record({ id: 'dddd0001', kind: 'review', repo: REPO, number: 1, reviewAgents: ['claude', 'codex'], reviewDone: false, createdAt: ago(2) })];
+  const { pulls: { recent } } = analyticsReport({ records, pulls: [{ project: 'app', repo: REPO, pulls: [pull({ number: 1, url: url(1), botReviewers: [] })] }], days: 30, now: NOW });
+  assert.deepEqual(recent[0].models, []);
+});
+
+test('a review\'s models are the agents its report named, not those scheduled', () => {
+  const s = { id: 'eeee0001', repo: REPO, kind: 'review', createdAt: ago(1), review: { agents: ['claude', 'codex'], reportedAgents: ['claude'], reported: true }, number: 1, status: 'stopped' };
+  assert.deepEqual(usageRecord(s).reviewAgents, ['claude']);
+  assert.deepEqual(usageRecord({ ...s, review: { agents: ['claude', 'codex'], reported: true } }).reviewAgents, ['claude', 'codex']);
+});
+
+test('a review that reported no verdict is not done, one with a verdict or from before verdicts were kept is', () => {
+  const s = { id: 'ffff0001', repo: REPO, kind: 'review', createdAt: ago(1), review: { agents: ['claude'], reported: true, conclusion: null }, number: 1, status: 'stopped' };
+  assert.equal(usageRecord(s).reviewDone, false);
+  assert.equal(usageRecord({ ...s, review: { ...s.review, conclusion: 'APPROVE' } }).reviewDone, true);
+  assert.equal(usageRecord({ ...s, review: { agents: ['claude'], reported: true } }).reviewDone, true);
+});
+
+test('a Woodshed session\'s person who reviewed their own App-opened pull request is not a human reviewer', () => {
+  const records = [record({ id: 'abab0001', login: 'ana', prUrls: [url(1)] })];
+  const pulls = [{ project: 'app', repo: REPO, pulls: [pull({ number: 1, url: url(1), author: 'woodshed-app', humanReviewers: ['ana', 'bo'] })] }];
+  const { pulls: { recent } } = analyticsReport({ records, pulls, days: 30, now: NOW });
+  assert.deepEqual(recent[0].humanReviewers, ['bo']);
 });

@@ -134,7 +134,14 @@
         opened = true;
         hideOverlay();
       }
-      term.focus();
+      // Not while the double tap's mode moves through the sessions (session.js, movingByKey): the terminal is not the keys' place.
+      let moving = false;
+      try {
+        moving = Boolean(window.parent?.Woodshed?.movingByKey?.());
+      } catch {
+        // A parent of another origin moves nothing by key.
+      }
+      if (!moving) term.focus();
     });
     ws.addEventListener('message', (e) => received(e.data));
     ws.addEventListener('close', (e) => {

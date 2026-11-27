@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
+import { trusted } from './settingsMarkup.mjs';
 import { createRepoSettings, createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { parseProject } from '../shared/project.mjs';
 
@@ -84,13 +85,13 @@ async function call(api, { method, path, body, login }) {
  * default project `defaultProject`. `opened` is the repo whose row is open from the start (null for none, as the page
  * loads), and `part` the part of each open repo to show once it is read.
  */
-async function loadCard({ search = '', before = null, defaultProject = 'app', admin = false, files = FILES, opened = 'app', part = 'env', failOnce = null } = {}) {
+async function loadCard({ search = '', before = null, defaultProject = 'app', admin = false, files = FILES, opened = 'app', part = 'env', failOnce = null, envSources = null } = {}) {
   let toFail = failOnce;
   const store = { state: { sessions: [] }, save() {} };
   const secrets = memorySecrets();
   const config = { projects: PROJECTS, repo: 'acme/app' };
   const readerOf = (name) => ({ async repoLayer() { const f = files[name]; return { envFiles: f.envFiles, env: f.env ?? {}, rules: f.rules ?? null, setup: null }; } });
-  const repoSettings = createRepoSettings({ store, secrets, config, readerOf });
+  const repoSettings = createRepoSettings({ store, secrets, config, readerOf, envSources });
   if (before) await before({ repoSettings, store, secrets });
   const writes = ['app', 'tools'];
   const projectAccess = {
@@ -400,4 +401,20 @@ test('a repo whose read failed says so, and is read again when its row is opened
   assert.equal(calls.filter((c) => c.path === '/api/my/repos/app').length, 2);
   assert.doesNotMatch(textOf(rowOf(app, 'app')), /Could not load/);
   assert.match(textOf(rowOf(app, 'app')), /Instructions/);
+});
+
+test('an env file whose installation values come from a program\'s source names it and its keys, never the typed values or its controls', async () => {
+  const envSources = {
+    view: async () => ({ 'api-env': { label: 'Vault', on: true, keys: ['API_URL', 'QUEUE_URL'], markup: trusted('<form class="set-form"></form>') } }),
+    forSession: async () => null,
+  };
+  const { app } = await loadCard({
+    envSources,
+    before: async ({ repoSettings }) => repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: `API_URL=http://inst\nSHARED=${SECRET_MARK}\n`, by: 'mia-dev' }),
+  });
+  const layer = walk(app).find((e) => e.className === 'layer is-installation');
+  assert.equal(textOf(layer), 'InstallationThis installation\'s valuesFrom Vault · 2 keysVault sets API_URL, QUEUE_URL.Set by your admins, for every session on this repo.');
+  assert.equal(buttons(layer, 'Show').length, 0, 'the typed values reach no session, so there is none to show');
+  assert.equal(walk(app).some((e) => e.className === 'host-groups' || e.tag === 'form'), false, 'the program\'s controls are the admin\'s page\'s');
+  assert.deepEqual(tableRows(app).filter((r) => r[2] === '✓'), [['API_URL', '', '✓', '', '', 'Vault'], ['QUEUE_URL', '', '✓', '', '', 'Vault']]);
 });

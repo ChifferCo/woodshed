@@ -1,4 +1,4 @@
-<!-- @dsCard group="Overlays" height=150 subtitle="The hover hint on a control with a keyboard shortcut" -->
+<!-- @dsCard group="Overlays" height=210 subtitle="The hover hint on a control with a keyboard shortcut, and the double tap's moving mode" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@300..900&family=Red+Hat+Mono:wght@300..700&display=swap">
 <style>
  body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
@@ -8,9 +8,13 @@
  kbd{display:inline-block;min-width:1.5em;padding:0 4px;margin-right:4px;border:1px solid currentColor;border-bottom-width:2px;border-radius:4px;font:500 10.5px/1.5 "Red Hat Mono",ui-monospace,monospace;text-align:center;opacity:.9}
  .or{margin:0 6px 0 2px;opacity:.7;font-size:11px}
  .more{margin-top:3px;opacity:.75;font-size:11px}
+ .toast{display:inline-block;margin-top:20px;padding:8px 14px;border-radius:6px;background:var(--ink);color:var(--ground);font-size:13px;box-shadow:0 6px 20px rgba(27,34,50,.2)}
+ .label{display:block;margin-top:20px;font-size:11px;opacity:.7}
 </style>
 <span class="btn">+ New session</span><br>
 <div class="keyhint">
  <div class="row"><span>New session</span><span><kbd>⇧</kbd><kbd>⌘</kbd><kbd>O</kbd><span class="or">or</span><kbd>N</kbd></span></div>
  <div class="more">Press <kbd>?</kbd> for every shortcut</div>
 </div>
+<span class="label">After ⌘ tapped twice, while the mode is on, in the toast's place, until Esc, a click or another key</span>
+<div class="toast" role="status"><kbd>⌘</kbd><kbd>⌘</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>1–4</kbd> <kbd>N</kbd> · <kbd>esc</kbd> to stop</div>

@@ -295,10 +295,16 @@
           h('span', { class: 'data-meta' }, h('span', null, `key ${f.key}`))),
         pathsOf(f).length > 1 && L.sharedNote(f),
         read && L.defaultsLayer(f, v.repo),
-        layer('installation', 'This installation\'s values',
-          h('p', { class: 'layer-meta' }, savedLine(f.installation)),
-          installationBlock(project, f.key, f.installation),
-          h('p', { class: 'sub' }, byAdmins(project))),
+        // From a program's source while it is on: its keys by name, and no typed values, which reach no session.
+        f.source?.on
+          ? layer('installation', 'This installation\'s values',
+            h('p', { class: 'layer-meta' }, L.sourceLine(f.source)),
+            L.sourceKeys(f.source),
+            h('p', { class: 'sub' }, byAdmins(project)))
+          : layer('installation', 'This installation\'s values',
+            h('p', { class: 'layer-meta' }, savedLine(f.installation)),
+            installationBlock(project, f.key, f.installation),
+            h('p', { class: 'sub' }, byAdmins(project))),
         layer('personal', 'Your values',
           h('p', { class: 'layer-meta' }, savedLine(f.personal)),
           ownEditor(project, f.key, f.personal, `Your values for ${labelOf(f)}`),
@@ -351,7 +357,9 @@
       const box = boxesOf(project);
       ownOpen.set(project, file);
       box.path.value = file;
-      box.text.value = file ? ownFiles.get(project)?.[file] ?? '' : '';
+      // Own entries alone: a path may be `constructor` or `__proto__`, which every object answers for.
+      const files = ownFiles.get(project);
+      box.text.value = file && files && Object.hasOwn(files, file) ? files[file] : '';
       notes.delete(id(project, FILES));
       if (redraw) render();
     }
@@ -362,7 +370,7 @@
         ownFiles.set(project, answer.files);
         views.set(project, answer.view);
         summaryOf(project, answer.view);
-        openOwnFile(project, answer.files[file.trim()] !== undefined ? file.trim() : Object.keys(answer.files).sort()[0] ?? '', { redraw: false });
+        openOwnFile(project, Object.hasOwn(answer.files, file.trim()) ? file.trim() : Object.keys(answer.files).sort()[0] ?? '', { redraw: false });
         return done;
       });
     }

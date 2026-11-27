@@ -11,6 +11,7 @@ import { createProjectColors } from './projectColors.mjs';
 import { createTunnel } from './dbTunnel.mjs';
 import { createCliSignIn } from './cliSignIn.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
+import { createTrustedIdentity, IDENTITY_HEADER, signIdentity } from './trustedIdentity.mjs';
 import { createClaudeSettings } from './claudeSettings.mjs';
 import agentsRegistry from '../shared/agents.cjs';
 import { createSlack } from './slack.mjs';
@@ -1114,7 +1115,7 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
     // Whose page it is, so the rail draws from what it kept only for the same person.
     assert.match(await getBody(port, page, as('octocat')), /<meta name="woodshed-login" content="octocat">/, `${page} names who it is for`);
     // The same scripts on each, since session.js moves between them in place.
-    assert.deepEqual(scripts.slice(-8), ['dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'], `${page} is the shell`);
+    assert.deepEqual(scripts.slice(-9), ['dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'keptMachine.cjs', 'session.js'], `${page} is the shell`);
     // The notifications on every page, ahead of the shell that opens them on ⌘J: the browser's own list, then the bell.
     assert.deepEqual(scripts.slice(scripts.indexOf('keys.cjs'), scripts.indexOf('keys.cjs') + 4), ['keys.cjs', 'browserNotifications.js', 'notificationBell.js', 'shell.js'], `${page} has the notifications`);
   }
@@ -1132,7 +1133,7 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.match(await getBody(port, '/static/dictation.js', as('octocat')), /W\.dictation = /);
   // The settings pages are one page: each address loads every settings page's script, so common.js moves between
   // them in place. My settings' Repo settings card draws its layers with the repo page's parts, loaded before both.
-  const SETTINGS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js', 'analytics.js'];
+  const SETTINGS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js', 'analyticsDays.js', 'analytics.js'];
   for (const page of ['/settings', '/console-settings', '/console-settings/repos/app', '/secrets', '/people', '/events']) {
     const settingsScripts = [...(await getBody(port, page, as('octocat'))).matchAll(/<script src="\/static\/([\w.]+)\?v=[0-9a-f]{12}"/g)].map((m) => m[1]);
     assert.deepEqual(settingsScripts.slice(-SETTINGS.length), SETTINGS, `${page} is the settings page`);
@@ -3212,4 +3213,200 @@ test('a Codex agent beside claude is started with its owner\'s sign-in, and allo
   mine.taintedAt = '2026-11-23T10:00:00Z';
   assert.equal((await start('codex')).status, 409, 'a tainted session starts none');
   assert.equal(asked.length, 3);
+});
+
+test('the live session list needs a sign-in, shows only what that person may open, and pushes a change', async (t) => {
+  const shared = { id: '0a1b2c3d', status: 'running', state: 'done', title: 'Shared', endpoint: { host: '127.0.0.1', termPort: 1, statusPort: 2 } };
+  const theirs = { id: '9f8e7d6c', status: 'running', state: 'done', title: 'Someone else\'s', owner: 'someone' };
+  const listeners = [];
+  const fleet = { sessions: () => [shared, theirs], find: (id) => [shared, theirs].find((s) => s.id === id) ?? null, onChange: (fn) => listeners.push(fn) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => (String(cookie).includes('woodshed_session=good') ? { login: 'octo' } : null) };
+  const handle = createHandler({ config, fleet, auth });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => { handle.liveSessions.closeAll(); server.close(); });
+
+  assert.equal((await getWith(port, '/api/sessions/live')).status, 401);
+  const events = [];
+  let got;
+  const res = await new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/api/sessions/live', headers: { host: `localhost:${port}`, cookie: 'woodshed_session=good' } }, resolve);
+    req.on('error', reject);
+    req.end();
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers['content-type'], 'text/event-stream; charset=utf-8');
+  let buffer = '';
+  res.setEncoding('utf8');
+  res.on('data', (chunk) => {
+    buffer += chunk;
+    let at;
+    while ((at = buffer.indexOf('\n\n')) !== -1) {
+      const block = buffer.slice(0, at);
+      buffer = buffer.slice(at + 2);
+      const event = /^event: (\w+)\ndata: (.*)$/s.exec(block);
+      if (event) events.push({ event: event[1], data: JSON.parse(event[2]) });
+      got?.();
+    }
+  });
+  const next = (n) => new Promise((resolve) => { got = () => events.length >= n && resolve(); got(); });
+  await next(1);
+  assert.equal(events[0].event, 'full');
+  assert.deepEqual(events[0].data.sessions.map((s) => s.id), ['0a1b2c3d'], 'another person\'s private session is not in it');
+
+  shared.state = 'working';
+  for (const fn of listeners) fn(shared.id);
+  await next(2);
+  assert.equal(events[1].event, 'patch');
+  assert.deepEqual(events[1].data.sessions.map((s) => [s.id, s.state]), [['0a1b2c3d', 'working']]);
+  res.destroy();
+});
+
+test('someone taken off People with the live list open gets no more of their private session, and the stream ends', async (t) => {
+  const mine = { id: '0a1b2c3d', status: 'running', state: 'done', title: 'Mine', owner: 'octo' };
+  const listeners = [];
+  const fleet = { sessions: () => [mine], find: (id) => (id === mine.id ? mine : null), onChange: (fn) => listeners.push(fn) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  let member = true;
+  // As auth.mjs: someone taken off the list is no longer signed in to the console.
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => (member && String(cookie).includes('woodshed_session=good') ? { login: 'octo' } : null) };
+  const handle = createHandler({ config, fleet, auth });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => { handle.liveSessions.closeAll(); server.close(); });
+
+  const res = await new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/api/sessions/live', headers: { host: `localhost:${port}`, cookie: 'woodshed_session=good' } }, resolve);
+    req.on('error', reject);
+    req.end();
+  });
+  assert.equal(res.statusCode, 200);
+  res.setEncoding('utf8');
+  let body = '';
+  res.on('data', (chunk) => { body += chunk; });
+  const ended = new Promise((resolve) => res.on('end', resolve));
+  await new Promise((resolve) => { const check = () => (body.includes('event: full') ? resolve() : setTimeout(check, 10)); check(); });
+
+  member = false;
+  mine.state = 'working';
+  mine.lastMessage = 'something private';
+  for (const fn of listeners) fn(mine.id);
+  const outcome = await Promise.race([ended.then(() => 'ended'), new Promise((resolve) => { setTimeout(() => resolve('still open'), 2000).unref(); })]);
+  res.destroy();
+  assert.equal(outcome, 'ended', 'the stream ends');
+  assert.ok(!body.includes('event: patch'), 'no change reached the stream');
+  assert.ok(!body.includes('something private'));
+  assert.equal((await getWith(port, '/api/sessions/live', { cookie: 'woodshed_session=good' })).status, 401);
+});
+
+// A live list stream on a test console: its events as they come, and a way to wait for one or for its end.
+async function openLiveStream(port, headers = {}) {
+  const res = await new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/api/sessions/live', headers: { host: `localhost:${port}`, ...headers } }, resolve);
+    req.on('error', reject);
+    req.end();
+  });
+  let body = '';
+  let ended = false;
+  res.setEncoding('utf8');
+  res.on('data', (chunk) => { body += chunk; });
+  res.on('end', () => { ended = true; });
+  const until = async (check, ms = 2000) => {
+    const at = Date.now();
+    while (!check() && Date.now() - at < ms) await new Promise((resolve) => setTimeout(resolve, 10));
+    return check();
+  };
+  return { res, body: () => body, ended: () => ended, until };
+}
+
+test('a live list opened before the console required sign-in ends once it does, with nothing more sent', async (t) => {
+  const shared = { id: '0a1b2c3d', status: 'running', state: 'done', title: 'Shared' };
+  const listeners = [];
+  const fleet = { sessions: () => [shared], find: (id) => (id === shared.id ? shared : null), onChange: (fn) => listeners.push(fn) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  let on = false;
+  const auth = { enabled: () => on, available: () => true, sessionFor: async () => null };
+  const handle = createHandler({ config, fleet, auth });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => { handle.liveSessions.closeAll(); server.close(); });
+
+  const stream = await openLiveStream(port);
+  assert.equal(stream.res.statusCode, 200, 'no sign-in yet: anyone on loopback');
+  assert.ok(await stream.until(() => stream.body().includes('event: full')));
+  shared.state = 'working';
+  for (const fn of listeners) fn(shared.id);
+  assert.ok(await stream.until(() => stream.body().includes('event: patch')), 'changes come while sign-in is off');
+
+  on = true;
+  shared.state = 'done';
+  shared.title = 'Renamed after sign-in';
+  for (const fn of listeners) fn(shared.id);
+  const ended = await stream.until(() => stream.ended());
+  stream.res.destroy();
+  assert.equal(ended, true, 'the stream ends');
+  assert.ok(!stream.body().includes('Renamed after sign-in'), 'nothing after sign-in was required');
+  assert.equal((await getWith(port, '/api/sessions/live')).status, 401);
+});
+
+test('a hosted console pushes the live list only when its host says who is still signed in, and ends a revoked one at once', async (t) => {
+  const mine = { id: '0a1b2c3d', status: 'running', state: 'done', title: 'Mine', owner: 'octo' };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  let clock = Date.now();
+  const secret = 'test-secret-for-the-hosting-proxy';
+  const trusted = createTrustedIdentity({ secret, now: () => clock });
+  const serve = async (opts) => {
+    const listeners = [];
+    const fleet = { sessions: () => [mine], find: (id) => (id === mine.id ? mine : null), onChange: (fn) => listeners.push(fn) };
+    const handle = createHandler({ config, fleet, trusted, ...opts });
+    const server = http.createServer((req, res) => { handle(req, res); });
+    const port = await listen(server);
+    t.after(() => { handle.liveSessions.closeAll(); server.close(); });
+    return { port, changed: () => { for (const fn of listeners) fn(mine.id); } };
+  };
+  const identity = () => signIdentity({ secret, login: 'octo', role: 'member', exp: clock + 60_000 });
+
+  const unasked = await serve({});
+  assert.equal((await getWith(unasked.port, '/api/sessions/live', { [IDENTITY_HEADER]: identity() })).status, 404, 'no hook: the page polls');
+  assert.equal((await getWith(unasked.port, '/api/sessions', { [IDENTITY_HEADER]: identity() })).status, 200);
+
+  const asked = [];
+  let signedIn = false;
+  const hosted = await serve({ stillSignedIn: async ({ login, headers }) => { asked.push({ login, identity: Boolean(headers[IDENTITY_HEADER]) }); return signedIn; } });
+  // Signed by the proxy just before the program took them out: the identity checks out, the program says no.
+  const refused = await openLiveStream(hosted.port, { [IDENTITY_HEADER]: identity() });
+  assert.equal(refused.res.statusCode, 401);
+  assert.ok(await refused.until(() => refused.ended()));
+  assert.ok(!refused.body().includes(mine.id), 'no session in the answer');
+  signedIn = true;
+  const stream = await openLiveStream(hosted.port, { [IDENTITY_HEADER]: identity() });
+  assert.equal(stream.res.statusCode, 200);
+  assert.ok(await stream.until(() => stream.body().includes('event: full')));
+  mine.state = 'working';
+  hosted.changed();
+  assert.ok(await stream.until(() => stream.body().includes('event: patch')), 'pushed while the host says so');
+  assert.deepEqual(asked.at(-1), { login: 'octo', identity: true }, 'asked with who and the request that opened it');
+
+  // Taken out by the host, with the identity still good for most of its minute.
+  signedIn = false;
+  mine.state = 'done';
+  mine.lastMessage = 'after the host took them out';
+  hosted.changed();
+  const ended = await stream.until(() => stream.ended());
+  stream.res.destroy();
+  assert.equal(ended, true, 'the stream ends');
+  assert.ok(!stream.body().includes('after the host took them out'));
+
+  // And, with the host saying yes, the identity's own expiry still ends it.
+  signedIn = true;
+  const second = await openLiveStream(hosted.port, { [IDENTITY_HEADER]: identity() });
+  assert.ok(await second.until(() => second.body().includes('event: full')));
+  clock += 60_001;
+  mine.lastMessage = 'after the identity expired';
+  hosted.changed();
+  const expired = await second.until(() => second.ended());
+  second.res.destroy();
+  assert.equal(expired, true);
+  assert.ok(!second.body().includes('after the identity expired'));
 });

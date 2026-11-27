@@ -116,6 +116,10 @@ test('every session, private or shared, is told to wait for CI once it opens its
     assert.equal(rules.match(/Do not end the session when you open the PR: wait for CI\./g)?.length, 1, kind);
     // A private session's owner reads its terminal; a shared one's notes go on the pull request.
     assert.match(rules, kind === 'shared' ? /is flaky: note it in a PR comment\./ : /is flaky: say so here\./, kind);
+    // A foreground poll holds the terminal: what its person types queues behind it until the wait ends.
+    assert.equal(rules.match(/Wait in the background, never in a foreground loop of `sleep`/g)?.length, 1, kind);
+    // Codex, Grok Build and OpenCode are not woken when a background command ends: they must not end their turn on one.
+    assert.match(rules, /An agent that is not told when a background command ends keeps polling in the foreground/, kind);
   }
 });
 

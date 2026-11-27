@@ -128,6 +128,7 @@
 //   /api/console-settings*, /api/analytics, the API behind People, Secrets & webhooks, Webhook events, Console settings
 //   and Analytics.
 //   GET  /api/webhook-events     what the console did with each queued webhook, and which sources are switched off
+//   POST /api/analytics/refresh        read the repos' pull requests again in the background (the page's Refresh button)
 //   GET  /api/analytics?days=7|30|90   the Analytics page: sessions started, pull requests through Woodshed and not, by
 //                                person, time to merge and merge risk (analytics.mjs)
 //   GET  /api/secrets            each secret's state (never a value) and the GitHub App's webhook settings
@@ -282,6 +283,7 @@ import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from '
 import { readMyPulls } from './myPulls.mjs';
 import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
+import { createLiveSessions } from './liveSessions.mjs';
 import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
 import { createMcpTester } from './mcpTest.mjs';
 import { ROLES, roleById, roleDiffers, roleOf } from './peopleRoles.mjs';
@@ -304,8 +306,8 @@ const staticPath = (file) => STATIC_ELSEWHERE[file] ?? path.join(PUBLIC_DIR, fil
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
 // The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
 export const MAX_MESSAGE_CHARS = 8000;
-const SETTINGS_SCRIPTS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js', 'analytics.js'];
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminalPaste.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
+const SETTINGS_SCRIPTS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js', 'analyticsDays.js', 'analytics.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminalPaste.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'keptMachine.cjs', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
@@ -325,6 +327,7 @@ const STATIC_FILES = {
   'terminalFind.cjs': 'text/javascript; charset=utf-8',
   'terminalPaste.cjs': 'text/javascript; charset=utf-8',
   'sessionTabs.cjs': 'text/javascript; charset=utf-8',
+  'keptMachine.cjs': 'text/javascript; charset=utf-8',
   'terminal.js': 'text/javascript; charset=utf-8',
   'sharedHome.js': 'text/javascript; charset=utf-8',
   'dictation.js': 'text/javascript; charset=utf-8',
@@ -338,6 +341,7 @@ const STATIC_FILES = {
   'session.js': 'text/javascript; charset=utf-8',
   'events.js': 'text/javascript; charset=utf-8',
   'analytics.js': 'text/javascript; charset=utf-8',
+  'analyticsDays.js': 'text/javascript; charset=utf-8',
   'secrets.js': 'text/javascript; charset=utf-8',
   'webhookSetup.js': 'text/javascript; charset=utf-8',
   'slackSetup.js': 'text/javascript; charset=utf-8',
@@ -957,7 +961,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, appPorts = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, stillSignedIn = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
   cli = null, reviewReadiness = null, analytics = null,
 }) {
@@ -1043,6 +1047,15 @@ export function createHandler({
     const report = await analytics.report({ days, repos });
     const logins = [...report.people.map((p) => p.login), ...report.pulls.recent.map((p) => p.login), ...report.sessions.recent.map((s) => s.login)];
     return reply(res, 200, { ...report, windows: WINDOWS, names: namesFor([...new Set(logins.filter(Boolean))]) });
+  }
+
+  // The Analytics page's Refresh button: reads the repos again in the background, and answers at once.
+  async function analyticsRefresh(res, login) {
+    if (!analytics?.refresh) return reply(res, 404, { error: 'this console keeps no analytics' });
+    const repos = projectAccess ? (await (projectAccess.visible ?? projectAccess.startable)(login)).map((p) => p.repo) : null;
+    const started = analytics.refresh({ repos });
+    console.log('analytics: refresh asked', { login, started });
+    return reply(res, 200, { started });
   }
 
   function cliRepoRole(login) {
@@ -1526,6 +1539,10 @@ export function createHandler({
 
   // Every shared session for someone with sessions from GitHub, and the asker's own private ones. The counts are the
   // fleet's, which say nothing of whose.
+  // Each open page's list, pushed as it changes (liveSessions.mjs). An embedding's fleet with no onChange pushes only
+  // what the sweep finds.
+  const liveSessions = createLiveSessions({ bodyFor: sessionsBody, onChange: fleet.onChange ? (fn) => fleet.onChange(fn) : null });
+
   function sessionsBody(login) {
     const all = fleet.sessions();
     const sessions = all.filter((s) => canOpen(s, login, access));
@@ -2418,6 +2435,7 @@ export function createHandler({
     if (body.text.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in one message` });
     const messageId = typeof body.id === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(body.id) ? body.id : randomUUID();
     console.log('console: message typed in from the page', { id: session.id, agent: agentId, chars: body.text.length });
+    fleet.soon?.(session);
     return toStatusd(req, res, session, { method: 'POST', path: `${base}/send`, body: { text: body.text, id: messageId } });
   }
 
@@ -2443,6 +2461,8 @@ export function createHandler({
     }
     if (action === 'interrupt') {
       console.log('console: agent interrupted from the page', { id: session.id });
+      // Its card changes from what this does: read again in a moment, and often for a while.
+      fleet.soon?.(session);
       return toStatusd(req, res, session, { method: 'POST', path: '/interrupt', body: {} });
     }
     if (action === 'answer') {
@@ -2453,6 +2473,8 @@ export function createHandler({
         id: session.id, kind: sent.kind,
         ...(sent.kind === 'question' ? { questions: sent.questions.length, picks: sent.questions.map((q) => q.pick + 1) } : { decision: sent.decision }),
       });
+      // Its card changes from what this does: read again in a moment, and often for a while.
+      fleet.soon?.(session);
       return toStatusd(req, res, session, { method: 'POST', path: '/answer', body: sent });
     }
     if (action === 'send') {
@@ -2967,6 +2989,7 @@ export function createHandler({
   // A write past its sign-in and the page's own checks: the page's, through write(), and the command line's few
   // (cliSessions.mjs).
   async function writeRoute(req, res, pathname, login) {
+    if (pathname === '/api/analytics/refresh') return analyticsRefresh(res, login);
     if (pathname === '/api/secrets-manager') return managerWrite(req, res, login);
     if (SECRET_RE.test(pathname) || WEBHOOK_RE.test(pathname)) return settingsWrite(req, res, pathname);
     if (SETUP_WRITE_RE.test(pathname)) return githubSetupWrite(req, res, pathname, login);
@@ -3268,6 +3291,23 @@ export function createHandler({
     if (pathname === '/api/analytics') return analyticsReply(res, url.searchParams.get('days'), user.login);
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
     if (pathname === '/api/sessions') return reply(res, 200, sessionsBody(user.login));
+    if (pathname === '/api/sessions/live') {
+      // Behind a hosting proxy, the identity the stream opened with is good for a minute after the person was taken
+      // out: only the program can say they are gone, so a hosted console pushes the list only when it is asked
+      // (stillSignedIn). Its pages poll otherwise, and see the refusal of their next poll.
+      if (trusted && !stillSignedIn) return reply(res, 404, { error: 'this console pushes no live session list: its host does not say who is still signed in' });
+      // Signed in again before each send, as every request is (signedIn): someone taken off People, or signed out,
+      // gets nothing more on a stream they opened before. Asked afresh each time: a console that starts requiring
+      // sign-in (its first GitHub sign-in) ends a stream opened before with no sign-in, as it refuses that request now.
+      const headers = req.headers;
+      const login = user.login;
+      const stillAllowed = async () => {
+        if (!signInOn()) return login === soloLogin;
+        if ((await consoleUser(headers))?.login !== login) return false;
+        return !trusted || (await stillSignedIn({ login, headers })) === true;
+      };
+      return liveSessions.handle(req, res, login, { stillAllowed });
+    }
     if (pathname === '/api/my') {
       // The first look waits for the store, so the page never shows a sign-in missing that is there. Later ones ask it in
       // the background: the page polls, and sees a change on a later poll.
@@ -3375,6 +3415,7 @@ export function createHandler({
   handle.startMine = startMine;
   handle.resumeMine = resumeMine;
   handle.agentAction = agentAction;
+  handle.liveSessions = liveSessions;
   return handle;
 }
 
@@ -3537,7 +3578,7 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
  *   `repos` and `projectReadiness` are an embedding program's hooks, passed on to createInstallation (installation.mjs):
  *   only the dev console's stand-in (scripts/devHostConsole.mjs) passes them here
  */
-export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null, hostApp = null, repoPage = null }) {
+export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null, hostApp = null, repoPage = null, envSources = null }) {
   const first = given ?? loadConfig();
   const store = openStore(first.stateDir);
   // An App saved on the setup page is the console's own from the next start.
@@ -3547,7 +3588,7 @@ export async function startConsole({ provider, config: given = null, repos = nul
   const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
   console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
   await checkGh();
-  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness, hostApp, repoPage });
+  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness, hostApp, repoPage, envSources });
   const { config, handle } = installation;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {

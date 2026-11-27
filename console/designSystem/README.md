@@ -13,7 +13,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 ## Visual foundations
 
 - **Color roles.** Orange (`action`) is only for the one primary action in a view: New session, Resume, Take it, Assign. Yellow (`wait`) is only for a session that needs a person, and for a PR chip in the merge queue, as GitHub colors it. `slate` is for working, in review, waiting on a job, links and the Assigned outline. `green` is done. `bad` is failed. `amber` is the focus ring and the open session's outline, never text.
-- **Project colours.** `proj-*` (teal, plum, sienna, rose, violet, moss) say which project a session is on, and nothing else: never a status, a warning or an action. None of them is a status hue, and the palette is fixed, so do not add one or borrow a status colour for a project. A project colour never stands alone: its name is on the filter chip and in the card's tooltip. Two projects never share one.
+- **Project colours.** `proj-*` (teal, plum, sienna, rose, violet, moss) say which project a session is on, and nothing else: never a status, a warning or an action. None of them is a status hue, and the palette is fixed, so do not add one or borrow a status colour for a project. A project colour never stands alone: its name is on the filter chip and in the card's tooltip. Two projects never share one. The one exception is Analytics, which borrows `proj-violet`, `proj-teal` and `proj-rose` as chart and figure tones (components/Figures, components/TrendBars): always beside words and numbers, never to say a status.
 - **Surfaces.** Page and cards on `ground`; rail groups and stopped cards on `stopped`. Borders are `line`; dividers inside the rail are `line-soft`. No shadows on cards. `menu` shadow only on menus.
 - **Type.** One family, Red Hat: Red Hat Display for text and the `title`, bold, once per page (`card-title`, `button`, `group-label` too), and Red Hat Mono for meta lines, PR chips, counts and code (`meta`, `chip`). The console serves both itself (`public/fonts/`), each a variable font holding every weight, never from Google Fonts: a family not served there falls back to the system's font. The component previews here load them from Google Fonts, as files opened on their own.
 - **Spacing and radius.** Gaps are `space-2` between cards and head controls, `space-3` for rail padding. Cards are `radius-lg`, rail buttons `radius-md`, form buttons `radius-sm`, the People filter and count chips `radius-pill`.
@@ -62,10 +62,12 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   in mono and a line under, in the group's box, never a column of cards. A list of records is still a table.
 - A count over time (sessions started each week, pull requests merged) is trend bars (`components/TrendBars`), under
   the group's figures in the same box: `slate` bars, Woodshed's on the rest's `idle-dot` grey when there are two, the
-  numbers in each bar's tooltip. Never a line chart with two scales, and never a status colour for a count.
+  numbers in each bar's tooltip. Never a line chart with two scales, and never a status colour for a count. Analytics may
+  give a chart a tone of its own (violet for sessions, teal for pull requests without Woodshed), and draws merge risk as a
+  stacked bar of green, amber and red with a count in words for each level: the tier is a status, so its colour is allowed there.
 - The Analytics page is the console's own (admins only), a page of its own under Console beside Settings, not one of
   Settings' tabs. It counts a My Woodshed session and links its pull request, but never shows its title or prompt:
-  that stays its owner's. Lines changed are shown quietly in `meta`, last, never as a figure or a ranking.
+  that stays its owner's. Lines changed are shown last, never as a figure or a ranking: `+added` in `add` and `−removed` in `del` on Analytics (a rough size at a glance), `meta` anywhere else.
 - A few things each set on or off at once, such as who reviews your pull requests on My settings, are an on/off grid (`components/OnOffGrid`): radios under Off and On, a row each, saved as they are picked.
 - Two or three exclusive choices whose difference matters, such as an MCP server's Ordinary or Production, are choice
   cards (`components/ChoiceCards`): side by side, each a title and one line saying what it does, the picked one in the
@@ -288,7 +290,9 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   (the pull request channel). A closed row says what it holds. An env file and the instructions are a layered file
   (`components/LayeredFile`): the layers in the order a session writes them, the layer's word as a grey tag, and for an
   env file a table of which layer wins each key. Values never appear in the table, a log or a tooltip: only in their
-  own layer's field, behind **Show and edit** once saved.
+  own layer's field, behind **Show and edit** once saved. Where a program that embeds the console has its own source
+  for an env file's installation values, that layer has a segmented choice, **Typed here** or the source's name, and
+  the row says "From Vault · 3 keys" while the source is on.
 - With no env files, the Env files group's box holds a short how-to: numbered steps (`cmd-steps`), the YAML in a
   mono `stopped` block, a link to the project file on GitHub (↗), and where the docs are.
 - **Slack** is one box of the same shape: the channel ID field (mono), a `meta` mono line saying where the next pull
@@ -377,6 +381,8 @@ its sentence beside the icon.
 No icon set. The console uses text glyphs (`▾ ▸ ✓ ✗ ⋯ ☆ ↗`) and 6px status dots; a stopped session's dot is a ring. A lock on the Private tag is drawn in CSS, not an image. The phone's message box under the terminal is the one place with drawn icons (📎 and the mic, as round buttons): on a desktop, the same actions are outline buttons with words, Attach files and Dictate (Stop while it listens, with a plain "Listening." line in `sub` under the field, no motion).
 
 In Review's Files changed tab, Ask uses an outline Dictate button beside Explain or Send. It says Stop while listening, with a muted status line under the question.
+
+Analytics (`public/analytics.js`) is the other exception: small 16px line icons (`currentColor`, 1.4 stroke, drawn inline, never loaded) sit beside a figure's label, a chart's label, a person or repo name in a table and the Show more buttons. They are decoration: the words and numbers always say the same, so an icon is `aria-hidden` and never alone.
 
 ## Asking for one line of text
 
