@@ -722,8 +722,13 @@ export function undimmed(line) {
   for (const m of line.matchAll(SGR)) {
     if (!dim) out += line.slice(at, m.index);
     const codes = m[1] === '' ? [0] : m[1].split(';').map(Number);
-    for (const c of codes) {
-      if (c === 2) dim = true;
+    for (let i = 0; i < codes.length; i++) {
+      const c = codes[i];
+      if (c === 38 || c === 48 || c === 58) {
+        // Indexed and RGB color parameters can contain numbers also used for attributes.
+        if (codes[i + 1] === 5) i += 2;
+        else if (codes[i + 1] === 2) i += 4;
+      } else if (c === 2) dim = true;
       else if (c === 0 || c === 22) dim = false;
     }
     at = m.index + m[0].length;
