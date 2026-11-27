@@ -202,7 +202,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
         { label: 'Sessions started', icon: 'sessions', tone: 'violet', value: n(total), sub: `${n(privateCount)} My Woodshed · ${n(total - privateCount)} shared` },
         picked ? null : { label: 'People using it', icon: 'people', tone: 'teal', value: s.members ? `${n(s.activeMembers)} / ${n(s.members)}` : n(s.people), sub: s.members ? `members started a session${s.people > s.activeMembers ? `, and ${n(s.people - s.activeMembers)} not on People` : ''}` : 'started a session' },
         picked ? null : { label: 'Reviews run', icon: 'review', tone: 'green', value: n(s.review), sub: `${n(s.qa)} QA runs · ${n(s.ask)} questions from Slack` },
-        { label: 'Most used agent', icon: 'agent', tone: 'amber', value: agents.length ? `${AGENT_NAMES[agents[0][0]] ?? agents[0][0]} ${pct(agents[0][1] / total)}` : '—', sub: 'of sessions, split below' },
+        { label: 'Most used agent', icon: 'agent', tone: 'amber', value: agents.length ? `${AGENT_NAMES[agents[0][0]] ?? agents[0][0]} ${pct(agents[0][1] / total)}` : '—', sub: total && agents.length ? 'of sessions, split below' : 'of sessions' },
       ]),
       agentMix(agents, total),
       trendBars({ label: 'Sessions started', ico: 'sessions', buckets, series: [{ key: 'a', cls: 'is-violet', word: 'sessions', label: 'Sessions' }] }));
