@@ -273,3 +273,36 @@ test('extra Grok and OpenCode launch with their own conversations and undo faile
   assert.equal(undoCount, 2);
   assert.deepEqual((await agents.list()).map(({ id }) => id), [grok.id, open.id]);
 });
+
+test('extra Grok and OpenCode deliver Chat follow-ups into their own idle panes', async (t) => {
+  const standIn = standInTmux();
+  const panes = new Map();
+  const { agents, dir } = agentsWith({
+    run: async (command, args) => {
+      const pane = panes.get(args[args.indexOf('-t') + 1]);
+      if (pane && args[0] === 'capture-pane') return { stdout: args.includes('-e') ? pane.screen : pane.plain };
+      if (pane && args[0] === 'display') return { stdout: '1\n' };
+      return standIn.run(command, args);
+    },
+    grokEnv: async () => ({ env: {} }),
+    opencodeEnv: async () => ({ env: {} }),
+  });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const agent of ['grok', 'opencode']) {
+    const { id } = await agents.start({ agent });
+    const target = `=${id}:`;
+    const screen = fs.readFileSync(new URL(`../shared/__fixtures__/pane-${agent}-box-empty.ansi`, import.meta.url), 'utf8');
+    panes.set(target, { screen, plain: screen.replace(/\x1b\[[0-9;]*m/g, '') });
+    const text = `Follow-up for ${agent}`;
+    const messageId = `message-${agent}`;
+    const before = standIn.calls.length;
+    assert.deepEqual(await agents.send(id, text, messageId), { ok: true });
+    const calls = standIn.calls.slice(before);
+    assert.ok(calls.some((args) => args.includes('set-buffer') && args.at(-1) === text));
+    assert.ok(calls.some((args) => args.includes('paste-buffer') && args.includes(target)));
+    assert.ok(calls.some((args) => args.includes(target) && args.at(-1) === 'Enter'));
+    const view = (await agents.list()).find((pane) => pane.id === id);
+    assert.deepEqual(view.heldIds, []);
+    assert.deepEqual(view.deliveredIds, [messageId]);
+  }
+});
