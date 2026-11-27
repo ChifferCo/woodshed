@@ -357,7 +357,9 @@
       const box = boxesOf(project);
       ownOpen.set(project, file);
       box.path.value = file;
-      box.text.value = file ? ownFiles.get(project)?.[file] ?? '' : '';
+      // Own entries alone: a path may be `constructor` or `__proto__`, which every object answers for.
+      const files = ownFiles.get(project);
+      box.text.value = file && files && Object.hasOwn(files, file) ? files[file] : '';
       notes.delete(id(project, FILES));
       if (redraw) render();
     }
@@ -368,7 +370,7 @@
         ownFiles.set(project, answer.files);
         views.set(project, answer.view);
         summaryOf(project, answer.view);
-        openOwnFile(project, answer.files[file.trim()] !== undefined ? file.trim() : Object.keys(answer.files).sort()[0] ?? '', { redraw: false });
+        openOwnFile(project, Object.hasOwn(answer.files, file.trim()) ? file.trim() : Object.keys(answer.files).sort()[0] ?? '', { redraw: false });
         return done;
       });
     }

@@ -421,14 +421,14 @@ test('own files from before they were per repo move into the default project onc
   const at = '2026-10-01T00:00:00.000Z';
   const secrets = memorySecrets({
     'users/sam-ops/own-files': JSON.stringify({ 'app/.env.production': `A=${SECRET_MARK}` }),
-    'users/mia-dev/own-files': JSON.stringify({ old: 'x', both: 'old' }),
+    'users/mia-dev/own-files': JSON.stringify({ old: 'x', both: 'old', constructor: 'c' }),
     'users/mia-dev/repos/app/files': JSON.stringify({ new: 'y', both: 'new' }),
     'users/ana-k/own-files': JSON.stringify({ big: 'x'.repeat(40_000) }),
     'users/ana-k/repos/app/files': JSON.stringify({ mine: 'y'.repeat(40_000) }),
   });
   const people = {
     'sam-ops': { ownFiles: { 'app/.env.production': at } },
-    'mia-dev': { ownFiles: { old: at, both: at }, repos: { app: { files: { new: at, both: at } } } },
+    'mia-dev': { ownFiles: { old: at, both: at, constructor: at }, repos: { app: { files: { new: at, both: at } } } },
     'ana-k': { ownFiles: { big: at }, repos: { app: { files: { mine: at } } } },
   };
   const { repoSettings, store } = setup({ state: { people }, secrets });
@@ -436,8 +436,8 @@ test('own files from before they were per repo move into the default project onc
   const lines = await captureLog(async () => assert.deepEqual(await repoSettings.moveOwnFiles(), { moved: 2, kept: 1, failed: 0 }));
   assert.deepEqual(await repoSettings.ownFiles({ login: 'sam-ops', project: 'app' }), { 'app/.env.production': `A=${SECRET_MARK}` });
   assert.deepEqual((await repoSettings.view('app', { login: 'sam-ops' })).files, [{ path: 'app/.env.production', savedAt: at }]);
-  assert.deepEqual(await repoSettings.ownFiles({ login: 'mia-dev', project: 'app' }), { new: 'y', both: 'new', old: 'x' }, 'the old paths are added, theirs win');
-  assert.deepEqual((await repoSettings.view('app', { login: 'mia-dev' })).files.map((f) => f.path), ['both', 'new', 'old']);
+  assert.deepEqual(await repoSettings.ownFiles({ login: 'mia-dev', project: 'app' }), { new: 'y', both: 'new', old: 'x', constructor: 'c' }, 'the old paths are added, theirs win');
+  assert.deepEqual((await repoSettings.view('app', { login: 'mia-dev' })).files, ['both', 'constructor', 'new', 'old'].map((path) => ({ path, savedAt: at })), 'a path every object has (`constructor`) moved with its date');
   assert.deepEqual(Object.keys(await repoSettings.ownFiles({ login: 'ana-k', project: 'app' })), ['mine'], 'together over 64 KB: theirs alone');
   assert.ok(lines.some((l) => l.includes('ana-k') && l.includes("leftOut: [ 'big' ]")), 'and the log names what was left out');
   assert.deepEqual([...secrets.values.keys()].filter((k) => k.endsWith('/own-files')), [], 'the old values are deleted');
