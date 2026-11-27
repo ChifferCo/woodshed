@@ -394,24 +394,28 @@ session pauses.
 
 The console reads each session's state from its statusd (`GET /status`) and pushes what changed to every open page
 (`GET /api/sessions/live`, server-sent events, `liveSessions.mjs`): the whole list as the stream opens, then each
-session's changed fields within 100 ms of the console knowing them. A session the console just sent something to (a
-message, an answer, an interrupt) is read 400 ms later and every 2 s for 30 s after (`fleet.soon`, `checkLive`), and
-so is every session working, which is when Done or Needs you comes; the rest are read at the 10 s tick, all at once,
-eight at a time. A status read costs a session about a tenth of a second of CPU (git and `gh`'s cached lookups),
-which is why sessions not likely to change are not read every 2 s. So a card says Working within about a second of a
-message from the page, and Done or Needs you within about 2 s of the agent saying so.
+session's changed fields within 100 ms of the console knowing them. A status read costs a session about a tenth of a
+second of CPU (git and `gh`'s cached lookups), so a session is read often only while it is likely to change. When
+sessions are read depends on whether a session tells the console of its own changes:
 
-A session whose agent has hooks (claude, Grok Build) also tells the console the moment its state changes: its statusd
-looks at the hooks' state file every 250 ms and, when the state there changed, calls the session API's
-`POST /state-changed` with its own token (`session/stateAnnounce.mjs`). The console reads that session at once, at most
-every 300 ms (`fleet.stateChanged`), and from then on leaves most of its working to it: while it works the live check
-reads it every 6 s rather than 2, for what no hook tells of (an Esc typed in its TUI tab, Herdr's own word, a background
-agent ending), and every 2 s only while a message waits for it or was just sent. Its card then changes within half a second of the agent, a message typed
-in the TUI tab included. The call says only that something changed, so the card still shows only what the console
-read. The console logs `fleet: session tells of its own state changes` once for each session, and statusd `statusd:
-the console is told of each state change`, or `state change not told to the console` with why (once per reason; a
-console from before the route answers 404). An Esc that cuts a turn short fires no hook, and codex and OpenCode have
-none: those changes wait for the console's reads, and a message typed in their TUI tab for the next tick, up to 10 s.
+- **A session that does not** (codex, OpenCode, an image from before it, or one that has not told yet since the
+  console started): one just sent something from the page (a message, an answer, an interrupt) is read 400 ms later
+  and every 2 s for 30 s after (`fleet.soon`, `checkLive`), and so is every session working, which is when Done or
+  Needs you comes. The rest are read at the 10 s tick, all at once, eight at a time. So its card says Working within
+  about a second of a message from the page, Done or Needs you within about 2 s of the agent, and Working on a message
+  typed in its TUI tab at the next tick, up to 10 s.
+- **A session that does** (claude and Grok Build, whose hooks write their state): its statusd looks at the hooks'
+  state file every 250 ms and calls the session API's `POST /state-changed` with its own token when the state there
+  changed or a new prompt came (`session/stateAnnounce.mjs`; `hookState.mjs` keeps the last prompt's time). The console
+  reads it at once, at most every 300 ms (`fleet.stateChanged`), so its card changes within half a second of the
+  agent, a message typed in its TUI tab included. While it works, the console reads it only every 6 s, for what no hook
+  tells of (an Esc typed in its TUI tab, Herdr's own word, a background agent ending): such a change shows within 6 s.
+  While a message waits for it, or for 30 s after one was sent, it is still read every 2 s, since only a read sends
+  what is held. The call says only that something changed, so the card still shows only what the console read.
+
+The console logs `fleet: session tells of its own state changes` once for each session that does, and statusd
+`statusd: the console is told of each state change`, or `state change not told to the console` with why (once per
+reason; a console from before the route answers 404).
 
 The page keeps the stream only while its tab shows: over HTTP/1 a browser allows six connections to the console for
 all its tabs. It polls `GET /api/sessions` every 30 s while the stream is open, and every 5 s as before when it is
