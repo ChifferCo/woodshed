@@ -77,7 +77,7 @@ whose it is: **My repo settings** and **My session timeouts** are yours; Setting
   never writes `?tab` itself: a tab picked lives in the history entry's state, so a reload, Back and Forward keep it
   (the entry's tab wins over its address), and an address only ever carries a link's tab, kept as it came after a pick
   or a fallback (it goes through sign-in as it came, and a ?tab nobody linked to never reaches someone else).
-  `?tab=chat` asks for Chat itself, as Open the chat and Resume do; a tab remembered as `agent` before TUI's rename
+  `?tab=chat` asks for Chat itself, as Open the chat does; a tab remembered as `agent` before TUI's rename
   opens TUI. A tab the session cannot show now opens the other view of its pair where that one can show, as the bar's
   tab does (Diff once it stopped opens Review, Terminal with no shell App log), and TUI otherwise; a remembered one is
   then remembered as the tab it opened. Until the route's lookup answers, the list may be the kept snapshot's, so the tab is held and tried again first.
