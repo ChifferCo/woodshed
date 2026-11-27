@@ -234,6 +234,7 @@
 // A session started from My Woodshed is private: every route that reaches it (its page's data, terminal,
 // Redis, app, review, Stop, the websockets) answers anyone but its owner as it would an id that does not exist.
 
+import { beginInteractiveGrok } from './reviewAgentProxy.mjs';
 import { safeHref } from './settingsMarkup.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -282,6 +283,7 @@ import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from '
 import { readMyPulls } from './myPulls.mjs';
 import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
+import { createLiveSessions } from './liveSessions.mjs';
 import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
 import { createMcpTester } from './mcpTest.mjs';
 import { ROLES, roleById, roleDiffers, roleOf } from './peopleRoles.mjs';
@@ -305,7 +307,7 @@ const staticPath = (file) => STATIC_ELSEWHERE[file] ?? path.join(PUBLIC_DIR, fil
 // The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
 export const MAX_MESSAGE_CHARS = 8000;
 const SETTINGS_SCRIPTS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js', 'analyticsDays.js', 'analytics.js'];
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminalPaste.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminalPaste.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'keptMachine.cjs', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
@@ -325,6 +327,7 @@ const STATIC_FILES = {
   'terminalFind.cjs': 'text/javascript; charset=utf-8',
   'terminalPaste.cjs': 'text/javascript; charset=utf-8',
   'sessionTabs.cjs': 'text/javascript; charset=utf-8',
+  'keptMachine.cjs': 'text/javascript; charset=utf-8',
   'terminal.js': 'text/javascript; charset=utf-8',
   'sharedHome.js': 'text/javascript; charset=utf-8',
   'dictation.js': 'text/javascript; charset=utf-8',
@@ -958,7 +961,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, appPorts = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, stillSignedIn = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
   cli = null, reviewReadiness = null, analytics = null,
 }) {
@@ -1536,6 +1539,10 @@ export function createHandler({
 
   // Every shared session for someone with sessions from GitHub, and the asker's own private ones. The counts are the
   // fleet's, which say nothing of whose.
+  // Each open page's list, pushed as it changes (liveSessions.mjs). An embedding's fleet with no onChange pushes only
+  // what the sweep finds.
+  const liveSessions = createLiveSessions({ bodyFor: sessionsBody, onChange: fleet.onChange ? (fn) => fleet.onChange(fn) : null });
+
   function sessionsBody(login) {
     const all = fleet.sessions();
     const sessions = all.filter((s) => canOpen(s, login, access));
@@ -2331,12 +2338,29 @@ export function createHandler({
       } catch (err) {
         return reply(res, 400, { error: err.message });
       }
-      // The agents beside a session's own are Claude Code or Codex alone (session/agents.mjs).
-      if (!agentsRegistry.agent(picked.agent).teamCredential) return reply(res, 400, { error: 'the agent must be claude or codex' });
       const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
       if (prompt.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in the first message` });
       // A direct Anthropic call must use the owner's credential, not the session token used by the plan proxy.
       const primary = agentsRegistry.agent(agentsRegistry.agentOfSession(session));
+      const extra = agentsRegistry.agent(picked.agent);
+      const proxyGrok = extra.id === 'grok' && primary.id !== extra.id;
+      if (extra.signIn && (session.kind === 'ask' || ['review', 'qa', 'slack'].includes(session.trigger))) {
+        return reply(res, 409, { error: `${extra.product} starts only beside a private coding session` });
+      }
+      if (extra.id === 'opencode' && primary.id !== extra.id) {
+        return reply(res, 409, { error: 'start an OpenCode session to use your saved OpenCode sign-in' });
+      }
+      if (proxyGrok) {
+        let agentAuth;
+        try {
+          agentAuth = await userSettings?.agentAuth?.(session.owner, extra.id);
+        } catch {
+          console.warn(`console: ${extra.product} sign-in not read for an agent`, { id: session.id });
+          return reply(res, 502, { error: `the console could not read your ${extra.product} sign-in: try again` });
+        }
+        if (!/^xai-[0-9A-Za-z_-]{10,200}$/.test(agentAuth ?? '')) return reply(res, 409, { error: 'save an xAI API key on My settings to run Grok alongside another agent' });
+        if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
+      }
       const needsClaudeToken = picked.agent === 'claude' && !primary.teamCredential;
       let claudeToken = null;
       if (needsClaudeToken) {
@@ -2368,11 +2392,15 @@ export function createHandler({
         id: session.id, agent: picked.agent, model: picked.model || null, effort: picked.effort || null, permissionMode: picked.permissionMode,
         prompt: Boolean(prompt.trim()), ...(extraCodex && { ownCodex: Boolean(codexAuth) }),
       });
+      const finishGrokStart = proxyGrok ? beginInteractiveGrok(session) : null;
       return toStatusd(req, res, session, {
         // Older images refuse this route rather than ignoring the credential and launching on the session token.
-        method: 'POST', path: needsClaudeToken ? '/agents/with-claude-token' : '/agents',
+        method: 'POST', path: needsClaudeToken ? '/agents/with-claude-token' : proxyGrok ? '/agents/with-grok-proxy' : '/agents',
         body: { ...picked, prompt, ...(claudeToken ? { claudeToken } : {}), ...(codexAuth ? { codexAuth } : {}) },
-        onStatus: (code) => { if (code === 200 && !session.taintedAt && !fleet.isLocked?.(session)) fleet.allowAgent(session, picked.agent); },
+        onStatus: (code) => {
+          finishGrokStart?.(code);
+          if (code === 200 && !session.taintedAt && !fleet.isLocked?.(session)) fleet.allowAgent(session, picked.agent);
+        },
       });
     }
     const base = `/agents/${agentId}`;
@@ -2407,6 +2435,7 @@ export function createHandler({
     if (body.text.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in one message` });
     const messageId = typeof body.id === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(body.id) ? body.id : randomUUID();
     console.log('console: message typed in from the page', { id: session.id, agent: agentId, chars: body.text.length });
+    fleet.soon?.(session);
     return toStatusd(req, res, session, { method: 'POST', path: `${base}/send`, body: { text: body.text, id: messageId } });
   }
 
@@ -2432,6 +2461,8 @@ export function createHandler({
     }
     if (action === 'interrupt') {
       console.log('console: agent interrupted from the page', { id: session.id });
+      // Its card changes from what this does: read again in a moment, and often for a while.
+      fleet.soon?.(session);
       return toStatusd(req, res, session, { method: 'POST', path: '/interrupt', body: {} });
     }
     if (action === 'answer') {
@@ -2442,6 +2473,8 @@ export function createHandler({
         id: session.id, kind: sent.kind,
         ...(sent.kind === 'question' ? { questions: sent.questions.length, picks: sent.questions.map((q) => q.pick + 1) } : { decision: sent.decision }),
       });
+      // Its card changes from what this does: read again in a moment, and often for a while.
+      fleet.soon?.(session);
       return toStatusd(req, res, session, { method: 'POST', path: '/answer', body: sent });
     }
     if (action === 'send') {
@@ -3258,6 +3291,23 @@ export function createHandler({
     if (pathname === '/api/analytics') return analyticsReply(res, url.searchParams.get('days'), user.login);
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
     if (pathname === '/api/sessions') return reply(res, 200, sessionsBody(user.login));
+    if (pathname === '/api/sessions/live') {
+      // Behind a hosting proxy, the identity the stream opened with is good for a minute after the person was taken
+      // out: only the program can say they are gone, so a hosted console pushes the list only when it is asked
+      // (stillSignedIn). Its pages poll otherwise, and see the refusal of their next poll.
+      if (trusted && !stillSignedIn) return reply(res, 404, { error: 'this console pushes no live session list: its host does not say who is still signed in' });
+      // Signed in again before each send, as every request is (signedIn): someone taken off People, or signed out,
+      // gets nothing more on a stream they opened before. Asked afresh each time: a console that starts requiring
+      // sign-in (its first GitHub sign-in) ends a stream opened before with no sign-in, as it refuses that request now.
+      const headers = req.headers;
+      const login = user.login;
+      const stillAllowed = async () => {
+        if (!signInOn()) return login === soloLogin;
+        if ((await consoleUser(headers))?.login !== login) return false;
+        return !trusted || (await stillSignedIn({ login, headers })) === true;
+      };
+      return liveSessions.handle(req, res, login, { stillAllowed });
+    }
     if (pathname === '/api/my') {
       // The first look waits for the store, so the page never shows a sign-in missing that is there. Later ones ask it in
       // the background: the page polls, and sees a change on a later poll.
@@ -3365,6 +3415,7 @@ export function createHandler({
   handle.startMine = startMine;
   handle.resumeMine = resumeMine;
   handle.agentAction = agentAction;
+  handle.liveSessions = liveSessions;
   return handle;
 }
 
@@ -3527,7 +3578,7 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
  *   `repos` and `projectReadiness` are an embedding program's hooks, passed on to createInstallation (installation.mjs):
  *   only the dev console's stand-in (scripts/devHostConsole.mjs) passes them here
  */
-export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null, hostApp = null, repoPage = null }) {
+export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null, hostApp = null, repoPage = null, envSources = null }) {
   const first = given ?? loadConfig();
   const store = openStore(first.stateDir);
   // An App saved on the setup page is the console's own from the next start.
@@ -3537,7 +3588,7 @@ export async function startConsole({ provider, config: given = null, repos = nul
   const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
   console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
   await checkGh();
-  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness, hostApp, repoPage });
+  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness, hostApp, repoPage, envSources });
   const { config, handle } = installation;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {

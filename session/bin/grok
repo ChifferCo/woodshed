@@ -7,7 +7,11 @@ set -euo pipefail
 
 real=${WOODSHED_REAL_GROK:-/usr/local/bin/grok}
 auth=${WOODSHED_AGENT_AUTH_FILE:-$HOME/.config/woodshed/agent-auth}
-if [ -s "$auth" ] && [[ "$(head -c 4 "$auth")" == xai- ]]; then
+if [ -n "${WOODSHED_GROK_PROXY_TOKEN_FILE:-}" ]; then
+  # The pane starts with the path alone, so tmux errors cannot echo the bearer.
+  XAI_API_KEY=$(cat "$WOODSHED_GROK_PROXY_TOKEN_FILE")
+  export XAI_API_KEY
+elif [ -s "$auth" ] && [[ "$(head -c 4 "$auth")" == xai- ]]; then
   XAI_API_KEY=$(cat "$auth")
   export XAI_API_KEY
 fi

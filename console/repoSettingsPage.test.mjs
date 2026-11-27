@@ -113,7 +113,7 @@ function channelCall(slack, body) {
  * row's body, or the ids of the rows to open ([] leaves the page as a link to it finds it).
  * @returns the page's root, the calls it made, and the console's state and secrets
  */
-async function loadPage({ project = 'app', search = '', hash = '', file = APP_FILE, admin = true, before = null, confirmAnswer = true, slack: slackSettings = null, channels = CHANNELS, opened = 'all', triggers = null, triggersFail = null, hostGroups = null } = {}) {
+async function loadPage({ project = 'app', search = '', hash = '', file = APP_FILE, admin = true, before = null, confirmAnswer = true, slack: slackSettings = null, channels = CHANNELS, opened = 'all', triggers = null, triggersFail = null, hostGroups = null, envSources = null } = {}) {
   const store = { state: { sessions: [] }, save() {} };
   const secrets = memorySecrets();
   const config = { projects: PROJECTS, repo: 'acme/app' };
@@ -123,7 +123,7 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
       return { envFiles: file.envFiles, env: file.env ?? {}, rules: file.rules ?? null, setup: file.setup ?? null };
     },
   });
-  const repoSettings = createRepoSettings({ store, secrets, config, readerOf });
+  const repoSettings = createRepoSettings({ store, secrets, config, readerOf, envSources });
   if (before) await before({ repoSettings, store, secrets });
   store.state.settings = { slackChannel: slackSettings?.consoleChannel ?? '', projectSlackChannels: { ...slackSettings?.channels } };
   const slack = slackSettings && createSlack({ store, secrets });
@@ -186,7 +186,7 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
       dispatchEvent: (e) => events.push({ type: e.type, inPage: walk(app).includes(e.detail?.node) }),
     }, console, location, history, URL, URLSearchParams, TextEncoder,
     CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init?.detail; } },
-    document: { getElementById: (id) => walk(app).find((e) => e.attrs.id === id) ?? null, activeElement: null, createElement: (tag) => (tag === 'template' ? template() : element(tag)) },
+    document: { head: element('head'), getElementById: (id) => walk(app).find((e) => e.attrs.id === id) ?? null, activeElement: null, createElement: (tag) => (tag === 'template' ? template() : element(tag)) },
     setTimeout: (fn) => setImmediate(fn), clearTimeout: () => {},
   });
   vm.runInContext(pickerSource, context);
@@ -703,4 +703,173 @@ test('with no program\'s groups, or one that fails, the repo\'s page is the cons
   } finally {
     console.warn = original;
   }
+});
+
+// A program's source of env files' installation values, a made-up secret manager: on for api/.env, off for web/.env.local.
+const VAULT_MARKUP = '<form class="set-form" action="/vault/api-env"></form>';
+function vault({ api = { on: true, keys: ['API_URL', 'LOG_LEVEL'] }, web = { on: false }, scripts = undefined } = {}) {
+  return {
+    async view() {
+      return {
+        ...(api && { 'api-env': { label: 'Vault', on: api.on, keys: api.keys, markup: api.markup === null ? undefined : trusted(VAULT_MARKUP), scripts } }),
+        ...(web && { 'web-env-local': { label: 'Vault', on: web.on, keys: [] } }),
+      };
+    },
+    async forSession() { return null; },
+  };
+}
+const segOf = (row) => walk(row).find((e) => e.className === 'theme-seg');
+const pressed = (row) => segOf(row).children.map((b) => [textOf(b), b.attrs['aria-pressed']]);
+const pick = (row, text) => segOf(row).children.find((b) => textOf(b) === text).listeners.click();
+const saveTyped = async ({ repoSettings }) => repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: 'API_URL=http://api.test\nAPI_TOKEN=typed\n', by: 'mia-dev' });
+
+test('an env file whose source is on says so on its row, opens on the source\'s controls, and names it in the table', async () => {
+  const page = await loadPage({ envSources: vault(), before: saveTyped, opened: [] });
+  assert.deepEqual(headText(page.app, 'file-api-env'), ['api/.env', 'From Vault · 2 keys', 'From Vault'], 'closed: where its values come from, not the typed record');
+  assert.deepEqual(headText(page.app, 'file-web-env-local'), ['web/.env.local', 'The repo\'s defaults alone', 'Defaults only'], 'off: as a file with no source');
+  openRow(page.app, 'file-api-env');
+  await settle();
+  const row = rowOf(page.app, 'file-api-env');
+  assert.deepEqual(pressed(row), [['Typed here', 'false'], ['Vault', 'true']], 'the switch, on the side in use');
+  assert.match(segOf(row).attrs['aria-label'], /Where this installation's values for api\/\.env come from/);
+  assert.match(textOf(row), /In use: Vault · 2 keys/);
+  const controls = walk(row).find((e) => e.className === 'host-groups');
+  assert.equal(controls.children[0].markup, VAULT_MARKUP, 'the program\'s controls, as it made them, inside the layer');
+  assert.ok(walk(walk(row).find((e) => e.className === 'layer is-installation')).includes(controls));
+  assert.equal(editorOf(row, 'env-api-env'), undefined, 'the typed values are the other side');
+  assert.equal(page.wired.at(-1).node, controls);
+  assert.deepEqual(tableRows(row), [
+    ['LOG_LEVEL', '✓', '✓', '', 'Vault'],
+    ['API_URL', '', '✓', '', 'Vault'],
+    ['PORT', '', '', '✓', 'Session'],
+    ['ANTHROPIC_API_KEY', '', '', '✓ if set', 'Session, if set'],
+  ], 'the installation\'s keys are the source\'s, and where it wins the tag names it; a typed key it does not set is not there');
+  assert.deepEqual(page.events, [{ type: 'woodshed:host-groups', inPage: true }], 'said once its controls are in the page');
+});
+
+test('picking Typed here shows the typed values, kept and not used, with the keys the source leaves out; nothing is changed', async () => {
+  const page = await loadPage({ envSources: vault(), before: saveTyped, opened: ['file-api-env'] });
+  const before = page.calls.length;
+  pick(rowOf(page.app, 'file-api-env'), 'Typed here');
+  await settle();
+  let row = rowOf(page.app, 'file-api-env');
+  assert.deepEqual(pressed(row), [['Typed here', 'true'], ['Vault', 'false']]);
+  assert.equal(page.calls.length, before, 'a pick calls nothing: turning a source on or off is the program\'s own form');
+  assert.match(textOf(row), /In use: Vault · 2 keys/, 'still said, whichever side is shown');
+  const unused = walk(row).find((e) => e.className === 'cap-note');
+  assert.equal(textOf(unused), 'The values typed here are kept, but no session gets them while Vault is on. Vault does not set API_TOKEN, so this installation sets no value for it while Vault is on.');
+  assert.match(textOf(row), /Saved at \S+ · by @mia-dev · 40 bytes · 2 keys/, 'the typed record, as ever');
+  assert.equal(walk(row).some((e) => e.className === 'host-groups'), false);
+  button(row, 'Show and edit').listeners.click();
+  await settle();
+  await type(page.app, 'env-api-env', 'API_URL=http://other.test\n');
+  buttons(rowOf(page.app, 'file-api-env'), 'Save')[0].listeners.click();
+  await settle();
+  row = rowOf(page.app, 'file-api-env');
+  assert.match(textOf(row), /Saved\. They are kept, but no session gets them while Vault is on\./);
+  assert.deepEqual(pressed(row), [['Typed here', 'true'], ['Vault', 'false']], 'the side picked stays across a redraw');
+  assert.equal(textOf(walk(row).find((e) => e.className === 'cap-note')), 'The values typed here are kept, but no session gets them while Vault is on.', 'every typed key is one the source sets now');
+  assert.equal(page.secrets.values.get('repos/app/env/api-env'), 'API_URL=http://other.test\n');
+});
+
+test('a source that is off opens on the typed values, as they are used; its side is the program\'s controls, or a line with none', async () => {
+  const page = await loadPage({ envSources: vault({ api: { on: false, keys: ['API_URL'] } }), before: saveTyped, opened: ['file-api-env', 'file-web-env-local'] });
+  const row = rowOf(page.app, 'file-api-env');
+  assert.match(headText(page.app, 'file-api-env')[1], /^This installation sets 2 keys · Saved at /, 'the closed row is the typed record\'s');
+  assert.equal(headText(page.app, 'file-api-env')[2], '2 keys set');
+  assert.deepEqual(pressed(row), [['Typed here', 'true'], ['Vault', 'false']]);
+  assert.match(textOf(row), /In use: the values typed here/);
+  assert.equal(walk(row).some((e) => e.className === 'cap-note'), false, 'the typed values are used: no note');
+  assert.deepEqual(tableRows(row).find((r) => r[0] === 'API_TOKEN'), ['API_TOKEN', '', '✓', '', 'Installation']);
+  pick(row, 'Vault');
+  await settle();
+  assert.equal(walk(rowOf(page.app, 'file-api-env')).find((e) => e.className === 'host-groups').children[0].markup, VAULT_MARKUP);
+  pick(rowOf(page.app, 'file-web-env-local'), 'Vault');
+  await settle();
+  assert.match(textOf(rowOf(page.app, 'file-web-env-local')), /Vault is off for this file\./, 'no controls given');
+  const bare = await loadPage({ envSources: vault({ api: { on: true, keys: ['API_URL'], markup: null } }), opened: ['file-api-env'] });
+  assert.match(textOf(rowOf(bare.app, 'file-api-env')), /Vault sets API_URL\./, 'on with no controls: the keys it sets');
+});
+
+test('a source\'s controls stay the same node when the page is drawn again, and its scripts are loaded once, whichever rows are open', async () => {
+  // Two sources name one script, and neither row is open: it is loaded all the same, into the page's head.
+  const shared = { view: async () => ({ 'api-env': { label: 'Vault', on: true, keys: [], markup: trusted(VAULT_MARKUP), scripts: ['/assets/vault.js', 'https://x.test/a.js'] }, 'web-env-local': { label: 'Vault', on: true, keys: [], markup: trusted(VAULT_MARKUP), scripts: ['/assets/vault.js'] } }), forSession: async () => null };
+  const page = await loadPage({ envSources: shared, opened: [] });
+  const head = page.context.document.head;
+  assert.deepEqual(walk(head).filter((e) => e.tag === 'script').map((e) => e.attrs.src), ['/assets/vault.js'], 'once, a path on the console\'s address alone, with every row closed');
+  assert.equal(walk(page.app).some((e) => e.tag === 'script'), false, 'not in a panel, which is in the page only while its row is open');
+  walk(head).find((e) => e.tag === 'script').listeners.load();
+  // The second file's row alone is opened: its controls are drawn, and said.
+  openRow(page.app, 'file-web-env-local');
+  await settle();
+  const controls = walk(rowOf(page.app, 'file-web-env-local')).find((e) => e.className === 'host-groups');
+  assert.ok(controls);
+  assert.deepEqual(page.events, [{ type: 'woodshed:host-groups', inPage: true }]);
+  page.context.window.Woodshed.postJson('/api/console-settings/repos/app/instructions', { text: 'Be brief.' });
+  pick(rowOf(page.app, 'file-web-env-local'), 'Typed here');
+  pick(rowOf(page.app, 'file-web-env-local'), 'Vault');
+  await settle();
+  assert.equal(walk(page.app).find((e) => e.className === 'host-groups'), controls, 'kept, with what was typed in its forms');
+  assert.equal(page.events.length, 1, 'drawn anew once');
+  assert.equal(page.wired.filter((w) => w.node === controls).length, 1, 'wired once');
+  assert.equal(walk(head).filter((e) => e.tag === 'script').length, 1, 'not loaded again by a redraw');
+});
+
+test('clearing the typed values while a source is on says sessions still get the source\'s', async () => {
+  const page = await loadPage({ envSources: vault(), before: saveTyped, opened: ['file-api-env'] });
+  pick(rowOf(page.app, 'file-api-env'), 'Typed here');
+  await settle();
+  button(rowOf(page.app, 'file-api-env'), 'Show and edit').listeners.click();
+  await settle();
+  button(rowOf(page.app, 'file-api-env'), 'Clear').listeners.click();
+  await settle();
+  assert.match(textOf(rowOf(page.app, 'file-api-env')), /Cleared\. Sessions still get this file's values from Vault\./);
+  assert.doesNotMatch(textOf(rowOf(page.app, 'file-api-env')), /the repo's defaults alone/);
+  assert.equal(page.secrets.values.has('repos/app/env/api-env'), false);
+});
+
+// Everything a page draws, as text: its tags, attributes, classes and words, but when a value was saved, which is each load's own.
+const tree = (el) => (typeof el === 'string' ? el : { tag: el.tag, attrs: el.attrs, class: el.className, markup: el.markup, children: el.children.map(tree) });
+const drawn = (el) => JSON.stringify(tree(el)).replace(/\d{4}-\d\d-\d\dT[\d:.]+Z/g, 'then');
+
+test('with no source for its env files, or a hook that fails, the page is what it is with no hook at all', async () => {
+  const plain = drawn((await loadPage({ before: saveTyped })).app);
+  const none = await loadPage({ before: saveTyped, envSources: { view: async () => null, forSession: async () => null } });
+  assert.equal(drawn(none.app), plain);
+  const original = console.warn;
+  console.warn = () => {};
+  try {
+    const failed = await loadPage({ before: saveTyped, envSources: { view: async () => { throw new Error('away'); }, forSession: async () => null } });
+    assert.equal(drawn(failed.app), plain);
+  } finally {
+    console.warn = original;
+  }
+  const other = await loadPage({ before: saveTyped, envSources: vault({ web: null }) });
+  assert.equal(drawn(rowOf(other.app, 'file-web-env-local')), drawn(rowOf((await loadPage({ before: saveTyped })).app, 'file-web-env-local')), 'a file with none, beside one with a source');
+});
+
+test('a link that opens a source\'s controls tells its script of them only once the script has loaded', async () => {
+  const page = await loadPage({ search: '?file=api-env', envSources: vault({ scripts: ['/assets/vault.js'] }), opened: [] });
+  const script = walk(page.context.document.head).find((e) => e.tag === 'script');
+  assert.equal(script.attrs.src, '/assets/vault.js');
+  assert.ok(walk(page.app).some((e) => e.className === 'host-groups'), 'the controls are drawn, the row opened by the link');
+  assert.deepEqual(page.events, [], 'not said yet: the script has no listener until it has run');
+  // Drawn again while it loads: still held.
+  page.context.window.Woodshed.postJson('/api/console-settings/repos/app/instructions', { text: 'Be brief.' });
+  await settle();
+  assert.deepEqual(page.events, []);
+  script.listeners.load();
+  assert.deepEqual(page.events, [{ type: 'woodshed:host-groups', inPage: true }], 'said once it has, with the controls in the page');
+  script.listeners.load();
+  script.listeners.error();
+  pick(rowOf(page.app, 'file-api-env'), 'Typed here');
+  pick(rowOf(page.app, 'file-api-env'), 'Vault');
+  await settle();
+  assert.equal(page.events.length, 1, 'and not again: for a load said twice, or a redraw of the same controls');
+  // A script that fails to load holds nothing back; one already loaded is told at once, as before.
+  const failed = await loadPage({ search: '?file=api-env', envSources: vault({ scripts: ['/assets/gone.js'] }), opened: [] });
+  walk(failed.context.document.head).find((e) => e.tag === 'script').listeners.error();
+  assert.equal(failed.events.length, 1);
+  const none = await loadPage({ search: '?file=api-env', envSources: vault(), opened: [] });
+  assert.equal(none.events.length, 1, 'no script: said at once');
 });

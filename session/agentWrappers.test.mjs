@@ -14,7 +14,7 @@ import { isolatedEnv } from '../test/isolatedEnv.mjs';
 const run = promisify(execFile);
 
 // The wrapper run over a stand-in for the agent, which prints its arguments and the key variables it got.
-async function wrapped(t, name, { auth = null, env = {} } = {}) {
+async function wrapped(t, name, { auth = null, proxy = false, env = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${name}-wrapper-`));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const real = path.join(dir, name);
@@ -23,7 +23,7 @@ async function wrapped(t, name, { auth = null, env = {} } = {}) {
   if (auth !== null) fs.writeFileSync(authFile, auth, { mode: 0o600 });
   const variable = { grok: 'WOODSHED_REAL_GROK', opencode: 'WOODSHED_REAL_OPENCODE' }[name];
   const { stdout } = await run(fileURLToPath(new URL(`./bin/${name}`, import.meta.url)), ['--model', 'm', 'hi there'], {
-    env: isolatedEnv({ PATH: process.env.PATH, HOME: dir, [variable]: real, WOODSHED_AGENT_AUTH_FILE: authFile, ...env }),
+    env: isolatedEnv({ PATH: process.env.PATH, HOME: dir, [variable]: real, WOODSHED_AGENT_AUTH_FILE: authFile, ...(proxy && { WOODSHED_GROK_PROXY_TOKEN_FILE: authFile }), ...env }),
   });
   return JSON.parse(stdout);
 }
@@ -32,6 +32,12 @@ test('grok gets an xAI key in XAI_API_KEY, and nothing for a login, which is in 
   assert.deepEqual(await wrapped(t, 'grok', { auth: 'xai-abc123' }), { argv: ['--model', 'm', 'hi there'], xai: 'xai-abc123', projectConfig: null });
   assert.equal((await wrapped(t, 'grok', { auth: '{"x":{"key":"k"}}' })).xai, null);
   assert.equal((await wrapped(t, 'grok')).xai, null);
+});
+
+test('proxied grok reads the bearer from a file even without an xAI key prefix', async (t) => {
+  const result = await wrapped(t, 'grok', { auth: 'woodshed-made-up-bearer', proxy: true });
+  assert.equal(result.xai, 'woodshed-made-up-bearer');
+  assert.deepEqual(result.argv, ['--model', 'm', 'hi there']);
 });
 
 test('opencode never reads the repo\'s own config, which could send the owner\'s key elsewhere', async (t) => {

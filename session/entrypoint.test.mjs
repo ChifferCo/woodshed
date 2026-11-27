@@ -116,6 +116,10 @@ test('every session, private or shared, is told to wait for CI once it opens its
     assert.equal(rules.match(/Do not end the session when you open the PR: wait for CI\./g)?.length, 1, kind);
     // A private session's owner reads its terminal; a shared one's notes go on the pull request.
     assert.match(rules, kind === 'shared' ? /is flaky: note it in a PR comment\./ : /is flaky: say so here\./, kind);
+    // A foreground poll holds the terminal: what its person types queues behind it until the wait ends.
+    assert.equal(rules.match(/Wait in the background, never in a foreground loop of `sleep`/g)?.length, 1, kind);
+    // Codex, Grok Build and OpenCode are not woken when a background command ends: they must not end their turn on one.
+    assert.match(rules, /An agent that is not told when a background command ends keeps polling in the foreground/, kind);
   }
 });
 
@@ -1554,7 +1558,12 @@ function configureAgent(name, auth, env = {}) {
   const vars = ['OWN_AGENT_AUTH_FILE=$HOME/.config/woodshed/agent-auth', 'GROK_HOME_DIR=$HOME/.grok',
     'OPENCODE_DATA_DIR=$HOME/.local/share/opencode', 'OPENCODE_CONFIG_DIR=$HOME/.config/opencode'];
   const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }', ...vars,
-    fn('ownAgentAuthIsKey'), fn('agentDir'), fn('refuseRulesOutsideCheckout'), fn('opencodePermission'), fn(name).replaceAll('/tmp/', `${tmp}/`), name].join('\n');
+    fn('ownAgentAuthIsKey'), fn('agentDir'),
+    name === 'configureGrok'
+      ? `WOODSHED_RULES_FILE="${tmp}/woodshed-rules.md"; . "${SESSION_DIR}/grokSetup.sh"`
+      : `WOODSHED_RULES_FILE="${tmp}/woodshed-rules.md"; . "${SESSION_DIR}/opencodeSetup.sh"
+${fn(name)}`,
+    name].join('\n');
   const read = (file) => (fs.existsSync(path.join(home, file)) ? fs.readFileSync(path.join(home, file), 'utf8') : null);
   const mode = (file) => fs.statSync(path.join(home, file)).mode & 0o777;
   try {

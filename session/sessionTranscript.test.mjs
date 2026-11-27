@@ -468,6 +468,15 @@ test('the newest Grok Build session of the checkout is read, not another folder\
   assert.equal(read.entries[0].text, 'Fix the login bug');
   const again = await readSessionTranscript({ agent: 'grok', home, root: '/work/app', since: read.writtenAt });
   assert.equal(again.unchanged, true);
+  const extra = path.join(path.dirname(mine), 'extra');
+  fs.mkdirSync(extra);
+  fs.copyFileSync(path.join(other, 'updates.jsonl'), path.join(extra, 'updates.jsonl'));
+  fs.utimesSync(path.join(extra, 'updates.jsonl'), later, later);
+  const options = { agent: 'grok', grokHome: path.join(home, '.grok'), root: '/work/app' };
+  assert.equal((await readSessionTranscript({ ...options, conversation: 'extra' })).entries[0].text, 'not this');
+  assert.equal((await readSessionTranscript({ ...options, skip: new Set(['extra']) })).entries[0].text, 'Fix the login bug');
+  assert.deepEqual((await readSessionTranscript({ ...options, conversation: 'not-started' })).entries, []);
+
 });
 
 // OpenCode 1.19's tables (packages/opencode core/src/session/sql.ts), with the columns read here.

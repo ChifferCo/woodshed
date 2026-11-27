@@ -39,6 +39,14 @@ const HANDOFF_READ_TIMEOUT_MS = 20_000;
 // How long the repos a session's owner may start on are kept, for the pull requests it reports (reportableRepos).
 const STARTABLE_KEEP_MS = 60_000;
 const STATUS_TIMEOUT_MS = 5_000;
+// The tick reads this many sessions' statusd at once: one that does not answer holds up only its own read.
+const STATUS_READS_AT_ONCE = 8;
+// A session the console just sent something to is read often this long, so its card says Working within a second or
+// two (checkLive). A status read costs a session about a tenth of a second of CPU (git, gh's cached lookups), so
+// sessions are read this often only while they are likely to change: working, or just sent to.
+const LIVE_AFTER_SEND_MS = 30_000;
+// The first read after a send: claude's hook says it works a moment after the message is in.
+const FIRST_LIVE_READ_MS = 400;
 // How long statusd may take to type a private session's review feedback after getting it (it reads GitHub first).
 const GUARDED_SEND_WITHIN_MS = 20_000;
 // The quick look at a starting session: statusd answers at once on the same network, or is not up yet.
@@ -49,6 +57,8 @@ const UNREACHED_AFTER_MS = 30_000;
 // Comments are re-read from a minute before the last poll: GitHub's `since`
 // filters on updated_at, which can trail the moment a comment shows up.
 const COMMENT_OVERLAP_MS = 60_000;
+// A timer that never keeps the process alive by itself.
+const laterUnref = (fn, ms) => setTimeout(fn, ms).unref?.();
 const LABEL_DEDUPE_MS = 2 * 60_000;
 const RECENT_LABELS_KEPT = 50;
 // A receive is a 20-second long poll; two missed in a row means the queue is not being read.
@@ -288,7 +298,7 @@ const MESSAGE_PREVIEW_CHARS = 200;
  *   it, every repo has the console's label and both on
  */
 export function createFleet({
-  config, store, launcher, github, statusd = callStatusd, startableRepos = null, now = Date.now, databases = null, slack = null, homes = null,
+  config, store, launcher, github, statusd = callStatusd, startableRepos = null, now = Date.now, later = laterUnref, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, qaRecordings = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, reviewGates = async (name) => withDefaultReview(await pullRequests(name)), projectBlocker = async () => null, githubFor = null,
   consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null, repoTriggers = null, reviewAgents = null,
@@ -322,6 +332,15 @@ export function createFleet({
   // Sessions whose statusd is being read, by the tick or the quick check: one read at a time, so a held message is
   // never typed in twice.
   const readingStatus = new Set();
+  // When each session's last applied status read was asked for: a read that started earlier and answers later (the
+  // tick's, read ahead of the session's turn) would put back an older state.
+  const statusAskedAt = new Map();
+  // Sessions read often until then (checkLive): the console sent them something.
+  const liveUntil = new Map();
+  // Sessions to read again as soon as the read in flight ends: it was asked for before what is to be seen happened.
+  const readAgain = new Set();
+  // Told of every change to a session, for the page's live list (liveSessions.mjs).
+  const changeListeners = new Set();
   // The start each session last logged as unreached for (noteUnreached), so each start logs it once.
   const unreachedStarts = new Map();
   // Stops in flight in this process. A session left `stopping` by a restart has none, and tick finishes it.
@@ -355,6 +374,22 @@ export function createFleet({
       console.log('fleet: question answered', { id: session.id, why: 'stopped' });
     }
     store.save();
+    for (const fn of changeListeners) {
+      try {
+        fn(session.id);
+      } catch (err) {
+        console.error('fleet: change listener failed', { message: firstLine(err) });
+      }
+    }
+  }
+
+  /**
+   * @param {(id: string) => void} fn  called after each change to a session, as it is saved
+   * @returns {() => void}  stops telling it
+   */
+  function onChange(fn) {
+    changeListeners.add(fn);
+    return () => changeListeners.delete(fn);
   }
 
   // A session's conversation kept beside its home (sessionApi.mjs, /conversation): the page shows it on Chat while the
@@ -886,6 +921,7 @@ export function createFleet({
    */
   async function send(session, raw, { id = null } = {}) {
     const outcome = await sendNow(session, raw, { id });
+    soon(session);
     // On its way, or in: an answer to a question the session asked. One left in its box unsent is not, yet.
     if (outcome !== 'in-box') answered(session, 'a message');
     return outcome;
@@ -1116,7 +1152,7 @@ export function createFleet({
     }
   }
 
-  async function refresh(session, taskStates) {
+  async function refresh(session, taskStates, ahead = null) {
     if (!session.ref) await findLostStart(session);
     if (!session.ref) return;
     // A start found again this tick was not in the tick's read. The docker launcher has no pull to report.
@@ -1124,7 +1160,7 @@ export function createFleet({
       ?? (launcher.taskState ? await launcher.taskState(session.ref) : { alive: await launcher.isAlive(session.ref) });
     if (!task.alive) return containerGone(session);
     if (task.pullStartedAt) startStep(session, 'pullStarted', task.pullStartedAt);
-    await readStatus(session);
+    await readStatus(session, STATUS_TIMEOUT_MS, ahead);
   }
 
   /**
@@ -1152,19 +1188,39 @@ export function createFleet({
     }
   }
 
-  async function readStatus(session, timeoutMs = STATUS_TIMEOUT_MS) {
-    if (readingStatus.has(session.id)) return;
+  // A statusd read, with when it was asked for, which never throws.
+  function askStatus(session, timeoutMs = STATUS_TIMEOUT_MS) {
+    const at = now();
+    return statusd(session, 'GET', '/status', { timeoutMs }).then((status) => ({ at, status }), (error) => ({ at, error }));
+  }
+
+  /**
+   * One read of a session's statusd, applied unless a read asked for after it was applied first.
+   * @param {object} session
+   * @param {number} [timeoutMs]
+   * @param {Promise<{at: number, status?: object, error?: Error}>|null} [ahead]  the tick's read, asked for ahead of
+   *   the session's turn (readAhead)
+   */
+  async function readStatus(session, timeoutMs = STATUS_TIMEOUT_MS, ahead = null, { again = false } = {}) {
+    if (readingStatus.has(session.id)) {
+      if (again) readAgain.add(session.id);
+      return;
+    }
     readingStatus.add(session.id);
     try {
-      let status;
-      try {
-        status = await statusd(session, 'GET', '/status', { timeoutMs });
-      } catch (err) {
+      const read = await (ahead ?? askStatus(session, timeoutMs));
+      if (read.at < (statusAskedAt.get(session.id) ?? -Infinity)) return;
+      statusAskedAt.set(session.id, read.at);
+      const { status } = read;
+      if (read.error) {
+        const err = read.error;
         // statusd is the last thing a container starts, so a starting session has none yet.
         if (session.status === 'running') console.warn('fleet: status check failed', { id: session.id, message: firstLine(err) });
         else noteUnreached(session, firstLine(err));
         return;
       }
+      // A session stopped or gone while it was read is not brought back by its last answer.
+      if (session.status !== 'starting' && session.status !== 'running') return;
       const wasStarting = session.status === 'starting';
       const wasAsking = session.state === 'needs-you';
       update(session, statusUpdate(session, status, nowIso(), { repos: await reportableRepos(session, status) }));
@@ -1181,6 +1237,9 @@ export function createFleet({
       await announcePull(session);
     } finally {
       readingStatus.delete(session.id);
+      if (readAgain.delete(session.id) && session.status === 'running') {
+        readStatus(session).catch((err) => console.error('fleet: session check failed', { id: session.id, message: firstLine(err) }));
+      }
     }
   }
 
@@ -1264,6 +1323,63 @@ export function createFleet({
     }
   }
 
+  /**
+   * Every tick's statusd reads at once, a few at a time, each applied in its session's turn: one after another, a
+   * session that did not answer held every session after it for its whole timeout, and the last of many was read
+   * seconds after the first.
+   * @returns {Map<string, Promise<{at: number, status?: object, error?: Error}>>}
+   */
+  function readAhead(sessions) {
+    // One being read already is left out: its turn finds it being read, as before.
+    const queue = sessions.filter((s) => (s.status === 'running' || s.status === 'starting') && s.ref && s.endpoint && !readingStatus.has(s.id));
+    // Each session's promise exists before its read starts, so its turn waits on that read and never asks again.
+    const slots = queue.map((session) => {
+      let resolve;
+      const read = new Promise((r) => { resolve = r; });
+      return { session, read, resolve };
+    });
+    let next = 0;
+    const lane = async () => {
+      while (next < slots.length) {
+        const { session, resolve } = slots[next++];
+        resolve(await askStatus(session));
+      }
+    };
+    for (let i = 0; i < Math.min(STATUS_READS_AT_ONCE, slots.length); i += 1) void lane();
+    return new Map(slots.map(({ session, read }) => [session.id, read]));
+  }
+
+  /**
+   * A session the console just sent something to: read in a moment, and often for a while after (checkLive).
+   * @param {object|string} sessionOrId
+   */
+  function soon(sessionOrId) {
+    const session = typeof sessionOrId === 'string' ? find(sessionOrId) : sessionOrId;
+    if (!session || session.status !== 'running') return;
+    liveUntil.set(session.id, now() + LIVE_AFTER_SEND_MS);
+    later(() => {
+      if (session.status !== 'running') return;
+      readStatus(session, STATUS_TIMEOUT_MS, null, { again: true }).catch((err) => console.error('fleet: session check failed', { id: session.id, message: firstLine(err) }));
+    }, FIRST_LIVE_READ_MS);
+  }
+
+  // Every couple of seconds, the running sessions likely to change soon: those working, which turn to done or to
+  // needing someone, and those just sent something, which turn to working. The rest wait for the tick.
+  // Starts the reads and returns without waiting for them: the loop that calls it waits for what it returns before its
+  // next pass, so one session slow to answer would hold up every other session's next read. A session still being read
+  // is skipped (readStatus), so it delays only its own.
+  function checkLive() {
+    for (const [id, until] of liveUntil) if (until <= now()) liveUntil.delete(id);
+    for (const id of statusAskedAt.keys()) {
+      const session = find(id);
+      if (!session || !ACTIVE_STATUSES.has(session.status)) statusAskedAt.delete(id);
+    }
+    const live = state.sessions.filter((s) => s.status === 'running' && s.endpoint && (s.state === 'working' || liveUntil.has(s.id)));
+    for (const session of live) {
+      readStatus(session).catch((err) => console.error('fleet: session check failed', { id: session.id, message: firstLine(err) }));
+    }
+  }
+
   // While a start waits for room (waitsForRetry), its launcher may say how the wait is going, as steps: an embedding
   // whose sessions wait for a machine being set up shows that setup on the session page. Read with the starting check,
   // and saved only when it changed.
@@ -1309,11 +1425,12 @@ export function createFleet({
     ticking = true;
     try {
       const taskStates = await taskStatesFor(state.sessions);
+      const ahead = readAhead(state.sessions);
       for (const session of [...state.sessions]) {
         try {
           if (session.status === 'stopping' && !stopsInFlight.has(session.id)) await finishInterruptedStop(session);
           if (session.status !== 'starting' && session.status !== 'running') continue;
-          await refresh(session, taskStates);
+          await refresh(session, taskStates, ahead.get(session.id));
           const reason = stopReason(session, now(), limitsOf(session));
           if (reason) await stop(session, reason);
         } catch (err) {
@@ -1986,7 +2103,7 @@ export function createFleet({
    * it: a Codex one may then use the team's key (openaiProxy.mjs) and send its refreshed sign-in back at the stop
    * (sessionApi.mjs POST /codex-auth), as a Codex session does.
    * @param {object} session
-   * @param {'claude'|'codex'} agent
+   * @param {'claude'|'codex'|'grok'|'opencode'} agent
    * @returns {boolean}  whether it was allowed now, rather than before
    */
   function allowAgent(session, agent) {
@@ -3368,7 +3485,7 @@ export function createFleet({
 
   return {
     noteMessage, noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
-    createSession, conversationSaved, forgetConversations, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, keptMachine, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    onChange, soon, checkLive, createSession, conversationSaved, forgetConversations, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, keptMachine, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaLog, reviewLog, qaVideo, qaPoster, publicQaVideo, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

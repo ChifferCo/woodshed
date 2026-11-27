@@ -787,7 +787,8 @@
         drawThread(true);
         drawComposer();
         schedule(0);
-        if (!narrow.matches && !ended()) setTimeout(() => { if (session?.id === s.id && !el.hidden) field.focus({ preventScroll: true }); }, 0);
+        // Not while the double tap's mode moves through the sessions (session.js, movingByKey): the field is not the keys' place.
+        if (!narrow.matches && !ended()) setTimeout(() => { if (session?.id === s.id && !el.hidden && !W.movingByKey?.()) field.focus({ preventScroll: true }); }, 0);
       } else if (wasEnded !== ended()) {
         // Stopped while shown, or the record of a stopped one running again: read as the other kind now.
         drawThread(false);

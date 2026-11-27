@@ -1,0 +1,216 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+
+import { CHECK_TIMEOUT_MS, createLiveSessions, DEBOUNCE_MS, diffList, MAX_AGE_MS, MAX_BUFFERED_BYTES, SWEEP_MS } from './liveSessions.mjs';
+
+const list = (sessions, extra = {}) => ({ login: 'joel', running: sessions.filter((s) => s.state === 'working').length, ...extra, sessions });
+
+test('a patch carries the list\'s changed fields, each changed session whole, and the order only when it changed', () => {
+  const a = { id: 'aaaa1111', state: 'done', title: 'One' };
+  const b = { id: 'bbbb2222', state: 'done', title: 'Two' };
+  const { sent } = diffList(null, list([a, b]));
+  assert.equal(diffList(sent, list([a, b])).patch, null, 'nothing changed: nothing sent');
+
+  const working = { ...b, state: 'working' };
+  assert.deepEqual(diffList(sent, list([a, working])).patch, { top: { running: 1 }, sessions: [{ id: 'bbbb2222', state: 'working' }] }, 'only what changed in it');
+
+  const c = { id: 'cccc3333', state: 'done', title: 'Three' };
+  assert.deepEqual(diffList(sent, list([c, a])).patch, { sessions: [c], ids: ['cccc3333', 'aaaa1111'] }, 'one came whole, one went');
+
+  const { title, ...untitled } = a;
+  assert.deepEqual(diffList(sent, list([untitled, b])).patch, { unset: { aaaa1111: ['title'] } }, 'a field it no longer has');
+});
+
+function fakeTimers() {
+  const timers = [];
+  return {
+    later: (fn, ms) => { const t = { fn, ms }; timers.push(t); return t; },
+    cancel: (t) => { const i = timers.indexOf(t); if (i >= 0) timers.splice(i, 1); },
+    run(ms) {
+      const due = timers.filter((t) => t.ms === ms);
+      for (const t of due) timers.splice(timers.indexOf(t), 1);
+      for (const t of due) t.fn();
+      return due.length;
+    },
+    pending: () => timers.map((t) => t.ms),
+  };
+}
+
+function fakeResponse() {
+  const res = new EventEmitter();
+  Object.assign(res, { head: null, chunks: [], ended: false });
+  res.writeHead = (status, headers) => { res.head = { status, headers }; };
+  res.write = (chunk) => { res.chunks.push(chunk); };
+  res.end = () => { res.ended = true; res.emit('close'); };
+  res.events = () => res.chunks.join('').split('\n\n').filter((e) => e.startsWith('event:')).map((e) => {
+    const [, event] = /^event: (\w+)/.exec(e);
+    return { event, data: JSON.parse(e.slice(e.indexOf('data: ') + 6)) };
+  });
+  return res;
+}
+
+function setup(sessions) {
+  const timers = fakeTimers();
+  let clock = 0;
+  let listener = null;
+  const asked = [];
+  const live = createLiveSessions({
+    bodyFor: (login) => { asked.push(login); return list(sessions.map((s) => ({ ...s }))); },
+    onChange: (fn) => { listener = fn; },
+    later: timers.later, cancel: timers.cancel, now: () => clock,
+  });
+  const open = async (login = 'joel', opts = {}) => {
+    const res = fakeResponse();
+    await live.handle(new EventEmitter(), res, login, opts);
+    return res;
+  };
+  return { live, timers, open, asked, changed: () => listener(), advance: (ms) => { clock += ms; } };
+}
+
+test('a page gets the whole list first, then each change within a moment of the fleet making it', async () => {
+  const sessions = [{ id: 'aaaa1111', state: 'done' }];
+  const { live, open, timers, changed, asked } = setup(sessions);
+  const res = await open();
+  assert.equal(res.head.status, 200);
+  assert.equal(res.head.headers['content-type'], 'text/event-stream; charset=utf-8');
+  assert.equal(res.head.headers['x-accel-buffering'], 'no', 'a proxy in front would hold the events back');
+  assert.deepEqual(res.events(), [{ event: 'full', data: list([{ id: 'aaaa1111', state: 'done' }]) }]);
+  assert.deepEqual(asked, ['joel'], 'the list that login may see');
+
+  sessions[0].state = 'working';
+  changed();
+  changed();
+  assert.equal(timers.run(DEBOUNCE_MS), 1, 'many changes at once, one patch');
+  await live.settled();
+  assert.deepEqual(res.events().slice(1), [{ event: 'patch', data: { top: { running: 1 }, sessions: [{ state: 'working', id: 'aaaa1111' }] } }]);
+});
+
+test('what changes outside the fleet is found by the sweep, and a quiet list sends nothing', async () => {
+  const sessions = [{ id: 'aaaa1111', state: 'done', pr: null }];
+  const { live, open, timers } = setup(sessions);
+  const res = await open();
+  timers.run(SWEEP_MS);
+  await live.settled();
+  assert.equal(res.events().length, 1);
+  sessions[0].pr = { state: 'open' };
+  timers.run(SWEEP_MS);
+  await live.settled();
+  assert.deepEqual(res.events().at(-1), { event: 'patch', data: { sessions: [{ pr: { state: 'open' }, id: 'aaaa1111' }] } });
+  assert.ok(timers.pending().includes(SWEEP_MS), 'and goes on');
+});
+
+test('a stream ends after five minutes, for the browser to open it again signed in afresh, and all end at the stop', async () => {
+  const { live, open, timers, advance } = setup([{ id: 'aaaa1111', state: 'done' }]);
+  const old = await open();
+  advance(MAX_AGE_MS);
+  const fresh = await open();
+  timers.run(SWEEP_MS);
+  await live.settled();
+  assert.equal(old.ended, true);
+  assert.equal(fresh.ended, false);
+  assert.equal(live.open(), 1);
+  live.closeAll();
+  assert.equal(fresh.ended, true);
+  assert.equal(live.open(), 0);
+  assert.deepEqual(timers.pending(), [], 'nothing keeps running');
+});
+
+test('a page that went is not written to again', async () => {
+  const sessions = [{ id: 'aaaa1111', state: 'done' }];
+  const { live, open, timers, changed } = setup(sessions);
+  const res = await open();
+  res.emit('close');
+  assert.equal(live.open(), 0);
+  sessions[0].state = 'working';
+  changed();
+  timers.run(DEBOUNCE_MS);
+  await live.settled();
+  assert.equal(res.events().length, 1);
+});
+
+test('a stream whose sign-in no longer lets it in gets nothing more, and ends', async () => {
+  const sessions = [{ id: 'aaaa1111', state: 'done' }];
+  const { live, open, timers, changed } = setup(sessions);
+  let member = true;
+  const res = await open('joel', { stillAllowed: async () => member });
+  member = false;
+  sessions[0].state = 'working';
+  changed();
+  timers.run(DEBOUNCE_MS);
+  await live.settled();
+  assert.equal(res.events().length, 1, 'only the list it had when it was let in');
+  assert.equal(res.ended, true);
+  assert.equal(live.open(), 0);
+});
+
+test('a stream whose sign-in no longer lets it in when it opens is refused before the list is read', async () => {
+  const { live, open, asked } = setup([{ id: 'aaaa1111', state: 'done', owner: 'joel' }]);
+  for (const stillAllowed of [async () => false, async () => { throw new Error('the host did not answer'); }]) {
+    const res = await open('joel', { stillAllowed });
+    assert.equal(res.head.status, 401);
+    assert.equal(res.events().length, 0);
+    assert.ok(!res.chunks.join('').includes('aaaa1111'), 'no session in it');
+  }
+  assert.deepEqual(asked, [], 'the list was never read');
+  assert.equal(live.open(), 0);
+});
+
+test('a sign-in check that does not answer ends its own stream, and holds up no other', async () => {
+  const sessions = [{ id: 'aaaa1111', state: 'done' }];
+  const { live, open, timers, changed } = setup(sessions);
+  let stall = false;
+  const slow = await open('joel', { stillAllowed: () => (stall ? new Promise(() => {}) : true) });
+  const other = await open('mia');
+  stall = true;
+  sessions[0].state = 'working';
+  changed();
+  timers.run(DEBOUNCE_MS);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(other.events().map((e) => e.event), ['full', 'patch'], 'sent while the other check still waits');
+  assert.equal(slow.events().length, 1);
+  timers.run(CHECK_TIMEOUT_MS);
+  await live.settled();
+  assert.equal(slow.ended, true, 'no answer in time is a no');
+  assert.equal(slow.events().length, 1);
+  assert.equal(other.ended, false);
+});
+
+test('a browser that stopped reading has its stream ended rather than every change kept for it', async () => {
+  const sessions = [{ id: 'aaaa1111', state: 'done' }];
+  const { live, open, timers, changed } = setup(sessions);
+  const res = await open();
+  res.writableLength = MAX_BUFFERED_BYTES + 1;
+  sessions[0].state = 'working';
+  changed();
+  timers.run(DEBOUNCE_MS);
+  await live.settled();
+  assert.equal(res.ended, true);
+  assert.equal(live.open(), 0);
+});
+
+test('an opening list too big for a browser that is not reading ends its stream, which is never kept', async () => {
+  const { live, timers } = setup([{ id: 'aaaa1111', state: 'done' }]);
+  const res = fakeResponse();
+  res.writableLength = MAX_BUFFERED_BYTES + 1;
+  await live.handle(new EventEmitter(), res, 'joel');
+  assert.equal(res.ended, true);
+  assert.equal(live.open(), 0);
+  assert.deepEqual(timers.pending(), [], 'no sweep or heartbeat left for it');
+});
+
+test('an opening still waiting on its sign-in check when the console stops is answered, never kept', async () => {
+  const { live, timers } = setup([{ id: 'aaaa1111', state: 'done' }]);
+  let allow;
+  const res = fakeResponse();
+  const opening = live.handle(new EventEmitter(), res, 'joel', { stillAllowed: () => new Promise((resolve) => { allow = resolve; }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  live.closeAll();
+  allow(true);
+  await opening;
+  assert.equal(res.head.status, 503);
+  assert.equal(res.ended, true);
+  assert.equal(live.open(), 0);
+  assert.equal(res.events().length, 0);
+  assert.deepEqual(timers.pending(), []);
+});

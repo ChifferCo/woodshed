@@ -107,7 +107,7 @@ const C_CONTENT = either(S, NULL, arr(typed({
   image_url: obj({ type: S, image_url: obj({ url: DATA_URL, detail: S }) }),
 })));
 const CHAT = obj({
-  model: S, stream: B, stream_options: obj({ include_usage: B }),
+  model: S, max_tokens: N, temperature: N, stream: B, stream_options: obj({ include_usage: B }),
   messages: arr(obj({
     role: S, content: C_CONTENT, model_id: S, reasoning_content: S, tool_call_id: S,
     tool_calls: arr(typed({ function: obj({ type: S, id: S, function: obj({ name: S, arguments: S }) }) })),

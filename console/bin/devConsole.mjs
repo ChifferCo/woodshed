@@ -649,7 +649,8 @@ function devRepoSettings(dir) {
         { name: 'example-tools', repo: 'example-org/example-tools' },
       ]),
     },
-    projectFiles: { 'example-org/example-repo': file('api/.env') + links, 'example-org/example-tools': file('tools/.env') },
+    // Three env files on the first, for a program's sources (scripts/devHostConsole.mjs): one on, one off, one with none.
+    projectFiles: { 'example-org/example-repo': `${file('api/.env')}  - path: web/.env.local\n  - path: worker/.env\n${links}`, 'example-org/example-tools': file('tools/.env') },
   };
 }
 

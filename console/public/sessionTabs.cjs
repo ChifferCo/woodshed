@@ -294,6 +294,32 @@
   }
 
 
+  /**
+   * The session list with a change the console pushed (console/liveSessions.mjs): the list's fields it names, each
+   * session's changed fields over the one with its id (a session the list lacks comes whole), the fields `unset` names
+   * taken off, and the order of `ids` when it has one, which also says which went. A session it carries that the list
+   * has no place for, with no `ids`, goes last.
+   * @param {{sessions: object[]}} list
+   * @param {{top?: object, sessions?: object[], unset?: Record<string, string[]>, ids?: string[]}} patch
+   * @returns {{sessions: object[]}}  a new list; `list` and its sessions are left as they were
+   */
+  function withPatch(list, patch) {
+    const byId = new Map(list.sessions.map((s) => [s.id, s]));
+    const touched = new Set([...(patch.sessions ?? []).map((s) => s.id), ...Object.keys(patch.unset ?? {})]);
+    for (const id of touched) {
+      const merged = { ...byId.get(id), ...(patch.sessions ?? []).find((s) => s.id === id) };
+      for (const key of patch.unset?.[id] ?? []) delete merged[key];
+      byId.set(id, merged);
+    }
+    let sessions;
+    if (Array.isArray(patch.ids)) sessions = patch.ids.map((id) => byId.get(id)).filter(Boolean);
+    else {
+      sessions = list.sessions.map((s) => byId.get(s.id));
+      for (const id of touched) if (!list.sessions.some((s) => s.id === id)) sessions.push(byId.get(id));
+    }
+    return { ...list, ...patch.top, sessions };
+  }
+
   return { KEY, LEAVING_KEY, stashLeaving, takeLeaving, ask, opensAgain, TABS, LANDS_ON_REVIEW, known, shown, settle, defaultView, picks, leftOn, entryTab, withEntryTab, addressTab, linkedTab,
-    leaving, correctsMemory, otherLogin, lookups, memory };
+    leaving, correctsMemory, otherLogin, lookups, memory, withPatch };
 });

@@ -15,6 +15,10 @@
 // gone reads as none and is dropped. Nobody reads another person's layer, admins included. A session is handed its own
 // project's values alone, and a person's only in their own private sessions (sessionApi.mjs, `POST /repo-settings`).
 // Values are never logged: keys, sizes and who.
+//
+// A program that embeds the console may say an env file's installation values come from a source of its own, such as
+// a secret manager (`envSources`, installation.mjs): the session is then handed the source's text in place of the typed
+// one, which stays kept, and the pages say so. The console never keeps a source's text: it asks at each session's start.
 
 import logins from './public/logins.cjs';
 import { projectFor, projectNamed, defaultProject } from './projects.mjs';
@@ -27,12 +31,98 @@ const { loginKey } = logins;
 
 // An env file's key: the project file's `secret` syntax, or a key made from its path (shared/project.mjs, envFileKey).
 const KEY = /^[a-z0-9][a-z0-9-]{0,99}$/;
+// A variable's name, as shared/repoSettings.mjs reads one from a line: what a source says it sets.
+const VARIABLE = /^[A-Za-z_][A-Za-z0-9_.]*$/;
+// The most names a source gives for one env file: far more than a real one sets.
+const MAX_SOURCE_KEYS = 1000;
+const MAX_SOURCE_LABEL = 40;
+// How long a program's `envSources.forSession` may take, the check of the keys it answers included (a read of the
+// project file, where one is not known): under the 15 s a session waits for its repo settings (session/entrypoint.sh),
+// so one that hangs costs a start its source, never the start.
+export const ENV_SOURCES_TIMEOUT_MS = 10_000;
 const PROJECT = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 // A whole .env file, JSON-escaped, under the store's 64 KB.
 const MAX_BODY_BYTES = 160 * 1024;
 
 const shown = (message, status = 400) => Object.assign(new Error(message), { shown: true, status });
 const firstLine = (err) => String(err?.message ?? err).split('\n')[0];
+const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+// A record by a name people choose (a login, a project's name, an env file's key, an own file's path): an own property
+// alone, never one every object has, such as `constructor`, which is a valid name of each.
+const own = (records, name) => (isRecord(records) && Object.hasOwn(records, name) ? records[name] : undefined);
+
+// A script path on the console's own address: `/\host/x.js` is another site's to a browser, as `//host/x.js` is.
+function onConsole(src) {
+  if (typeof src !== 'string' || !src.startsWith('/') || src.includes('\\')) return false;
+  try {
+    return new URL(src, 'http://console.invalid').origin === 'http://console.invalid';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {unknown} hook
+ * @throws {Error}  when it is given and is not `{view, forSession}`, both functions
+ */
+export function checkEnvSources(hook) {
+  if (hook != null && (typeof hook.view !== 'function' || typeof hook.forSession !== 'function')) throw new Error('envSources needs view and forSession');
+}
+
+// An answer of a program's `envSources` that cannot be used: `why` is the console's own words for what kind of thing
+// was wrong, and `key`, where there is one, an env file key the console asked about. Neither is text the program gave.
+class BadAnswer extends Error {
+  constructor(why, key = null) {
+    super(why);
+    this.why = why;
+    this.key = key;
+  }
+}
+
+const notByKey = (given) => new BadAnswer(`answered ${Array.isArray(given) ? 'a list' : typeof given}, not an object by env file key`);
+
+// What the log says of a hook that failed. Nothing the program wrote: a message it threw, a name or a code it gave
+// its error, a key or a value it answered could hold a credential (its secret manager's error quoting a token, a value
+// under the wrong name). Of an error of its own, only which of JavaScript's error classes it is.
+const ERROR_CLASSES = [TypeError, RangeError, SyntaxError, ReferenceError, URIError, EvalError, AggregateError, Error];
+function failureOf(err) {
+  try {
+    if (err instanceof BadAnswer) return { why: err.why, ...(err.key && { key: err.key }) };
+    const kind = ERROR_CLASSES.find((c) => err instanceof c)?.name ?? null;
+    return { why: 'the hook threw', ...(kind && { error: kind }) };
+  } catch {
+    // What it threw is no plain value: one that throws again when asked what it is.
+    return { why: 'the hook threw' };
+  }
+}
+
+// A program's answer, copied to plain data: its own enumerable keys, each value read once. An answer can be anything,
+// one whose keys or values throw when read included, so it is read here, inside the guard that asked for it, and only
+// the copy is used after.
+function plainEntries(given) {
+  return Object.keys(given).map((key) => [key, given[key]]);
+}
+
+// One env file's source as the program's `envSources.view` gave it, checked, as plain data: each field read once,
+// its markup's text included, so nothing of the program's is read again once this returns. `key` is one the console
+// asked about, from the project file.
+function checkedSource(key, given) {
+  if (!isRecord(given)) throw new BadAnswer('an env file\'s source is not an object', key);
+  const { label: named, on: switched, keys: listed, markup, scripts: paths } = given;
+  const label = typeof named === 'string' ? named.trim() : '';
+  if (!label || label.length > MAX_SOURCE_LABEL) throw new BadAnswer(`a label is not 1 to ${MAX_SOURCE_LABEL} characters`, key);
+  const on = switched === true;
+  if (listed != null && (!Array.isArray(listed) || listed.length > MAX_SOURCE_KEYS)) throw new BadAnswer('keys are not variable names', key);
+  const names = Array.from(listed ?? []);
+  if (names.some((k) => typeof k !== 'string' || !VARIABLE.test(k))) throw new BadAnswer('keys are not variable names', key);
+  // Markup alone, made with settingsMarkup.mjs, which escaped every value: never a string built some other way.
+  if (markup != null && !(markup instanceof Markup)) throw new BadAnswer(`markup is ${typeof markup}, not markup from settingsMarkup.mjs`, key);
+  const html = markup == null ? null : markup.text;
+  if (html !== null && typeof html !== 'string') throw new BadAnswer('markup has no text', key);
+  const scripts = (Array.isArray(paths) ? Array.from(paths) : []).filter(onConsole).slice(0, 8);
+  // The names matter only while the source is on: off, sessions get the typed values.
+  return { label, on, keys: on ? [...new Set(names)] : [], html, scripts };
+}
 
 /** @returns {string}  the installation's value for one env file of a project, under the console's prefix */
 export function installationEnvName(project, key) {
@@ -91,11 +181,17 @@ const keyText = (keys) => (keys ?? []).map((k) => `${k}=`).join('\n');
  * @param {{store: {state: object, save: () => void}, secrets: {read: Function, save: Function, remove: Function,
  *          configured?: () => boolean}|null, config: object,
  *          readerOf: (project: string) => {repoLayer: () => Promise<{envFiles: object[], env: Record<string, string>,
- *            rules: string|null, setup: string|null}>}, now?: () => number}} deps
+ *            rules: string|null, setup: string|null}>}, now?: () => number,
+ *          envSources?: {view: Function, forSession: Function}|null, envSourcesTimeoutMs?: number}} deps
  *   `config` is the live one (its `projects`); `readerOf` reads a project's file from
- *   its default branch (projectFile.mjs)
+ *   its default branch (projectFile.mjs). `envSources` is a program's own sources of env files' installation values
+ *   (installation.mjs, README.md "Embedding the console"): `view({name, repo, keys, headers})` says, for the pages, which
+ *   of a project's env files have one, its name, whether it is on and the variables it sets; `forSession({name, repo,
+ *   session: {id, owner}})` answers the text of each file whose source is on, handed to the session in place of the typed one,
+ *   within `envSourcesTimeoutMs` (ENV_SOURCES_TIMEOUT_MS; a test's is shorter)
  */
-export function createRepoSettings({ store, secrets, config, readerOf, now = Date.now }) {
+export function createRepoSettings({ store, secrets, config, readerOf, now = Date.now, envSources = null, envSourcesTimeoutMs = ENV_SOURCES_TIMEOUT_MS }) {
+  checkEnvSources(envSources);
   const available = () => Boolean(secrets) && secrets.configured?.() !== false;
 
   function requireSecrets() {
@@ -115,23 +211,23 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       return store.state.repoSettings ?? null;
     }
     if (create) {
-      store.state.people ??= {};
-      store.state.people[loginKey(login)] ??= {};
-      store.state.people[loginKey(login)].repos ??= {};
+      const people = (store.state.people ??= {});
+      if (!isRecord(own(people, loginKey(login)))) people[loginKey(login)] = {};
+      people[loginKey(login)].repos ??= {};
     }
-    return store.state.people?.[loginKey(login)]?.repos ?? null;
+    return own(store.state.people, loginKey(login))?.repos ?? null;
   }
 
   function recordOf({ login, project, key }) {
-    const repo = rootFor(login)?.[project];
-    return (key ? repo?.env?.[key] : repo?.instructions) ?? null;
+    const repo = own(rootFor(login), project);
+    return (key ? own(repo?.env, key) : repo?.instructions) ?? null;
   }
 
   // `record` null removes it, and the project's entry with it once it holds nothing.
   function writeRecord({ login, project, key, record }) {
     if (!record && !recordOf({ login, project, key })) return;
     const root = rootFor(login, true);
-    const repo = root[project] ?? {};
+    const repo = own(root, project) ?? {};
     if (key) {
       const env = { ...repo.env };
       if (record) env[key] = record;
@@ -206,9 +302,10 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
   }
 
   // One path of a key: its own defaults and wiring, and which layer wins each key in it.
-  function pathView({ file, layer, inst, own, login }) {
+  function pathView({ file, layer, inst, own, login, source }) {
     const wiring = sessionWiring({ overrides: file.overrides, env: layer?.env ?? {} });
-    const layers = { repo: file.defaults.join('\n'), installation: keyText(inst?.keys), ...(login && { personal: keyText(own?.keys) }), session: file.overrides.join('\n') };
+    // While a source is on, the installation's keys are the source's: the typed ones reach no session.
+    const layers = { repo: file.defaults.join('\n'), installation: keyText(source?.on ? source.keys : inst?.keys), ...(login && { personal: keyText(own?.keys) }), session: file.overrides.join('\n') };
     return {
       path: file.path, defaults: file.defaults,
       // A line `{{NAME?}}` writes only in a session that has NAME: there it is wiring, elsewhere the layers' value stays.
@@ -231,17 +328,37 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
 
   // One key and every env file that names it: files that name one secret share its values, each with its own
   // defaults and overrides. `path`, `defaults` and `wiring` are the first file's, `files` each one's.
-  function envFileView({ project, files, layer, login }) {
+  function envFileView({ project, files, layer, login, source = null, controls = false }) {
     const [first] = files;
     const inst = recordOf({ project: project.name, key: first.key });
     const own = login ? recordOf({ login, project: project.name, key: first.key }) : null;
-    const paths = files.map((file) => pathView({ file, layer, inst, own, login }));
+    const paths = files.map((file) => pathView({ file, layer, inst, own, login, source }));
     return {
       key: first.key, path: first.path, paths: files.map((f) => f.path), secret: first.secret, defaults: first.defaults, wiring: paths[0].wiring,
       files: paths.map(({ table, ...rest }) => rest),
       installation: inst, ...(login && { personal: own }),
+      // The program's controls are the admin's page's alone.
+      ...(source && { source: { label: source.label, on: source.on, keys: source.keys, ...(controls && source.html !== null && { html: source.html, scripts: source.scripts }) } }),
       table: sharedTable(paths),
     };
+  }
+
+  // The program's sources for a project's env files, by key: none without the hook, where it names none, or where it
+  // throws or answers badly, and the pages are then the typed values' alone.
+  async function sourcesOf(project, keys, headers) {
+    // A Map: an env file's key may be a name every object has (`constructor`), which a plain object would answer for.
+    if (!envSources || !keys.length) return new Map();
+    try {
+      const given = await envSources.view({ name: project.name, repo: project.repo ?? null, keys, headers });
+      if (given === null || given === undefined) return new Map();
+      if (!isRecord(given)) throw notByKey(given);
+      // Read whole here, inside the guard: what is returned is plain data.
+      const entries = new Map(plainEntries(given));
+      return new Map(keys.filter((key) => entries.get(key) != null).map((key) => [key, checkedSource(key, entries.get(key))]));
+    } catch (err) {
+      console.warn('repoSettings: the program\'s env sources not given', { project: project.name, ...failureOf(err) });
+      return new Map();
+    }
   }
 
   // The project file's env files by key, in the order each key first appears.
@@ -255,9 +372,11 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
    * What the Console settings page shows for a repo, and My settings with the person's own records: the project file's
    * env files with their defaults and wiring, each layer's records (never a value) and which layer wins each key.
    * @param {string} name  the project
-   * @param {{login?: string|null}} [opts]  the person whose own records are added: My settings' view
+   * @param {{login?: string|null, headers?: object, controls?: boolean}} [opts]  `login`, the person whose own records
+   *   are added: My settings' view. `headers`, the request's, for a program's `envSources` to know who asks; `controls`,
+   *   for the admin's page alone, carries its controls for each env file (`source.html`)
    */
-  async function view(name, { login = null } = {}) {
+  async function view(name, { login = null, headers = {}, controls = false } = {}) {
     const project = requireProject(name);
     let layer = null;
     let error = null;
@@ -267,18 +386,20 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       error = firstLine(err);
       console.warn('repoSettings: project file not read, saved values shown alone', { project: project.name, message: error });
     }
-    const instEnv = rootFor(null)?.[project.name]?.env ?? {};
-    const ownEnv = login ? rootFor(login)?.[project.name]?.env ?? {} : {};
+    const instEnv = own(rootFor(null), project.name)?.env ?? {};
+    const ownEnv = login ? own(rootFor(login), project.name)?.env ?? {} : {};
     const named = layer?.envFiles ?? [];
     const saved = [...new Set([...Object.keys(instEnv), ...Object.keys(ownEnv)])].filter((key) => !named.some((f) => f.key === key));
     // Unread, the saved keys stand for the files: what they are for is unknown until the file is read.
     const files = layer ? named : saved.map((key) => ({ key, path: null, secret: null, defaults: [], overrides: [] }));
+    // Asked only of the env files the project file names: unread, there is none to ask of.
+    const sources = await sourcesOf(project, [...new Set(named.map((f) => f.key))], headers);
     return {
       project: project.name, repo: project.repo, default: Boolean(project.default),
       projectFile: { read: Boolean(layer), error, rules: layer?.rules ?? null, setup: layer?.setup ?? null },
-      envFiles: byKey(files).map((group) => envFileView({ project, files: group, layer, login })),
+      envFiles: byKey(files).map((group) => envFileView({ project, files: group, layer, login, source: sources.get(group[0].key) ?? null, controls })),
       // Saved for a key the project file no longer names: kept until someone deletes it.
-      unnamed: layer ? saved.map((key) => ({ key, installation: instEnv[key] ?? null, ...(login && { personal: ownEnv[key] ?? null }) })) : [],
+      unnamed: layer ? saved.map((key) => ({ key, installation: own(instEnv, key) ?? null, ...(login && { personal: own(ownEnv, key) ?? null }) })) : [],
       instructions: { installation: recordOf({ project: project.name }), ...(login && { personal: recordOf({ login, project: project.name }) }) },
       ...(login && {
         files: Object.entries(filesRecordOf(login, project.name) ?? {}).map(([file, savedAt]) => ({ path: file, savedAt })).sort((a, b) => a.path.localeCompare(b.path)),
@@ -290,8 +411,8 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
 
   /** @returns {{project: string, repo: string, envFiles: string[], instructions: boolean, files: number}}  a person's own records for a project */
   function summary(login, project) {
-    const own = rootFor(login)?.[project.name];
-    return { project: project.name, repo: project.repo, envFiles: Object.keys(own?.env ?? {}), instructions: Boolean(own?.instructions), files: Object.keys(own?.files ?? {}).length };
+    const repo = own(rootFor(login), project.name);
+    return { project: project.name, repo: project.repo, envFiles: Object.keys(repo?.env ?? {}), instructions: Boolean(repo?.instructions), files: Object.keys(repo?.files ?? {}).length };
   }
 
   async function installationText({ project: name, key = null, by, on = 'console settings' }) {
@@ -339,12 +460,12 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
   }
 
   // A person's own whole files for a project, by path, and when each was saved: state.json's record of them.
-  const filesRecordOf = (login, project) => rootFor(login)?.[project]?.files ?? null;
+  const filesRecordOf = (login, project) => own(rootFor(login), project)?.files ?? null;
 
   function writeFilesRecord(login, project, files) {
     if (!files && !filesRecordOf(login, project)) return;
     const root = rootFor(login, true);
-    const repo = { ...root[project] };
+    const repo = { ...own(root, project) };
     if (files) repo.files = files;
     else delete repo.files;
     if (Object.keys(repo).length) root[project] = repo;
@@ -401,9 +522,8 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       }
       if (layer.envFiles.some((f) => f.path === key)) throw shown(`${key} is one of ${project.repo}'s env files: set your values for it above`);
     }
-    const files = await readFiles(login, project.name);
-    if (value.trim()) files[key] = value;
-    else delete files[key];
+    // Made anew, not assigned into: a path may be `__proto__`, which an assignment would not keep as a file.
+    const files = Object.fromEntries([...Object.entries(await readFiles(login, project.name)).filter(([f]) => f !== key), ...(value.trim() ? [[key, value]] : [])]);
     if (Object.keys(files).length > MAX_OWN_FILES) throw shown(`you can keep ${MAX_OWN_FILES} files a repo at most`);
     const json = JSON.stringify(files);
     const limit = maxFilesBytes();
@@ -415,7 +535,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     else await secrets.remove(personalFilesName(login, project.name));
     const before = filesRecordOf(login, project.name);
     const at = new Date(now()).toISOString();
-    const kept = Object.fromEntries(Object.keys(files).map((f) => [f, f === key ? at : before?.[f] ?? at]));
+    const kept = Object.fromEntries(Object.keys(files).map((f) => [f, f === key ? at : own(before, f) ?? at]));
     writeFilesRecord(login, project.name, Object.keys(kept).length ? kept : null);
     console.log(value.trim() ? 'repoSettings: own file saved' : 'repoSettings: own file removed', {
       project: project.name, login, path: key, files: Object.keys(files).length, ...(value.trim() && { bytes: Buffer.byteLength(value) }),
@@ -437,6 +557,9 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
    * What a session is handed at start: its own project's values, chosen by the session, never by what it asks for.
    * A person's only in their own private session: a shared or QA session, which anyone signed in can type into, gets
    * none. Every key the console holds for the project: the session uses those its checkout's project file names.
+   * Where a program's source is on for an env file (`envSources`), its installation text is the source's, never the
+   * typed one, which is not read: a source's text that cannot be used leaves the layer with none. A source's key is one
+   * the console knows as an env file's (knownKeys): any other is dropped, since the session's own log names its keys.
    * @returns {Promise<{project: string, envFiles: Record<string, {installation: string|null, personal: string|null}>,
    *   instructions: {installation: string|null, personal: string|null}, personalFor: string|null}|null>}  null for an ask session
    * @throws {Error}  when the store did not answer
@@ -445,22 +568,103 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     if (isAsk(session)) return null;
     const project = projectFor(config, session).name;
     const personalFor = session.owner && !isQa(session) ? session.owner : null;
+    // The source's answer and the check of its keys share one wait (envSourcesTimeoutMs), so a slow hook and then a
+    // slow read of the project file cannot together outlast the session's own wait for this answer.
+    const until = Date.now() + envSourcesTimeoutMs;
+    const answered = await sourcedFor(session, project, until);
+    // A key only the program gave is its text until the console knows it as an env file's: never handed on, where the
+    // session's log would name it, and never named here. Dropped and counted.
+    const known = answered.size ? await knownKeys(project, [...answered.keys()], until) : new Set();
+    const sourced = new Map([...answered].filter(([key]) => known.has(key)));
+    const dropped = answered.size - sourced.size;
     const keys = [...new Set([
-      ...Object.keys(rootFor(null)?.[project]?.env ?? {}),
-      ...(personalFor ? Object.keys(rootFor(personalFor)?.[project]?.env ?? {}) : []),
+      ...Object.keys(own(rootFor(null), project)?.env ?? {}),
+      ...(personalFor ? Object.keys(own(rootFor(personalFor), project)?.env ?? {}) : []),
+      ...sourced.keys(),
     ])];
     const read = (login, key) => readValue({ login, project, key });
     const [envValues, instructions] = await Promise.all([
-      Promise.all(keys.map(async (key) => [key, { installation: await read(null, key), personal: personalFor ? await read(personalFor, key) : null }])),
+      Promise.all(keys.map(async (key) => [key, { installation: sourced.has(key) ? sourced.get(key) : await read(null, key), personal: personalFor ? await read(personalFor, key) : null }])),
       Promise.all([read(null, null), personalFor ? read(personalFor, null) : null]),
     ]);
     const envFiles = Object.fromEntries(envValues);
     const set = (layer) => Object.keys(envFiles).filter((k) => envFiles[k][layer] !== null);
     console.log('repoSettings: handed out', {
       sessionId: session.id, project, installation: set('installation'), personal: set('personal'),
+      ...(envSources && { fromSource: [...sourced.keys()], ...(dropped && { sourceKeysDropped: dropped }) }),
       instructions: { installation: instructions[0] !== null, personal: instructions[1] !== null }, personalFor,
     });
     return { project, envFiles, instructions: { installation: instructions[0], personal: instructions[1] ?? null }, personalFor };
+  }
+
+  // The keys the console knows as a project's env files: those it keeps a record for, and, where a source answered
+  // others, those the project file names (on its default branch). That read is made only then; when it fails, a source's
+  // key with no record is not known, and is dropped.
+  async function knownKeys(project, sourcedKeys, until) {
+    const known = new Set(Object.keys(own(rootFor(null), project)?.env ?? {}));
+    for (const person of Object.values(store.state.people ?? {})) for (const key of Object.keys(own(person?.repos, project)?.env ?? {})) known.add(key);
+    if (sourcedKeys.every((key) => known.has(key))) return known;
+    // The message is the console's own reader's (GitHub's answer), as its other lines log it, or that the wait the
+    // source's answer began is over: the read goes on, and the next start finds it done.
+    let timer;
+    const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer in what was left of the ${envSourcesTimeoutMs} ms a source has`)), Math.max(0, until - Date.now())); });
+    const reading = Promise.resolve().then(() => readerOf(project).repoLayer());
+    reading.catch(() => {});
+    const layer = await Promise.race([reading, late]).catch((err) => {
+      console.warn('repoSettings: project file not read, a source\'s keys the console keeps no values for are dropped', { project, message: firstLine(err) });
+      return null;
+    }).finally(() => clearTimeout(timer));
+    for (const file of layer?.envFiles ?? []) known.add(file.key);
+    return known;
+  }
+
+  // The text of each env file whose source is on, by key, as the program's `envSources.forSession` answers it: null
+  // for one whose text cannot be used (not text, or over what a typed save may hold), so its installation layer is
+  // none. The typed values are not handed out in its place: the page says they are not used while the source is on.
+  // A hook that throws, answers no object or does not answer in time says nothing of which sources are on, so the
+  // typed values are handed out. The log names no key here: a key is the program's text, so a refused one is counted,
+  // by what was wrong with it.
+  async function sourcedFor(session, project, until) {
+    const sourced = new Map();
+    if (!envSources) return sourced;
+    let entries;
+    let timer;
+    try {
+      const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new BadAnswer(`no answer in ${envSourcesTimeoutMs} ms`)), Math.max(0, until - Date.now())); });
+      const asked = Promise.resolve().then(() => envSources.forSession({ name: project, repo: projectNamed(config, project)?.repo ?? null, session: { id: session.id, owner: session.owner ?? null } }));
+      // Should it fail after the wait is over, that is no one's to catch.
+      asked.catch(() => {});
+      const given = await Promise.race([asked, late]);
+      if (given !== null && given !== undefined && !isRecord(given)) throw notByKey(given);
+      // Read whole here, inside the guard: a key or a value that throws when read is a hook that threw.
+      entries = given == null ? [] : plainEntries(given);
+    } catch (err) {
+      console.warn('repoSettings: env sources not read, the typed values handed out', { sessionId: session.id, project, ...failureOf(err) });
+      return sourced;
+    } finally {
+      clearTimeout(timer);
+    }
+    const refused = { notAKey: 0, notText: 0, tooLarge: 0 };
+    for (const [key, text] of entries) {
+      if (!KEY.test(key)) {
+        refused.notAKey += 1;
+        continue;
+      }
+      let value = null;
+      if (typeof text !== 'string') refused.notText += 1;
+      else {
+        try {
+          // As a typed save: Unix line endings, and blank text is no values at all.
+          value = checkFile(text) || null;
+        } catch {
+          refused.tooLarge += 1;
+        }
+      }
+      sourced.set(key, value);
+    }
+    const count = refused.notAKey + refused.notText + refused.tooLarge;
+    if (count) console.warn('repoSettings: env source text refused, the installation layer handed out as none', { sessionId: session.id, project, refused: count, ...refused });
+    return sourced;
   }
 
   // One person's old files into the default project's. Where they keep some there already (saved on the page before
@@ -474,14 +678,14 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       if (!old || typeof old !== 'object' || Array.isArray(old)) throw new Error('the old own files are not a JSON object');
     }
     const current = await readFiles(login, main.name);
-    const added = Object.keys(old).filter((file) => !(file in current));
+    const added = Object.keys(old).filter((file) => !Object.hasOwn(current, file));
     const merged = { ...current, ...Object.fromEntries(added.map((file) => [file, old[file]])) };
     const fits = Object.keys(merged).length <= MAX_OWN_FILES && Buffer.byteLength(JSON.stringify(merged)) <= maxFilesBytes();
     const moving = added.length && fits;
     if (moving) {
       await secrets.save(personalFilesName(login, main.name), JSON.stringify(merged), `Woodshed: @${login}'s own files for ${main.name}, for their private sessions only`);
       const at = new Date(now()).toISOString();
-      writeFilesRecord(login, main.name, { ...filesRecordOf(login, main.name), ...Object.fromEntries(added.map((file) => [file, person.ownFiles[file] ?? at])) });
+      writeFilesRecord(login, main.name, { ...filesRecordOf(login, main.name), ...Object.fromEntries(added.map((file) => [file, own(person.ownFiles, file) ?? at])) });
     }
     if (value) await secrets.remove(legacyOwnFilesName(login));
     delete person.ownFiles;
@@ -522,7 +726,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
 
   // Each record of a project in one layer, deleted secret first: one that fails is kept, to be deleted again.
   async function forgetLayer(login, project) {
-    const repo = rootFor(login)?.[project];
+    const repo = own(rootFor(login), project);
     if (!repo) return { deleted: 0, failed: 0 };
     let deleted = 0;
     let failed = 0;
@@ -619,7 +823,9 @@ async function readBody(req, limit = MAX_BODY_BYTES) {
  * `x-woodshed`, and that an admin calls `/api/console-settings/...`.
  *
  *   GET  /api/console-settings/repos/<project>                   the repo's env files and instructions, records only, and
- *                                                                its Slack channel (`slack`, null where the console has none)
+ *                                                                its Slack channel (`slack`, null where the console has none);
+ *                                                                an env file a program has a source for carries `source`
+ *                                                                (`{label, on, keys, html?, scripts?}`, createRepoSettings)
  *   GET  /api/console-settings/repos/<project>/env/<key>         {"text"}: the installation's values, logged as shown
  *   POST /api/console-settings/repos/<project>/env/<key>         {"text"}; "" clears
  *   POST /api/console-settings/repos/<project>/env/<key>/remove  a key the project file no longer names, everyone's
@@ -664,18 +870,8 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
     return { projects: main.repo ? [main] : [], defaultProject: main.repo ? main.name : null };
   }
 
-  // A script path on the console's own address: `/\host/x.js` is another site's to a browser, as `//host/x.js` is.
-  function onConsole(src) {
-    if (typeof src !== 'string' || !src.startsWith('/') || src.includes('\\')) return false;
-    try {
-      return new URL(src, 'http://console.invalid').origin === 'http://console.invalid';
-    } catch {
-      return false;
-    }
-  }
-
   async function adminView(project, headers) {
-    const [view, host] = await Promise.all([repoSettings.view(project), hostGroupsOf(project, headers)]);
+    const [view, host] = await Promise.all([repoSettings.view(project, { headers, controls: true }), hostGroupsOf(project, headers)]);
     return { ...view, slack: slackOf?.(project) ?? null, triggers: triggersOf?.(project) ?? null, host };
   }
 
@@ -714,7 +910,7 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
     }
     if (!(await refuseUnwritable(req, res, login, project))) return undefined;
     if (files) return ownFilesReply(req, res, project, login, oldFiles);
-    if (req.method === 'GET' && !key && !instructions) return reply(res, 200, await repoSettings.view(project, { login }));
+    if (req.method === 'GET' && !key && !instructions) return reply(res, 200, await repoSettings.view(project, { login, headers: req.headers }));
     if (req.method === 'GET') {
       const [text, installation] = await Promise.all([
         repoSettings.ownText({ login, project, key }),
@@ -723,7 +919,7 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
       return reply(res, 200, { text: text ?? '', installation });
     }
     await repoSettings.saveOwn({ login, project, key, text: await readText(req) });
-    return reply(res, 200, await repoSettings.view(project, { login }));
+    return reply(res, 200, await repoSettings.view(project, { login, headers: req.headers }));
   }
 
   // The old route answers with My settings' own view, as it did, for the page that sent it.
@@ -732,7 +928,7 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
     const body = await readBody(req, ownFilesBodyLimit(repoSettings.maxFilesBytes()));
     const saved = await repoSettings.saveOwnFile({ login, project, path: body.path, text: body.text });
     if (old) console.log('repoSettings: old own files route, saved to the default project', { login, project });
-    return reply(res, 200, { files: saved, view: old ? myView?.(login) ?? null : await repoSettings.view(project, { login }) });
+    return reply(res, 200, { files: saved, view: old ? myView?.(login) ?? null : await repoSettings.view(project, { login, headers: req.headers }) });
   }
 
   /** @returns {Promise<boolean>}  true when the person may go on; else the 403 is sent */

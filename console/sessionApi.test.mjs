@@ -1229,3 +1229,89 @@ test('a session\'s conversation is kept beside its own home, never a tainted one
   assert.equal((await send('nobody', good)).status, 401);
   assert.equal(marked.length, 2, 'only what was kept is marked');
 });
+
+test('a different primary agent cannot save a rotated login even after launching an extra agent', async (t) => {
+  const session = { id: 'aaaaaaaa', status: 'running', token: 'beside', owner: 'joel', options: { agent: 'claude' } };
+  const saved = [];
+  const before = {
+    grok: JSON.stringify({ scope: { key: 'original', refresh_token: 'refresh' } }),
+    opencode: JSON.stringify({ openai: { type: 'oauth', access: 'original', refresh: 'refresh', expires: 1000 } }),
+  };
+  const after = {
+    grok: JSON.stringify({ scope: { key: 'updated', refresh_token: 'new-refresh' } }),
+    opencode: JSON.stringify({ openai: { type: 'oauth', access: 'updated', refresh: 'new-refresh', expires: 2000 } }),
+  };
+  const handle = createSessionApi({
+    fleet: { sessions: () => [session] },
+    userSettings: {
+      agentAuth: async (owner, id) => owner === 'joel' ? before[id] : null,
+      setAgentAuth: async (...args) => { saved.push(args); },
+    },
+  });
+  const server = http.createServer(handle);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  for (const id of ['grok', 'opencode']) {
+    const rotate = () => request(server.address().port, {
+      path: `/agent-auth?agent=${id}`, authorization: 'Bearer beside', body: after[id],
+      headers: { 'x-woodshed-given-sign-in': agents.signInDigest(before[id]) },
+    });
+    session.extraAgents = [];
+    assert.equal((await rotate()).status, 404);
+    session.extraAgents = [id];
+    assert.equal((await rotate()).status, 404);
+    session.taintedAt = '2026-11-23T10:00:00Z';
+    assert.equal((await rotate()).status, 404);
+    delete session.taintedAt;
+  }
+  assert.deepEqual(saved, []);
+});
+
+test('/repo-settings hands out the typed values, and logs none of it, when a program\'s source answers something that throws as it is read', async (t) => {
+  const { createRepoSettings } = await import('./repoSettings.mjs');
+  // What a secret manager's client might put in an error: it must reach no console method.
+  const MARK = 'sk-live-zq9-getter-not-for-logs';
+  const boom = () => { throw new Error(`401: token ${MARK} was refused`); };
+  const answers = {
+    'a value\'s getter throws': () => ({ get 'api-env'() { return boom(); } }),
+    'a later value\'s getter throws': () => Object.defineProperty({ 'api-env': 'API_URL=http://vault\n' }, 'web-env', { enumerable: true, get: boom }),
+    'listing its keys throws': () => new Proxy({}, { ownKeys: boom }),
+    'reading any of it throws': () => new Proxy({ 'api-env': 'A=1' }, { get: boom, getOwnPropertyDescriptor: boom }),
+    'it throws what is no error, and throws again when asked what it is': () => { throw new Proxy({}, { getPrototypeOf: boom, get: boom }); },
+    'it throws a string': () => { throw MARK; },
+    'it rejects with an error whose name and code are the text': () => Promise.reject(Object.assign(new Error(MARK), { name: MARK, code: MARK })),
+    'its answer is a thenable that throws': () => ({ get then() { return boom(); } }),
+  };
+  let answer = null;
+  const values = new Map([['repos/app/env/api-env', 'API_URL=http://typed\n']]);
+  const secrets = { read: async (name) => values.get(name) ?? null, save: async () => {}, remove: async () => {} };
+  const store = { state: { repoSettings: { app: { env: { 'api-env': { savedAt: 'x', bytes: 1, keys: [] } } } } }, save() {} };
+  const config = { projects: [{ name: 'app', repo: 'acme/app', default: true }] };
+  const repoSettings = createRepoSettings({
+    store, secrets, config, readerOf: () => ({ repoLayer: async () => ({ envFiles: [], env: {}, rules: null, setup: null }) }),
+    envSources: { view: async () => null, forSession: () => answer() },
+  });
+  const sessions = [{ id: 'aaaaaaaa', status: 'running', token: 'shared', owner: null, project: 'app' }];
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: null, repoSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const said = [];
+  const saved = {};
+  for (const level of ['log', 'info', 'warn', 'error', 'debug', 'trace']) {
+    saved[level] = console[level];
+    console[level] = (...args) => said.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+  }
+  t.after(() => Object.assign(console, saved));
+  for (const [what, make] of Object.entries(answers)) {
+    said.length = 0;
+    answer = make;
+    const got = await request(port, { path: '/repo-settings', authorization: 'Bearer shared' });
+    assert.equal(got.status, 200, `${what}: the start is not failed`);
+    assert.deepEqual(got.body.envFiles, { 'api-env': { installation: 'API_URL=http://typed\n', personal: null } }, `${what}: the typed values`);
+    assert.ok(said.some((l) => l.startsWith('repoSettings: env sources not read, the typed values handed out')), `${what}: said so`);
+    assert.ok(said.every((l) => !l.includes(MARK) && !l.includes('was refused')), `${what}: ${said.filter((l) => l.includes(MARK) || l.includes('was refused')).join(' | ').replaceAll(MARK, '<the text>')}`);
+    assert.ok(said.every((l) => !l.startsWith('sessionApi: repo settings not read')), `${what}: nothing left for the session API to catch and log`);
+  }
+});
