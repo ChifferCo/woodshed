@@ -542,11 +542,15 @@
     return button;
   }
 
+  // A session the person just started again (Resume, Hand off) opens on their default view (My settings, Display), Chat
+  // or TUI for this width, as one opened with no tab picked does.
+  const openStarted = (sessionId) => navigate(`/s/${sessionId}?tab=${defaultView()}`);
+
   // Resume on a stopped private session: it opens on its page as it starts again. @returns {Promise<boolean>}
   async function resumePrivate(s, { latestImage = false } = {}) {
     try {
       const next = await W.postJson(`/api/my/sessions/${s.id}/resume`, latestImage ? { latestImage: true } : {});
-      navigate(`/s/${next.id}?tab=chat`);
+      openStarted(next.id);
       return true;
     } catch (err) {
       window.alert(`Could not resume: ${err.message}`);
@@ -624,7 +628,7 @@
         const next = await W.postJson(`/api/my/sessions/${s.id}/handoff`, { agent: agent.value, model: model.value, note: note.value, conversation: carry });
         pending = false;
         dialog.close();
-        navigate(`/s/${next.id}?tab=chat`);
+        openStarted(next.id);
       } catch (err) {
         pending = false;
         go.disabled = false;

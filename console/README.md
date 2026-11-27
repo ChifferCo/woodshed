@@ -72,7 +72,8 @@ whose it is: **My repo settings** and **My session timeouts** are yours; Setting
   (`public/sessionTabs.cjs`: sessionStorage, read only by the login that picked it and dropped at sign-out), and on
   one it was never left on, the person's default view: Chat or TUI, one for a desktop and one for a phone (under
   720px), from My settings' Display card (`viewPrefs.mjs`, `GET` and `POST /api/my/session-view`; the console logs
-  `viewPrefs: session view changed`). Chat unless they changed it. Until a tab is picked it follows the window's width. The page
+  `viewPrefs: session view changed`). Chat unless they changed it. Resume and Hand off open the session they start
+  on that default view too, whatever tab it was left on. Until a tab is picked it follows the window's width. The page
   never writes `?tab` itself: a tab picked lives in the history entry's state, so a reload, Back and Forward keep it
   (the entry's tab wins over its address), and an address only ever carries a link's tab, kept as it came after a pick
   or a fallback (it goes through sign-in as it came, and a ?tab nobody linked to never reaches someone else).
