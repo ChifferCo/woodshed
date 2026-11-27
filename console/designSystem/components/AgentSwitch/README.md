@@ -3,7 +3,7 @@ Which agent the Chat and TUI tabs show, when a private session's owner started m
 and only for the owner of a running private session whose image can start them. A private Claude Code, Codex, Grok
 Build or OpenCode session can start Claude Code and Codex agents alongside its own. Grok Build can start alongside
 another agent with an xAI API key saved in My settings, or alongside a primary Grok Build agent on its existing
-sign-in. An extra OpenCode pane starts in an OpenCode session and uses its primary sign-in.
+sign-in. The dialog offers OpenCode in an OpenCode session, where the extra pane uses the primary sign-in.
 
 - **The switch**: a `pbtn` with a `bar-well-line` border, in `bar-ink`: the agent shown and its model when one was
   picked (`Claude · opus`), then in `bar-sub` how many agents the session has (`3 agents`) once it has more than one, and

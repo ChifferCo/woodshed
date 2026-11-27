@@ -187,9 +187,8 @@ function ran(tool, input, failed = false) {
   }
 }
 
-// ---- A conversation that happened before the page opened, but for a session just started (DEV_CHAT_AGENT_FRESH=1),
-// whose agent writes nothing until it is sent a message.
-const fresh = process.env.DEV_CHAT_AGENT_FRESH === '1';
+// Seed a primary pane's example conversation. A fresh session or an extra pane starts with its own first message.
+const fresh = process.env.DEV_CHAT_AGENT_FRESH === '1' || Boolean(process.env.WOODSHED_AGENT_ID);
 if (format === 'codex' && !fresh) write({ timestamp: now(), type: 'session_meta', payload: { id, cwd: repo } });
 if (!fresh) pastConversation();
 function pastConversation() {

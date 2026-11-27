@@ -243,7 +243,7 @@
 
   function startAgentItem(s, list) {
     if (!canStartAgent(s, list)) return null;
-    return { group: 'Start', label: '+ Another agent', note: 'Claude or Codex, with the model you pick, in this checkout', run: () => newAgentDialog(s) };
+    return { group: 'Start', label: '+ Another agent', note: 'Choose an agent and model for this checkout', run: () => newAgentDialog(s) };
   }
 
   // The switch on the pane bar, while Chat or TUI shows: the agent shown, a menu of every agent in the session with its
@@ -296,7 +296,7 @@
     const C = W.agentChoices;
     const select = (options) => h('select', { class: 'field' }, options.map(([value, label, title]) => h('option', { value, title }, label)));
     const fill = (el, options) => el.replaceChildren(...options.map(([value, label, title]) => h('option', { value, title }, label)));
-    const agent = select(C.AGENTS);
+    const agent = select(C.AGENTS.filter(([id]) => id !== 'opencode' || W.agentOf(s) === 'opencode'));
     const model = select(C.MODELS);
     const customModel = h('input', { class: 'field', type: 'text', 'aria-label': 'Model', placeholder: 'Default', hidden: true, disabled: true });
     const effort = select(C.EFFORTS);

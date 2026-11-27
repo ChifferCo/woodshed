@@ -529,6 +529,12 @@ test('the agents beside a session\'s own are read from statusd field by field, a
     { id: 'agent-4', agent: 'claude', model: null, effort: null, permissionMode: null, startedAt: null, state: null,
       heldIds: [], deliveredIds: [], refusedIds: [], leftInBox: null },
   ]);
+  const models = agentsFrom([
+    { id: 'agent-2', agent: 'opencode', model: 'openai/gpt-5' },
+    { id: 'agent-3', agent: 'grok', model: 'grok:build' },
+    { id: 'agent-4', agent: 'opencode', model: 'openai/$(whoami)' },
+  ]);
+  assert.deepEqual(models.map((a) => a.model), ['openai/gpt-5', 'grok:build', null]);
   assert.equal(agentsFrom(Array.from({ length: 9 }, (_, i) => ({ id: `agent-${(i % 8) + 2}`, agent: 'claude' }))).length, 3);
 });
 
