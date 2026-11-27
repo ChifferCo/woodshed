@@ -300,8 +300,10 @@ function after(ms, step) {
   timers.push(setTimeout(step, ms));
 }
 
-function stop({ next = true } = {}) {
-  if (screen !== 'idle') hook('Stop');
+// `interrupted`: cut short by Esc, which fires no hook in claude (hookState.mjs): statusd reads it from the transcript's
+// interrupt record, and the console at its own reads.
+function stop({ next = true, interrupted = false } = {}) {
+  if (screen !== 'idle' && !interrupted) hook('Stop');
   for (const t of timers) clearTimeout(t);
   timers = [];
   clearInterval(clock);
@@ -374,7 +376,7 @@ process.stdin.on('data', (chunk) => {
       if (screen !== 'idle') {
         if (format === 'claude') said('user', '[Request interrupted by user]');
         if (format === 'opencode' && screen === 'working') ocMessage('assistant', { error: { name: 'MessageAbortedError', data: {} } });
-        stop({ next: false });
+        stop({ next: false, interrupted: true });
       }
       continue;
     }

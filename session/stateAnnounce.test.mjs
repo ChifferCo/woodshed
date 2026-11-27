@@ -20,7 +20,7 @@ function setup({ answer = () => ({ ok: true, status: 204 }) } = {}) {
     },
     log: { log: (...a) => lines.push(['log', ...a]), warn: (...a) => lines.push(['warn', ...a]) },
   });
-  const write = (state, at) => { file.mtimeMs = at; file.text = JSON.stringify({ state, event: 'x', at }); };
+  const write = (state, at, event = 'PostToolUse') => { file.mtimeMs = at; file.text = JSON.stringify({ state, event, at }); };
   return { announcer, calls, lines, write, file };
 }
 
@@ -77,4 +77,17 @@ test('only claude and Grok Build sessions announce, never a QA run, and only wit
   assert.equal(announcesState({ ...session, qa: true }), false, 'a QA run\'s state is its script\'s');
   assert.equal(announcesState({ ...session, consoleUrl: '' }), false, 'no console to tell');
   assert.equal(announcesState({ ...session, token: '' }), false, 'nothing to sign the call with');
+});
+
+test('a new prompt is told even when the file already said working, as it does after an Esc, which fires no hook', async () => {
+  const { announcer, calls, write } = setup();
+  write('working', 1, 'UserPromptSubmit');
+  assert.equal(await announcer.check(), 'told');
+  write('working', 2, 'PostToolUse');
+  assert.equal(await announcer.check(), 'unchanged');
+  // Esc: no hook, the file stays as it was. Then the next prompt.
+  write('working', 3, 'UserPromptSubmit');
+  assert.equal(await announcer.check(), 'told', 'the session went back to its prompt and started again');
+  assert.equal(await announcer.check(), 'unchanged');
+  assert.equal(calls.length, 2);
 });

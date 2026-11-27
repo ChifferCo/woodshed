@@ -35,6 +35,7 @@ const CALL_TIMEOUT_MS = 3_000;
 export function createStateAnnouncer({ stateFile, consoleUrl, token, fetch = globalThis.fetch, stat = (f) => fs.stat(f), readFile = (f) => fs.readFile(f, 'utf8'), log = console }) {
   let seenAt = null;
   let told = null;
+  let toldPromptAt = null;
   let failedWhy = null;
   let first = true;
   return {
@@ -48,15 +49,21 @@ export function createStateAnnouncer({ stateFile, consoleUrl, token, fetch = glo
       if (mtimeMs === seenAt) return 'unchanged';
       seenAt = mtimeMs;
       let state;
+      let event;
+      let at;
       try {
-        state = JSON.parse(await readFile(stateFile)).state ?? null;
+        ({ state = null, event = null, at = null } = JSON.parse(await readFile(stateFile)));
       } catch {
         // Caught mid-write: hookState.mjs renames a whole file into place, so the next look reads it.
         seenAt = null;
         return 'unchanged';
       }
-      if (state === told) return 'unchanged';
+      // Each new prompt is told even when the file already said working: an Esc fires no hook, so after one the file
+      // still says working while the session is back at its prompt, and the next prompt would change nothing in it.
+      const newPrompt = event === 'UserPromptSubmit' && at !== toldPromptAt;
+      if (state === told && !newPrompt) return 'unchanged';
       told = state;
+      if (newPrompt) toldPromptAt = at;
       try {
         const res = await fetch(`${consoleUrl}/state-changed`, {
           method: 'POST', headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
