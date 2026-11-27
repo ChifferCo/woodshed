@@ -518,7 +518,11 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     // A failed ask is tried again a few times in a row, whatever it was waiting for, then the page stops asking.
     const again = loadError ? (data?.refreshing || clickedRefresh) && ++retries <= 5 : Boolean(data?.refreshing);
     if (again) pollTimer = setTimeout(() => refresh({ quiet: true }), 3000);
-    else clickedRefresh = false;
+    else {
+      clickedRefresh = false;
+      // Given up asking: do not leave the button on "Refreshing…" for a read the page can no longer see.
+      if (loadError && data) data = { ...data, refreshing: false };
+    }
     if (!loadError) retries = 0;
     render();
   }
