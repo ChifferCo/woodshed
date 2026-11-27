@@ -21,6 +21,8 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
   let data = null;
   let loadError = null;
   let loading = false;
+  let clickedRefresh = false;
+  let pollTimer = null;
   // How many rows of each list are shown: Show more adds a page, Show all the rest.
   const shown = { sessions: STEP, pulls: STEP };
   const { group } = window.WoodshedSettingsRows.create({ render });
@@ -447,6 +449,18 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     return h('label', { class: 'person-pick' }, icon('human', 'slate'), h('span', null, 'Person'), select);
   }
 
+  // What the pull request data is as of, and a button to read GitHub again, off while a read is running.
+  function freshness() {
+    // With every repo failed on a first visit there is no time to show, but the button still lets them try again.
+    if (!data?.asOf && !data?.failed?.length) return null;
+    const running = data.refreshing || clickedRefresh;
+    return h('p', { class: 'foot analytics-asof' },
+      data.asOf ? `Pull requests as of ${stamp(data.asOf)}` : 'Pull requests not read yet',
+      !running && data.refreshFailed ? ' · the last refresh failed, showing the earlier read' : '',
+      ' ',
+      h('button', { type: 'button', class: 'btn btn-plain', disabled: running, onclick: refreshNow }, running ? 'Refreshing…' : 'Refresh'));
+  }
+
   function render() {
     const head = h('header', { class: 'page-head', id: 'analytics' },
       h('div', null,
@@ -455,6 +469,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     const windowSeg = h('div', { class: 'filters' },
       h('p', { class: 'foot' }, data ? `From ${day(data.since)} to today${loading ? ' · reading…' : ''}.` : ''),
       data && personPicker(),
+      freshness(),
       h('div', { class: 'seg', role: 'group', 'aria-label': 'Window' }, (data?.windows ?? [7, 30, 90]).map((d) =>
         h('button', { type: 'button', 'aria-pressed': String(d === days()), onclick: () => { setParam('days', d, 30); refresh(); } }, `${d} days`))));
     if (!data) {
@@ -477,12 +492,18 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
       h('p', { class: 'foot' }, 'Lines changed are a rough size of each pull request, not a measure of anyone\'s work. A pull request opened by a bot is left out unless a session opened it.')));
   }
 
-  // Only the answer for the window picked last is drawn: an older read that lands after it is dropped.
+  // Only the answer for the window picked last is drawn: an older read that lands after it is dropped, whichever call asked.
+  // Every answer kept that says a refresh is running schedules the next ask, so the page follows it to its end whether it
+  // was the first load, a window click, the button or an earlier ask.
   let asking = 0;
-  async function refresh() {
+  async function refresh({ quiet = false } = {}) {
+    clearTimeout(pollTimer);
+    if (life.ended) return;
     const mine = ++asking;
-    loading = true;
-    render();
+    if (!quiet) {
+      loading = true;
+      render();
+    }
     try {
       const body = await W.getJson(`/api/analytics?days=${days()}`);
       if (mine !== asking || life.ended) return;
@@ -493,7 +514,34 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
       loadError = err.message;
     }
     loading = false;
+    // Keep asking while a read runs. After a failed ask, only while the button's own read is awaited (a bounded few tries).
+    // A failed ask is tried again a few times in a row, whatever it was waiting for, then the page stops asking.
+    const again = loadError ? (data?.refreshing || clickedRefresh) && ++retries <= 5 : Boolean(data?.refreshing);
+    if (again) pollTimer = setTimeout(() => refresh({ quiet: true }), 3000);
+    else {
+      clickedRefresh = false;
+      // Given up asking: do not leave the button on "Refreshing…" for a read the page can no longer see.
+      if (loadError && data) data = { ...data, refreshing: false };
+    }
+    if (!loadError) retries = 0;
     render();
+  }
+
+  // The button: the console reads GitHub again in the background, then the page follows it.
+  let retries = 0;
+  async function refreshNow() {
+    clickedRefresh = true;
+    retries = 0;
+    render();
+    try {
+      await W.postJson('/api/analytics/refresh', {});
+    } catch (err) {
+      clickedRefresh = false;
+      loadError = err.message;
+      render();
+      return;
+    }
+    await refresh({ quiet: true });
   }
 
   render();

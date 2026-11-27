@@ -239,7 +239,7 @@ test('a merge risk batch GitHub fails is left out, and the other batches\' tiers
   await assert.rejects(createGitHub({ repo: REPO, run: allFail }).checkTiers([1, 2], 'Merge risk'), /502/, 'every batch failing is a failure');
 });
 
-test('the report reads each repo once for five minutes, and a repo GitHub did not answer is named, not a failure of the page', async () => {
+test('the report reads each repo once for an hour, and a repo GitHub did not answer is named, not a failure of the page', async () => {
   let reads = 0;
   let now = NOW;
   const ok = { recentPulls: async () => { reads++; return { pulls: [pull({ number: 9, url: url(9), createdAt: ago(1) })], total: 1, truncated: false }; } };
@@ -260,9 +260,115 @@ test('the report reads each repo once for five minutes, and a repo GitHub did no
   const theirs = await analytics.report({ days: 30, repos: ['o/web'] });
   assert.deepEqual([theirs.projects, theirs.pulls.other.opened, theirs.sessions.work], [['web'], 0, 0]);
   assert.equal(reads, 1, 'and its repo is not even read');
-  now += 6 * 60_000;
+  now += 30 * 60_000;
   await analytics.report({ days: 30 });
+  assert.equal(reads, 1, 'still the same read half an hour on');
+  now += 31 * 60_000;
+  await analytics.report({ days: 30 });
+  assert.equal(reads, 2, 'a view past an hour starts a new read');
+});
+
+const cachedAnalytics = (gh, clock) => createAnalytics({
+  config: { projects: [{ name: 'app', repo: REPO, default: true }] }, sessions: () => [], state: () => ({ usageKept: [] }), githubFor: () => gh, now: () => clock.now,
+});
+const nextTick = () => new Promise((r) => setImmediate(r));
+
+test('every window shares one read per repo', async () => {
+  const clock = { now: NOW };
+  let reads = 0;
+  const analytics = cachedAnalytics({ recentPulls: async () => { reads++; return { pulls: [pull({ number: 9, url: url(9), createdAt: ago(1) })], total: 1, truncated: false }; } }, clock);
+  for (const days of [7, 30, 90]) await analytics.report({ days });
+  assert.equal(reads, 1, 'the three windows are one search');
+});
+
+test('the saved read is shown at once however old, with when it is as of, and a refresh runs in the background', async () => {
+  const clock = { now: NOW };
+  let number = 9;
+  let release = null;
+  const gh = { recentPulls: async () => {
+    if (release) await new Promise((r) => { release = r; });
+    return { pulls: [pull({ number, url: url(number), createdAt: ago(1) })], total: 1, truncated: false };
+  } };
+  const analytics = cachedAnalytics(gh, clock);
+  const first = await analytics.report({ days: 7 });
+  assert.equal(first.asOf, new Date(NOW).toISOString());
+  assert.equal(first.refreshing, false);
+  clock.now += 3 * 24 * 60 * 60_000;
+  number = 10;
+  release = () => {};
+  const old = await analytics.report({ days: 90 });
+  assert.equal(old.pulls.recent[0].number, 9, 'the three-day-old read, not waited for');
+  assert.equal(old.asOf, new Date(NOW).toISOString(), 'and it says when it is from');
+  assert.equal(old.refreshing, true);
+  assert.equal((await analytics.report({ days: 90 })).refreshing, true, 'one refresh at a time');
+  release();
+  await nextTick();
+  await nextTick();
+  const fresh = await analytics.report({ days: 90 });
+  assert.equal(fresh.pulls.recent[0].number, 10);
+  assert.equal(fresh.asOf, new Date(clock.now).toISOString());
+  assert.equal(fresh.refreshing, false);
+});
+
+test('the Refresh button reads again now, once, and only the repos the person may open', async () => {
+  const clock = { now: NOW };
+  let reads = 0;
+  let release = null;
+  const gh = { recentPulls: async () => { reads++; if (release) await new Promise((r) => { release = r; }); return { pulls: [], total: 0, truncated: false }; } };
+  const analytics = cachedAnalytics(gh, clock);
+  await analytics.report({ days: 7 });
+  clock.now += 5 * 60_000;
+  assert.equal(analytics.refresh({ repos: ['o/other'] }), 0, 'not a repo they cannot open');
+  release = () => {};
+  assert.equal(analytics.refresh({ repos: [REPO] }), 1);
+  assert.equal(analytics.refresh({ repos: [REPO] }), 0, 'not while one runs');
+  assert.equal((await analytics.report({ days: 7 })).refreshing, true);
+  release();
+  await nextTick();
+  await nextTick();
   assert.equal(reads, 2);
+  const after = await analytics.report({ days: 7 });
+  assert.deepEqual([after.refreshing, after.asOf], [false, new Date(clock.now).toISOString()]);
+});
+
+test('a failed refresh keeps the old read, says so, and is not tried on its own again for a minute; the first read still fails the page', async () => {
+  const clock = { now: NOW };
+  let reads = 0;
+  let fail = false;
+  const gh = { recentPulls: async () => { reads++; if (fail) throw new Error('HTTP 502'); return { pulls: [pull({ number: 9, url: url(9), createdAt: ago(1) })], total: 1, truncated: false }; } };
+  const analytics = cachedAnalytics(gh, clock);
+  fail = true;
+  assert.equal((await analytics.report({ days: 7 })).failed.length, 1, 'with no read the page names the repo');
+  const failedReads = reads;
+  assert.equal((await analytics.report({ days: 7 })).failed.length, 1);
+  assert.equal(reads, failedReads, 'a first read that failed is not repeated within the minute');
+  fail = false;
+  analytics.refresh({ repos: [REPO] });
+  assert.equal(reads, failedReads + 1, 'but the button reads it at once');
+  assert.equal((await analytics.report({ days: 7 })).failed.length, 0, 'and the page waits for that read, not the old failure');
+  clock.now += 61_000;
+  fail = false;
+  await analytics.report({ days: 7 });
+  clock.now += 2 * 60 * 60_000;
+  fail = true;
+  await analytics.report({ days: 7 });
+  await nextTick();
+  await nextTick();
+  const before = reads;
+  const kept = await analytics.report({ days: 30 });
+  assert.equal(kept.pulls.recent[0].number, 9);
+  assert.deepEqual([kept.failed, kept.refreshFailed], [[], true]);
+  assert.equal(reads, before, 'paced for a minute');
+  clock.now += 61_000;
+  await analytics.report({ days: 30 });
+  assert.equal(reads, before + 1);
+});
+
+test('a capped read flags only the windows it does not reach back past', async () => {
+  const clock = { now: NOW };
+  const analytics = cachedAnalytics({ recentPulls: async () => ({ pulls: [pull({ number: 9, url: url(9), createdAt: ago(14) })], total: 900, truncated: true }) }, clock);
+  assert.equal((await analytics.report({ days: 7 })).truncated, false);
+  assert.equal((await analytics.report({ days: 30 })).truncated, true);
 });
 
 test('/api/analytics is an admin\'s, and answers the window asked for with each person\'s name', async (t) => {

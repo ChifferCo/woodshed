@@ -128,6 +128,7 @@
 //   /api/console-settings*, /api/analytics, the API behind People, Secrets & webhooks, Webhook events, Console settings
 //   and Analytics.
 //   GET  /api/webhook-events     what the console did with each queued webhook, and which sources are switched off
+//   POST /api/analytics/refresh        read the repos' pull requests again in the background (the page's Refresh button)
 //   GET  /api/analytics?days=7|30|90   the Analytics page: sessions started, pull requests through Woodshed and not, by
 //                                person, time to merge and merge risk (analytics.mjs)
 //   GET  /api/secrets            each secret's state (never a value) and the GitHub App's webhook settings
@@ -1045,6 +1046,15 @@ export function createHandler({
     const report = await analytics.report({ days, repos });
     const logins = [...report.people.map((p) => p.login), ...report.pulls.recent.map((p) => p.login), ...report.sessions.recent.map((s) => s.login)];
     return reply(res, 200, { ...report, windows: WINDOWS, names: namesFor([...new Set(logins.filter(Boolean))]) });
+  }
+
+  // The Analytics page's Refresh button: reads the repos again in the background, and answers at once.
+  async function analyticsRefresh(res, login) {
+    if (!analytics?.refresh) return reply(res, 404, { error: 'this console keeps no analytics' });
+    const repos = projectAccess ? (await (projectAccess.visible ?? projectAccess.startable)(login)).map((p) => p.repo) : null;
+    const started = analytics.refresh({ repos });
+    console.log('analytics: refresh asked', { login, started });
+    return reply(res, 200, { started });
   }
 
   function cliRepoRole(login) {
@@ -2957,6 +2967,7 @@ export function createHandler({
   // A write past its sign-in and the page's own checks: the page's, through write(), and the command line's few
   // (cliSessions.mjs).
   async function writeRoute(req, res, pathname, login) {
+    if (pathname === '/api/analytics/refresh') return analyticsRefresh(res, login);
     if (pathname === '/api/secrets-manager') return managerWrite(req, res, login);
     if (SECRET_RE.test(pathname) || WEBHOOK_RE.test(pathname)) return settingsWrite(req, res, pathname);
     if (SETUP_WRITE_RE.test(pathname)) return githubSetupWrite(req, res, pathname, login);
