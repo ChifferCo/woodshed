@@ -958,7 +958,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, appPorts = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, stillSignedIn = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
   cli = null, reviewReadiness = null, analytics = null,
 }) {
@@ -3258,14 +3258,21 @@ export function createHandler({
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
     if (pathname === '/api/sessions') return reply(res, 200, sessionsBody(user.login));
     if (pathname === '/api/sessions/live') {
-      // Signed in again before each send: someone taken off People, or signed out, gets nothing more on a stream they
-      // opened before (signedIn, the check every request gets).
+      // Behind a hosting proxy, the identity the stream opened with is good for a minute after the person was taken
+      // out: only the program can say they are gone, so a hosted console pushes the list only when it is asked
+      // (stillSignedIn). Its pages poll otherwise, and see the refusal of their next poll.
+      if (trusted && !stillSignedIn) return reply(res, 404, { error: 'this console pushes no live session list: its host does not say who is still signed in' });
+      // Signed in again before each send, as every request is (signedIn): someone taken off People, or signed out,
+      // gets nothing more on a stream they opened before. Asked afresh each time: a console that starts requiring
+      // sign-in (its first GitHub sign-in) ends a stream opened before with no sign-in, as it refuses that request now.
       const headers = req.headers;
-      // Asked afresh each time: a console that starts requiring sign-in (its first GitHub sign-in) ends a stream opened
-      // before, with no sign-in, as it refuses that request now. In hosted mode the identity the stream opened with is
-      // checked again, expiry included, so the stream ends at the latest when that identity does.
-      const stillAllowed = async () => (signInOn() ? (await consoleUser(headers))?.login === user.login : user.login === soloLogin);
-      return liveSessions.handle(req, res, user.login, { stillAllowed });
+      const login = user.login;
+      const stillAllowed = async () => {
+        if (!signInOn()) return login === soloLogin;
+        if ((await consoleUser(headers))?.login !== login) return false;
+        return !trusted || (await stillSignedIn({ login, headers })) === true;
+      };
+      return liveSessions.handle(req, res, login, { stillAllowed });
     }
     if (pathname === '/api/my') {
       // The first look waits for the store, so the page never shows a sign-in missing that is there. Later ones ask it in

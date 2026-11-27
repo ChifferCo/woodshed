@@ -3330,31 +3330,57 @@ test('a live list opened before the console required sign-in ends once it does, 
   assert.equal((await getWith(port, '/api/sessions/live')).status, 401);
 });
 
-test('a hosted live list ends when the identity it opened with expires, as any request with it would be refused', async (t) => {
+test('a hosted console pushes the live list only when its host says who is still signed in, and ends a revoked one at once', async (t) => {
   const mine = { id: '0a1b2c3d', status: 'running', state: 'done', title: 'Mine', owner: 'octo' };
-  const listeners = [];
-  const fleet = { sessions: () => [mine], find: (id) => (id === mine.id ? mine : null), onChange: (fn) => listeners.push(fn) };
   const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   let clock = Date.now();
   const secret = 'test-secret-for-the-hosting-proxy';
   const trusted = createTrustedIdentity({ secret, now: () => clock });
-  const handle = createHandler({ config, fleet, trusted });
-  const server = http.createServer((req, res) => { handle(req, res); });
-  const port = await listen(server);
-  t.after(() => { handle.liveSessions.closeAll(); server.close(); });
+  const serve = async (opts) => {
+    const listeners = [];
+    const fleet = { sessions: () => [mine], find: (id) => (id === mine.id ? mine : null), onChange: (fn) => listeners.push(fn) };
+    const handle = createHandler({ config, fleet, trusted, ...opts });
+    const server = http.createServer((req, res) => { handle(req, res); });
+    const port = await listen(server);
+    t.after(() => { handle.liveSessions.closeAll(); server.close(); });
+    return { port, changed: () => { for (const fn of listeners) fn(mine.id); } };
+  };
+  const identity = () => signIdentity({ secret, login: 'octo', role: 'member', exp: clock + 60_000 });
 
-  const identity = signIdentity({ secret, login: 'octo', role: 'member', exp: clock + 60_000 });
-  const stream = await openLiveStream(port, { [IDENTITY_HEADER]: identity });
+  const unasked = await serve({});
+  assert.equal((await getWith(unasked.port, '/api/sessions/live', { [IDENTITY_HEADER]: identity() })).status, 404, 'no hook: the page polls');
+  assert.equal((await getWith(unasked.port, '/api/sessions', { [IDENTITY_HEADER]: identity() })).status, 200);
+
+  const asked = [];
+  let signedIn = true;
+  const hosted = await serve({ stillSignedIn: async ({ login, headers }) => { asked.push({ login, identity: Boolean(headers[IDENTITY_HEADER]) }); return signedIn; } });
+  const stream = await openLiveStream(hosted.port, { [IDENTITY_HEADER]: identity() });
   assert.equal(stream.res.statusCode, 200);
   assert.ok(await stream.until(() => stream.body().includes('event: full')));
-
-  clock += 60_001;
   mine.state = 'working';
-  mine.lastMessage = 'after the identity expired';
-  for (const fn of listeners) fn(mine.id);
+  hosted.changed();
+  assert.ok(await stream.until(() => stream.body().includes('event: patch')), 'pushed while the host says so');
+  assert.deepEqual(asked.at(-1), { login: 'octo', identity: true }, 'asked with who and the request that opened it');
+
+  // Taken out by the host, with the identity still good for most of its minute.
+  signedIn = false;
+  mine.state = 'done';
+  mine.lastMessage = 'after the host took them out';
+  hosted.changed();
   const ended = await stream.until(() => stream.ended());
   stream.res.destroy();
   assert.equal(ended, true, 'the stream ends');
-  assert.ok(!stream.body().includes('after the identity expired'));
-  assert.equal((await getWith(port, '/api/sessions/live', { [IDENTITY_HEADER]: identity })).status, 401, 'as a new request with it is');
+  assert.ok(!stream.body().includes('after the host took them out'));
+
+  // And, with the host saying yes, the identity's own expiry still ends it.
+  signedIn = true;
+  const second = await openLiveStream(hosted.port, { [IDENTITY_HEADER]: identity() });
+  assert.ok(await second.until(() => second.body().includes('event: full')));
+  clock += 60_001;
+  mine.lastMessage = 'after the identity expired';
+  hosted.changed();
+  const expired = await second.until(() => second.ended());
+  second.res.destroy();
+  assert.equal(expired, true);
+  assert.ok(!second.body().includes('after the identity expired'));
 });
