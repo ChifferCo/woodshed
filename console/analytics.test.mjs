@@ -362,6 +362,22 @@ test('a close with no project named is the default project\'s: the other repo\'s
   assert.deepEqual(reads, [REPO]);
 });
 
+test('a close during the cooldown after a failed refresh does not repeat the read', async () => {
+  const clock = { now: NOW };
+  let fail = false;
+  let reads = 0;
+  const analytics = cachedAnalytics({ recentPulls: async () => { reads++; if (fail) throw new Error('gh: HTTP 502'); return { pulls: [], total: 0, truncated: false }; } }, clock);
+  await analytics.report({ days: 7 });
+  fail = true;
+  assert.deepEqual(analytics.pullChanged([5], null, 'pull request closed'), [5]);
+  await nextTick();
+  await nextTick();
+  assert.equal(reads, 2);
+  assert.deepEqual(analytics.pullChanged([6], null, 'pull request closed'), [], 'inside the minute');
+  clock.now += 61_000;
+  assert.deepEqual(analytics.pullChanged([7], null, 'pull request closed'), [7]);
+});
+
 test('the start-up warm-up reads every repo after its delay, before anyone opens the page', async () => {
   const reads = [];
   const analytics = createAnalytics({

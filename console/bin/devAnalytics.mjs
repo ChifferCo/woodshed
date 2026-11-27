@@ -6,7 +6,7 @@ const DAY = 86_400_000;
 const REPO = 'example-org/example-repo';
 // A console with a second repo (DEV_CONSOLE_REPO_SETTINGS=1) has about one change in four on it, for the Repo menu.
 const TOOLS = 'example-org/example-tools';
-const repoOf = (n) => (process.env.DEV_CONSOLE_REPO_SETTINGS && n % 4 === 0 ? TOOLS : REPO);
+const repoOf = (n) => (process.env.DEV_CONSOLE_REPO_SETTINGS === '1' && n % 4 === 0 ? TOOLS : REPO);
 // Each person: sessions a week, pull requests a week without Woodshed, and how many of their sessions open one.
 const TEAM = [
   { login: 'octocat', sessions: 9, without: 1, opens: 0.6, agent: 'claude' },

@@ -392,7 +392,7 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
     if (what !== 'pull request closed') return [];
     // No project named is the default's (pullWebhooks.mjs), not every project's.
     const name = projectName ?? defaultProject(config).name;
-    const projects = allProjects(config).filter((p) => p.repo && p.name === name && reads.get(keyOf(p))?.value);
+    const projects = allProjects(config).filter((p) => p.repo && p.name === name && reads.get(keyOf(p))?.value && !(reads.get(keyOf(p)).retryAt > now()));
     let started = 0;
     for (const p of projects) started += refresh({ repos: [p.repo], project: p.name });
     return started ? numbers : [];
