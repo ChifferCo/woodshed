@@ -32,7 +32,11 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
   const days = () => ([7, 30, 90].includes(Number(params().get('days'))) ? Number(params().get('days')) : 30);
   const who = () => params().get('person') || null;
   const pullFilter = () => params().get('pulls') || 'all';
-  const repoPick = () => params().get('repo') || null;
+  // A repo in the link that the viewer may not open (removed since, or access lost) filters nothing, rather than emptying the page.
+  const repoPick = () => {
+    const asked = params().get('repo') || null;
+    return asked && (!data?.repos || data.repos.includes(asked)) ? asked : null;
+  };
   function setParam(key, value, fallback) {
     const p = params();
     if (value === fallback || value === null) p.delete(key);

@@ -136,6 +136,14 @@ test('the Repo menu narrows sessions, figures and people to one repo, and All re
   assert.equal(page.walk().filter((e) => e.tag === 'table').length, 4);
 });
 
+test('a repo in the link that the report does not list filters nothing', async () => {
+  const data = { ...report(), repos: ['o/api', 'o/web'] };
+  const page = await loadPage(data);
+  page.location.search = '?days=30&repo=o%2Fgone';
+  page.click('30 days');
+  assert.equal(page.walk().filter((e) => e.tag === 'table').length, 4, 'every table, as with All repos');
+});
+
 test('Human reviewed keeps those a person reviewed, No human review keeps those with none read, and those whose reviews were not all read are in neither', async () => {
   const page = await loadPage(report());
   // Of each repo's 60: i % 3 == 0 reviewed (20); the rest, with i % 5 == 0 not known (i % 15 == 5 or 10: 8); none known 32.
