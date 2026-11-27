@@ -283,10 +283,17 @@ function draw() {
 // the hooks as in a session, and tells the console of each change when it has the console's address
 // (session/stateAnnounce.mjs). Only for the claude a dev session starts, which names its own state file.
 const HOOK_STATE = path.join(import.meta.dirname, '..', '..', 'session', 'hookState.mjs');
+// One at a time, in the order they fire, as claude runs them: UserPromptSubmit then PermissionRequest started together
+// could write working over needs-you.
+let hooks = Promise.resolve();
 function hook(event) {
   if (format !== 'claude' || !process.env.WOODSHED_CLAUDE_STATE_FILE) return;
-  const child = spawn(process.execPath, [HOOK_STATE], { stdio: ['pipe', 'ignore', 'ignore'] });
-  child.stdin.end(JSON.stringify({ hook_event_name: event, session_id: id }));
+  hooks = hooks.then(() => new Promise((resolve) => {
+    const child = spawn(process.execPath, [HOOK_STATE], { stdio: ['pipe', 'ignore', 'ignore'] });
+    child.on('exit', resolve);
+    child.on('error', resolve);
+    child.stdin.end(JSON.stringify({ hook_event_name: event, session_id: id }));
+  }));
 }
 
 function after(ms, step) {
