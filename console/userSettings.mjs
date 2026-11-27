@@ -186,13 +186,13 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
   keepPreviousReviewDefault();
 
+  // Own properties alone: `constructor` is a valid login, and a name every object has.
   function recordFor(login) {
-    return people()[loginKey(login)] ?? null;
+    return Object.hasOwn(people(), loginKey(login)) ? people()[loginKey(login)] : null;
   }
 
   function touch(login, fields) {
-    const key = loginKey(login);
-    people()[key] = { ...people()[key], ...fields };
+    people()[loginKey(login)] = { ...recordFor(login), ...fields };
     store.save();
   }
 
