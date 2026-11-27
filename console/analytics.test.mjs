@@ -339,6 +339,13 @@ test('a failed refresh keeps the old read, says so, and is not tried on its own 
   const analytics = cachedAnalytics(gh, clock);
   fail = true;
   assert.equal((await analytics.report({ days: 7 })).failed.length, 1, 'with no read the page names the repo');
+  const failedReads = reads;
+  assert.equal((await analytics.report({ days: 7 })).failed.length, 1);
+  assert.equal(reads, failedReads, 'a first read that failed is not repeated within the minute');
+  analytics.refresh({ repos: [REPO] });
+  await nextTick();
+  assert.equal(reads, failedReads + 1, 'but the button reads it at once');
+  clock.now += 61_000;
   fail = false;
   await analytics.report({ days: 7 });
   clock.now += 2 * 60 * 60_000;

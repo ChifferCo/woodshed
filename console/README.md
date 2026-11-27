@@ -3256,7 +3256,7 @@ repo with more is read in date ranges, halved until each fits; a window is flagg
 past its start). The saved read is always shown at once, however old, with when the data is as of and a
 **Refresh** button (`POST /api/analytics/refresh`, off while a read runs, the page asking again every 3 s until it is done); a view
 of a read over an hour old also starts one in the background, and one that fails keeps the last read, says so on the page and is
-not tried on its own again for a minute (`analytics: refresh failed, keeping the last read`; `analytics: refresh asked` says who
+not tried on its own again for a minute (nor is a first read that failed) (`analytics: refresh failed, keeping the last read`; `analytics: refresh asked` says who
 pressed the button). Only the first read, with none saved, makes the viewer wait. `analytics: pull requests not read` with the project and GitHub's error when a read fails, and the
 page names the repo it left out.
 

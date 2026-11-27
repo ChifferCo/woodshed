@@ -298,7 +298,7 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
     const done = reading.then((value) => { reads.set(key, { at: now(), value }); return value; }, (err) => {
       // A failed read keeps the last one, if any.
       if (held?.value) reads.set(key, { at: held.at, value: held.value, retryAt: now() + RETRY_MS, failed: true });
-      else reads.delete(key);
+      else reads.set(key, { error: err, retryAt: now() + RETRY_MS });
       throw err;
     });
     return done;
@@ -312,6 +312,9 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
   async function projectPulls(project) {
     const key = keyOf(project);
     const held = reads.get(key);
+    // With no read yet, a failure is kept for the retry interval so a poll for another repo does not repeat the search; the
+    // button reads again at once.
+    if (!held?.value && held?.error && held.retryAt > now()) throw held.error;
     if (!held?.value) await (held?.reading ?? startRead(project, key, held));
     else if (!held.reading && now() - held.at >= REFRESH_MS && !(held.retryAt > now())) startRead(project, key, held).catch(logRefreshFailed(project));
     const read = reads.get(key);
