@@ -675,11 +675,13 @@
   const KEPT_MACHINE_MS = 60_000;
   function keptMachineRow(s, row, resume) {
     const key = `${s.id}@${s.stoppedAt ?? ''}`;
-    const slot = h('div');
+    // Hidden until an offer fills it: an empty one would still take the panel's gap beside the buttons.
+    const slot = h('div', { hidden: true });
     const fill = (kept) => {
       // A page whose keptMachine.cjs did not load (a deploy mid-load) offers what it did before #410: Resume alone.
       const offer = window.WoodshedKeptMachine?.offer(s, kept);
       if (!offer) return;
+      slot.hidden = false;
       const leads = offer.lead === 'latest';
       const button = h('button', {
         type: 'button', class: `btn ${leads ? 'btn-primary' : 'btn-plain'}`, title: 'Start it on a new machine from its repo\u2019s latest image',
