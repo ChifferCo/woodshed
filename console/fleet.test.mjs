@@ -20,7 +20,7 @@ const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ nam
 
 function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null, reviewAgents = null, reviewGates = undefined, startableRepos = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
-  const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
+  const calls = { started: [], startOptions: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
   // When ECS began pulling each task's image, by ref.
   const pulls = {};
@@ -32,8 +32,9 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   const launcher = {
     kind: 'fake',
     refFor(id) { return `c-${id}`; },
-    async start(id, env) {
+    async start(id, env, ...options) {
       calls.started.push({ id, env });
+      calls.startOptions.push(options);
       if (fail.start) throw new Error(typeof fail.start === 'string' ? fail.start : 'aws ecs run-task failed: AccessDeniedException');
       alive.add(`c-${id}`);
       if (fail.startWaits) await fail.startWaits;
@@ -1294,6 +1295,39 @@ test('each run of a person\'s own session gets a start token, kept only as its h
   assert.equal(sessionForStartToken(again, fleet.sessions()), null);
 });
 
+test('Resume on the latest image asks the launcher for a new machine, that run alone, and only its owner reads the kept one', async () => {
+  const { fleet, calls, statuses, launcher } = setup();
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
+  assert.deepEqual(await fleet.keptMachine({ owner: 'joel', id: first.id }), { kept: false, outdated: false }, 'a launcher with no keptMachine keeps none');
+  const kept = new Map([[first.id, { outdated: true }]]);
+  launcher.keptMachine = async (id) => kept.get(id) ?? null;
+  assert.deepEqual(await fleet.keptMachine({ owner: 'joel', id: first.id }), { kept: false, outdated: false }, 'a running session\'s machine is not asked about');
+  statuses[first.id] = { state: 'working', branch: 'joel/fix' };
+  await fleet.tick();
+  await fleet.stop(first, 'stopped from the console', { by: 'joel' });
+  assert.deepEqual(await fleet.keptMachine({ owner: 'joel', id: first.id }), { kept: true, outdated: true });
+  await assert.rejects(fleet.keptMachine({ owner: 'mia', id: first.id }), /no session you can open/);
+
+  await fleet.resumePrivate({ owner: 'joel', id: first.id, latestImage: true });
+  assert.deepEqual(calls.startOptions.at(-1), [{ latestImage: true }], 'the launcher is told to leave an outdated machine');
+  assert.equal(first.latestImage, null, 'asked of that start alone, once the launcher made it');
+  const latestEnv = calls.started.at(-1).env;
+  await fleet.tick();
+  await fleet.stop(first, 'stopped from the console', { by: 'joel' });
+  await fleet.resumePrivate({ owner: 'joel', id: first.id });
+  assert.deepEqual(calls.startOptions.at(-1), [], 'a plain Resume keeps the machine again');
+  // The session itself starts as on any Resume: the option is the launcher's, and nothing of it reaches the container.
+  const plainEnv = calls.started.at(-1).env;
+  const tokens = ['SESSION_TOKEN', 'TERMINAL_TOKEN', 'WOODSHED_START_TOKEN'];
+  const without = (env) => Object.fromEntries(Object.entries(env).filter(([key]) => !tokens.includes(key)));
+  assert.deepEqual(without(latestEnv), without(plainEnv));
+
+  launcher.keptMachine = async () => { throw new Error('the pool did not answer'); };
+  await fleet.tick();
+  await fleet.stop(first, 'stopped from the console', { by: 'joel' });
+  assert.deepEqual(await fleet.keptMachine({ owner: 'joel', id: first.id }), { kept: false, outdated: false }, 'a launcher that failed offers nothing more');
+});
+
 test('Resume starts a private session whose start failed again, with the conversation it had before', async () => {
   const { fleet, calls, statuses, alive } = setup();
   const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
@@ -1392,12 +1426,26 @@ test('Resume in the background answers before the container has an address', asy
 
 test('Remove takes a private session, running or stopped, off the list with the Claude home it kept, and only its owner\'s', async () => {
   const removedHomes = [];
-  const { fleet } = setup({ homes: { async remove(name) { removedHomes.push(name); } } });
+  const { fleet, store } = setup({ homes: { async remove(name) { removedHomes.push(name); } } });
   const mine = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
   await assert.rejects(fleet.removePrivateSession({ owner: 'mia', id: mine.id }), /no session you can open/);
   await fleet.removePrivateSession({ owner: 'joel', id: mine.id });
   assert.equal(fleet.find(mine.id), null);
   assert.deepEqual(removedHomes, [`joel/sessions/${mine.id}`]);
+  assert.deepEqual(store.state.usageKept.map((r) => [r.id, r.login, r.private, r.title]), [[mine.id, 'joel', true, null]],
+    'the Analytics page still counts it, with no title');
+
+  // A session that saw production data keeps nothing past its removal, the automatic one after its taint included.
+  const tainted = await fleet.startPrivate({ owner: 'joel', prompt: 'Read prod' });
+  tainted.taintedAt = new Date().toISOString();
+  tainted.branch = 'woodshed/what-it-saw';
+  await fleet.removePrivateSession({ owner: 'joel', id: tainted.id });
+  assert.ok(!store.state.usageKept.some((r) => r.id === tainted.id), 'no record of a tainted session');
+
+  // Remove My Woodshed takes the records of those removed one by one before, and leaves shared ones.
+  store.state.usageKept.push({ id: 'shared01', login: 'joel', private: false, createdAt: new Date().toISOString() });
+  await fleet.removePrivate('joel');
+  assert.deepEqual(store.state.usageKept.map((r) => r.id), ['shared01']);
 
 });
 
@@ -1790,6 +1838,7 @@ test('a deleted shared session leaves the list after the setting\'s days, counte
   ctx.advance(2 * 60_000);
   await ctx.fleet.tick();
   assert.deepEqual(ctx.fleet.sessions().map((s) => s.id), [kept.id], 'the deleted one goes; a kept one stays');
+  assert.deepEqual(ctx.store.state.usageKept.map((r) => r.id), [deleted.id], 'and the Analytics page keeps its record');
 });
 
 test('Remove takes a deleted shared session off the list, and refuses one that still keeps its data', async () => {
@@ -1806,6 +1855,11 @@ test('Remove takes a deleted shared session off the list, and refuses one that s
   await ctx.fleet.deleteShared(session, 'joel');
   ctx.fleet.removeShared(session, 'joel');
   assert.deepEqual(ctx.fleet.sessions().map((s) => s.id), [mine.id]);
+  const kept = ctx.store.state.usageKept.find((r) => r.id === session.id);
+  assert.deepEqual([kept?.login, kept?.private, kept?.title, kept?.kind], ['joel', false, 'x', 'work'], 'the Analytics page still counts it');
+  const { analyticsReport } = await import('./analytics.mjs');
+  const report = analyticsReport({ records: ctx.store.state.usageKept, pulls: [], days: 30, now: Date.parse(session.createdAt) + 60_000 });
+  assert.equal(report.sessions.work, 1);
 });
 
 test('a deleted session whose Claude home is still being deleted stays listed until it goes', async () => {
@@ -3398,6 +3452,7 @@ test('the merge risk is a label too, the other tiers taken off', async () => {
   const { fleet, calls } = reviewSetup();
   await fleet.reviewOnTag({ number: 7 });
   await fleet.reviewFinished(fleet.sessions()[0], { ...REVIEW_RESULT, mergeRisk: { tier: 'High', reason: 'Touches sign-in.', summary: 'HIGH' } });
+  assert.equal(fleet.sessions()[0].review.tier, 'High', 'kept on the session, for the Analytics page');
   assert.deepEqual(calls.labelsMade, [{ name: 'merge risk: high', color: 'd93f0b', description: 'Set by the AI review' }]);
   assert.deepEqual(calls.labeled, [{ number: 7, label: 'merge risk: high' }]);
   assert.deepEqual(calls.unlabeled.map((u) => u.label).sort(), ['merge risk: low', 'merge risk: medium']);
@@ -4759,4 +4814,29 @@ test('a message between two sessions is kept on both, newest first, the last 20,
   assert.equal(child.messages.length, 20);
   assert.match(child.messages[0].text, /^x24 /);
   assert.equal(child.messages[0].text.length, 200);
+});
+
+test('a session is marked when its conversation is kept, and the mark goes with its home or every home of its owner\'s', async () => {
+  const removed = [];
+  const homes = { async remove(name) { removed.push(name); } };
+  const ctx = setup({ homes });
+  await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [shared] = ctx.fleet.sessions();
+  ctx.statuses[shared.id] = { state: 'done' };
+  await ctx.fleet.tick();
+  await ctx.fleet.stop(shared, 'test');
+  const mine = await ctx.fleet.startPrivate({ owner: 'joel', prompt: 'mine' });
+  const theirs = await ctx.fleet.startPrivate({ owner: 'mia', prompt: 'theirs' });
+  for (const s of [shared, mine, theirs]) ctx.fleet.conversationSaved(s, '2026-11-25T10:00:00.000Z');
+  assert.ok([shared, mine, theirs].every((s) => s.conversationSavedAt === '2026-11-25T10:00:00.000Z'));
+  assert.ok(ctx.store.state.sessions.find((s) => s.id === mine.id).conversationSavedAt, 'kept in the state');
+
+  ctx.fleet.forgetConversations('joel');
+  assert.equal(mine.conversationSavedAt, null, 'Forget my Claude home took it');
+  assert.equal(theirs.conversationSavedAt, '2026-11-25T10:00:00.000Z', 'a teammate\'s stays');
+  assert.equal(shared.conversationSavedAt, '2026-11-25T10:00:00.000Z', 'a shared session is nobody\'s home to forget');
+
+  await ctx.fleet.deleteShared(shared, 'joel');
+  assert.equal(shared.conversationSavedAt, null, 'deleted with its home');
+  assert.ok(removed.includes(`_sessions/${shared.id}`));
 });

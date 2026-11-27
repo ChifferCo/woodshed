@@ -26,6 +26,10 @@
 //                        as its owner's own sign-in for their next session
 //   POST /home           a session's Claude home, a gzipped tar, saved on stop: a private one's for its owner, a
 //                        shared one's for its own next run
+//   POST /conversation   {"agent", "entries", "partial", "writtenAt"}  ->  204: the session's conversation as its Chat
+//                        draws it (shared/savedConversation.mjs), kept beside its home for its Chat while it is
+//                        stopped or paused. 409 for a session that has seen production data, 413 past
+//                        MAX_CONVERSATION_BYTES, 400 for any other shape, 404 where the console keeps no homes
 //   POST /home/restore   that tar back, for the owner's next private session or the shared session's next run;
 //                        404 when none is saved
 //   POST /progress       {"step": "<one of START_STEPS>"}  ->  204: a start step has finished, for the session page's
@@ -86,11 +90,12 @@ import { bearerOf, isOpenAiPath } from './openaiProxy.mjs';
 import { isReviewAgentPath, reviewAgentTokenOf } from './reviewAgentProxy.mjs';
 import { MAX_ANSWER_CHARS, MAX_ISSUE_BODY_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
-import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
-import { MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES, MAX_REPORT_CHARS, isWebm, parseQaReport } from './qaSessions.mjs';
+import { conversationKey, sessionHomeName } from './homes.mjs';
+import { MAX_QA_LOG_BYTES, MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES, MAX_REPORT_CHARS, isWebm, parseQaReport } from './qaSessions.mjs';
 import { MAX_QA_POSTER_BYTES, isPng } from './qaRecordings.mjs';
 import { ACTIVE_STATUSES, START_STEPS, isAsk, isQa, isReview, runsCodex } from './sessions.mjs';
 import { parseReviewReport } from './reviewSessions.mjs';
+import { MAX_CONVERSATION_BYTES, parseSavedConversation } from '../shared/savedConversation.mjs';
 import agents from '../shared/agents.cjs';
 
 // A step name is a word; the body is never more than a few of them.
@@ -225,7 +230,7 @@ export function createSessionApi({
     }
     // Its own token, not the session token (sessionStarts.mjs).
     if (sessionStarts?.isPath(pathname)) return sessionStarts.handle(req, res);
-    const routes = ['/codex-auth', '/agent-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/issues', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress'];
+    const routes = ['/codex-auth', '/agent-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/conversation', '/progress', '/claude-settings', '/attachments', '/answer', '/issues', '/qa-report', '/qa-log', '/review-log', '/qa-video', '/qa-poster', '/review-report', '/egress'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -240,6 +245,8 @@ export function createSessionApi({
     if (pathname === '/answer') return answerReply(req, res, session, asks);
     if (pathname === '/issues') return issueReply(req, res, session, asks);
     if (pathname === '/qa-report') return qaReportReply(req, res, session, fleet);
+    if (pathname === '/qa-log') return qaLogReply(req, res, session, fleet);
+    if (pathname === '/review-log') return reviewLogReply(req, res, session, fleet);
     if (pathname === '/qa-video') return qaRecordingReply(req, res, session, fleet, VIDEO);
     if (pathname === '/qa-poster') return qaRecordingReply(req, res, session, fleet, POSTER);
     if (pathname === '/review-report') return reviewReportReply(req, res, session, fleet);
@@ -251,6 +258,7 @@ export function createSessionApi({
       }
       return attachments.send(session.id, res);
     }
+    if (pathname === '/conversation') return conversationReply(req, res, session, { homes, userSettings, fleet });
     if (pathname === '/claude-settings') return claudeSettingsReply(req, res, session, { claudeSettings, userSettings, fleet });
     if (pathname.startsWith('/home')) {
       const periodic = new URL(req.url, 'http://console').searchParams.get('why') === 'periodic';
@@ -621,6 +629,42 @@ function qaReportReply(req, res, session, fleet) {
   });
 }
 
+// A QA session's run log (session/qa.sh): plain text, sent after each pass and before the report, and kept whole, the
+// latest replacing the last, so a run that is stopped before its report still leaves why. Never refused for being late.
+async function qaLogReply(req, res, session, fleet) {
+  return runLogReply(req, res, session, {
+    kind: 'QA', mine: isQa(session), save: fleet.qaLog?.bind(fleet),
+  });
+}
+
+// A review session's run log, the same (session/review.sh).
+async function reviewLogReply(req, res, session, fleet) {
+  return runLogReply(req, res, session, {
+    kind: 'review', mine: isReview(session), save: fleet.reviewLog?.bind(fleet),
+  });
+}
+
+async function runLogReply(req, res, session, { kind, mine, save }) {
+  if (!mine || !save) {
+    req.resume();
+    return reply(res, 404, { error: `only a ${kind} session has a run log to send` });
+  }
+  if (Number(req.headers['content-length']) > MAX_QA_LOG_BYTES) {
+    req.resume();
+    return reply(res, 413, { error: 'too large' });
+  }
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunk of req) {
+    bytes += chunk.length;
+    if (bytes > MAX_QA_LOG_BYTES) return reply(res, 413, { error: 'too large' });
+    chunks.push(chunk);
+  }
+  const text = Buffer.concat(chunks).toString('utf8');
+  save(session, text);
+  return reply(res, 200, { saved: true });
+}
+
 // One of a QA session's browser recordings, read whole and handed to the fleet, which commits it for the QA comment.
 // What a QA session sends of its recording: its videos, then one still, each read whole and handed to the fleet.
 const VIDEO = { what: 'video', max: () => MAX_QA_VIDEO_BYTES, check: isWebm, type: 'a WebM video', save: 'qaVideo', counts: true };
@@ -755,6 +799,56 @@ async function claudeSettingsReply(req, res, session, { claudeSettings, userSett
   }
 }
 
+// The conversation a session's Chat shows while it is stopped or paused, kept beside its own home and gone with it. A
+// tainted session's is never kept: statusd sends none, and one that came in as its lockdown started is refused, as its
+// settings are. Nor one for an owner who removed My Woodshed, whose stopping sessions would leave it for nobody.
+async function conversationReply(req, res, session, { homes, userSettings, fleet }) {
+  if (!homes?.putText) {
+    req.resume();
+    return reply(res, 404, { error: 'this console keeps no Claude homes' });
+  }
+  // Their Chat is not read once they end: a question's thread is in Slack, a QA run's and a review's on GitHub.
+  if (isAsk(session) || isQa(session) || isReview(session)) {
+    req.resume();
+    return reply(res, 404, { error: 'this session keeps no conversation' });
+  }
+  if (session.owner && !userSettings?.view(session.owner).setUp) {
+    req.resume();
+    return reply(res, 409, { error: 'My Woodshed was removed, so nothing is kept' });
+  }
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunk of req) {
+    bytes += chunk.length;
+    if (bytes > MAX_CONVERSATION_BYTES) {
+      req.resume();
+      return reply(res, 413, { error: 'the conversation is too large' });
+    }
+    chunks.push(chunk);
+  }
+  const conversation = parseSavedConversation(Buffer.concat(chunks).toString('utf8'));
+  if (!conversation) return reply(res, 400, { error: 'expected {"agent", "entries", "partial", "writtenAt"}' });
+  // Checked once it is all in: what came after a lockdown began may hold what the session saw.
+  if (session.taintedAt || fleet?.isLocked?.(session)) {
+    console.log('sessionApi: conversation refused, the session has seen production data', { sessionId: session.id });
+    return reply(res, 409, { error: 'this session has seen production data, so its conversation is not kept' });
+  }
+  const savedAt = new Date().toISOString();
+  const key = conversationKey(sessionHomeName(session));
+  await homes.putText(key, JSON.stringify({ ...conversation, savedAt }));
+  // A write that came in as the session was removed, or cleaned up with its home, would leave a copy nothing deletes.
+  const gone = !fleet.sessions().includes(session) || Boolean(session.cleanedAt);
+  if (gone) {
+    await homes.removeKey?.(key).catch(() => {});
+    console.log('sessionApi: conversation dropped, the session was removed as it came in', { sessionId: session.id });
+    return reply(res, 409, { error: 'the session was removed' });
+  }
+  fleet.conversationSaved?.(session, savedAt);
+  console.log('sessionApi: conversation kept', { sessionId: session.id, entries: conversation.entries.length, bytes });
+  res.writeHead(204);
+  return res.end();
+}
+
 // A Claude home, in and out: a session's own, and for a private session its owner's too. A private session starts
 // from its owner's latest home, and a resumed one from its own, so its conversation is the one it left; one saved
 // before sessions kept their own falls back to the owner's.
@@ -763,7 +857,7 @@ async function homeReply(req, res, session, { homes, userSettings, restore, peri
     req.resume();
     return reply(res, 404, { error: 'this console keeps no Claude homes' });
   }
-  const own = session.owner ? privateSessionHomeName(session.owner, session.id) : sharedHomeName(session.id);
+  const own = sessionHomeName(session);
   if (restore) {
     const fromOwn = !session.owner || Boolean(session.resumeClaude) || Boolean(session.taintedAt);
     const saved = (fromOwn ? await homes.get(own) : null) ?? (session.owner && !session.taintedAt ? await homes.get(session.owner) : null);

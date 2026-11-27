@@ -46,7 +46,7 @@ test('a page the person cannot open is left out', () => {
 });
 
 test('each section has a card with its id in its page, so the link lands on it', () => {
-  const source = { '/settings': ['mySettings.js', 'myRepoSettings.js'], '/console-settings': ['consoleSettings.js'], '/secrets': ['secrets.js'], '/people': ['people.js'], '/events': ['events.js'] };
+  const source = { '/settings': ['mySettings.js', 'myRepoSettings.js'], '/console-settings': ['consoleSettings.js'], '/secrets': ['secrets.js'], '/people': ['people.js'], '/events': ['events.js'], '/analytics': ['analytics.js'] };
   for (const e of ENTRIES) {
     assert.ok(PAGES[e.page], `${e.id}: unknown page ${e.page}`);
     const text = source[e.page].map((f) => readFileSync(new URL(`./public/${f}`, import.meta.url), 'utf8')).join('\n');

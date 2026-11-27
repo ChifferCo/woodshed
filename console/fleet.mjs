@@ -17,6 +17,7 @@ import { QA_RECORDING_DAYS, newRecordingSecret, opensPublicVideo, qaPublicVideoP
 import { reviewDoneComment, reviewEndedComment, reviewHeading, reviewRunningComment } from './reviewSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
+import { forgetUsage, keepUsage, usageRecord } from './analytics.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import { TAINT_MESSAGE } from './taint.mjs';
@@ -356,6 +357,19 @@ export function createFleet({
     store.save();
   }
 
+  // A session's conversation kept beside its home (sessionApi.mjs, /conversation): the page shows it on Chat while the
+  // session is stopped. The mark goes with the home (cleanUp), or with every home of the owner's (forgetConversations).
+  function conversationSaved(session, savedAt) {
+    update(session, { conversationSavedAt: savedAt });
+  }
+
+  /** Forget my Claude home and Remove My Woodshed delete every one of the owner's session homes, conversations too. */
+  function forgetConversations(owner) {
+    const theirs = state.sessions.filter((s) => s.owner === owner && s.conversationSavedAt);
+    for (const s of theirs) s.conversationSavedAt = null;
+    if (theirs.length) store.save();
+  }
+
   function find(id) {
     return state.sessions.find((s) => s.id === id) ?? null;
   }
@@ -633,7 +647,9 @@ export function createFleet({
     try {
       // Copied while the container starts: the session waits for them at the session API before it writes its env.
       if (((!session.owner && !isAsk(session) && !isReview(session)) || session.ownDatabases) && databases?.available) await databases.createForSession(session.id);
-      started = await launcher.start(session.id, { ...sessionEnv(session), ...startTokenFor(session) });
+      // A Resume on the latest image asks the launcher to leave a machine it kept for the session, made from an older
+      // image, and start it on a new one (keptMachine). A launcher that keeps none has nothing to leave.
+      started = await launcher.start(session.id, { ...sessionEnv(session), ...startTokenFor(session) }, ...(session.latestImage ? [{ latestImage: true }] : []));
     } catch (err) {
       const error = startError(err);
       // No room is AWS being full for now, not the session failing: it waits in the queue until a task stops.
@@ -655,6 +671,8 @@ export function createFleet({
       return;
     }
     const { ref, ...endpoint } = started;
+    // Asked of this start alone: a start the launcher has made never leaves the machine again.
+    if (session.latestImage) update(session, { latestImage: null });
     // The container may already have reported a step of its own: the docker launcher starts it before answering.
     update(session, { ref, endpoint, startSteps: { machine: nowIso(), ...session.startSteps } });
     console.log('fleet: machine ready', { id: session.id, seconds: secondsSince(session.startedAt) });
@@ -1387,7 +1405,7 @@ export function createFleet({
   // Its databases go on the sweep after this; the branch stays on GitHub. A home that cannot be deleted now is
   // tried again on a later tick.
   async function cleanUp(session, why) {
-    update(session, { kept: false, cleanedAt: nowIso(), deletesAt: null, homeDeletePending: Boolean(homes) });
+    update(session, { kept: false, cleanedAt: nowIso(), deletesAt: null, homeDeletePending: Boolean(homes), conversationSavedAt: null });
     prCheckedAt.delete(session.id);
     console.log('fleet: kept session cleaned up', { id: session.id, why });
     await deleteHome(session);
@@ -1484,6 +1502,8 @@ export function createFleet({
   }
 
   function dropRecord(session, why) {
+    // The Analytics page still counts it (analytics.mjs).
+    keepUsage(state, [usageRecord(session, projectFor(config, session))], now());
     state.sessions = state.sessions.filter((s) => s !== session);
     prCheckedAt.delete(session.id);
     store.save();
@@ -2132,7 +2152,7 @@ export function createFleet({
    * @param {{owner: string, id: string, background?: boolean, herdrParent?: boolean}} args  herdrParent: for this run, as
    *   startPrivate's
    */
-  async function resumePrivate({ owner, id, background = false, herdrParent = false }) {
+  async function resumePrivate({ owner, id, background = false, herdrParent = false, latestImage = false }) {
     const session = find(id);
     if (!session || session.owner !== owner) throw shown('no session you can open with that id');
     if (ACTIVE_STATUSES.has(session.status)) throw shown('that session is still running');
@@ -2143,6 +2163,8 @@ export function createFleet({
       endpoint: null, startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: agents.agentOfSession(session) === 'claude' ? session.claudeSession ?? null : null,
       lastActiveAt: null, checkedAt: null, app: null, appServers: null, appName: null, apps: null, resumedAt: nowIso(), resumedBy: owner, queuedAt: nowIso(),
       herdrParent: herdrParent ? true : null,
+      // For this run alone: the next Resume keeps the machine again, unless it is asked too.
+      latestImage: latestImage ? true : null,
       // A Resume starts its own agent alone: what the agents of the last run were allowed (a Codex one's sign-in) is
       // not this run's, and the last run's list is not either.
       extraAgents: null, agents: null,
@@ -2153,9 +2175,29 @@ export function createFleet({
     });
     // Or, when its stop was not read yet, the watch starts a new run for this one.
     announcer.renew(session.id);
-    console.log('fleet: resuming a private session', { id, owner, claudeSession: Boolean(session.resumeClaude), background, tainted: Boolean(session.taintedAt), herdrParent: Boolean(herdrParent) });
+    console.log('fleet: resuming a private session', { id, owner, claudeSession: Boolean(session.resumeClaude), background, tainted: Boolean(session.taintedAt), herdrParent: Boolean(herdrParent), latestImage: Boolean(latestImage) });
     await runStartQueued({ background });
     return session;
+  }
+
+  /**
+   * The machine a launcher keeps for a stopped private session between its runs, as its owner's Resume would find it:
+   * `outdated` when it was made from an older image of its repo than a new session gets, which its next start would run
+   * on all the same. Only a launcher that keeps one says (`keptMachine`); every other answers none.
+   * @returns {Promise<{kept: boolean, outdated: boolean}>}
+   */
+  async function keptMachine({ owner, id }) {
+    const session = find(id);
+    if (!session || session.owner !== owner) throw shown('no session you can open with that id');
+    const none = { kept: false, outdated: false };
+    if (ACTIVE_STATUSES.has(session.status) || typeof launcher.keptMachine !== 'function') return none;
+    try {
+      const kept = await launcher.keptMachine(session.id);
+      return kept ? { kept: true, outdated: kept.outdated === true } : none;
+    } catch (err) {
+      console.warn('fleet: kept machine not read', { id, message: firstLine(err) });
+      return none;
+    }
   }
 
   // Remove and Delete work on a running session too: it is stopped first, pushing its work as any stop does. One
@@ -2177,7 +2219,9 @@ export function createFleet({
     if (!session || session.owner !== owner) throw shown('no session you can open with that id');
     await stopForRemoval(session, 'removed from the console');
     // Off the list before the delete is awaited, so a Resume meanwhile finds no session rather than starting one the
-    // list then drops, which tick would never watch.
+    // list then drops, which tick would never watch. The Analytics page still counts it, with no title (analytics.mjs),
+    // unless it saw production data: nothing of a tainted session's outlives it.
+    if (!session.taintedAt) keepUsage(state, [usageRecord(session, projectFor(config, session))], now());
     state.sessions = state.sessions.filter((s) => s !== session);
     store.save();
     console.log('fleet: private session removed', { id, owner });
@@ -2220,8 +2264,10 @@ export function createFleet({
     await Promise.all([...live.map((s) => stop(s, 'My Woodshed removed')), ...interrupted.map(finishInterruptedStop)]);
     await Promise.all(theirs.map(dropAttachments));
     state.sessions = state.sessions.filter((s) => s.owner !== owner);
+    // Nor does the Analytics page keep any of them, those removed one by one before included.
+    const forgotten = forgetUsage(state, owner);
     store.save();
-    console.log('fleet: private sessions removed', { owner, stopped: live.length + interrupted.length, removed: theirs.length });
+    console.log('fleet: private sessions removed', { owner, stopped: live.length + interrupted.length, removed: theirs.length, usageForgotten: forgotten });
     return { stopped: live.length + interrupted.length, removed: theirs.length };
   }
 
@@ -2538,6 +2584,26 @@ export function createFleet({
     update(session, { qa: { ...session.qa, videos: [...videos, { n, bytes: video.length }] } });
     console.log('fleet: QA video saved', { id: session.id, number: session.number, n, bytes: video.length });
     return { n };
+  }
+
+  /**
+   * A QA run's log (POST /qa-log): how each of its claude passes ended and the steps the run took, kept on the session
+   * for the console's page to show (GET /api/sessions/<id>/qa-log) whether or not the run ever got to its report. It holds
+   * what claude and its tools printed, so only an admin or the person who started the run reads it.
+   * @param {object} session
+   * @param {string} text
+   */
+  function qaLog(session, text) {
+    update(session, { qa: { ...session.qa, log: text } });
+    console.log('fleet: QA run log kept', { id: session.id, number: session.number, bytes: Buffer.byteLength(text) });
+  }
+
+  /**
+   * A review run's log (POST /review-log), kept and read as a QA run's is (qaLog).
+   */
+  function reviewLog(session, text) {
+    update(session, { review: { ...session.review, log: text } });
+    console.log('fleet: review run log kept', { id: session.id, number: session.number, bytes: Buffer.byteLength(text) });
   }
 
   /**
@@ -2896,7 +2962,7 @@ export function createFleet({
     }
     const held = hold && ours ? { sha, heading, summary, inlineComments, resolved } : null;
     // `posted`: GitHub took the verdict (or the console holds it for QA), which an ask for the same head stands on.
-    update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd, held, posted: Boolean(ours) } });
+    update(session, { review: { ...session.review, conclusion, reported: true, reportedAgents: agents?.length ? agents : null, reviewedSha: sha, costUsd, held, posted: Boolean(ours), tier: mergeRisk?.tier ?? null } });
     console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours, held: Boolean(held) });
     stop(session, conclusion ? `Review finished: ${conclusion}` : 'Review finished without a verdict')
       .catch((err) => console.warn('fleet: stopping a finished review session failed', { id: session.id, message: firstLine(err) }));
@@ -3302,8 +3368,8 @@ export function createFleet({
 
   return {
     noteMessage, noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
-    createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
-    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, publicQaVideo, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
+    createSession, conversationSaved, forgetConversations, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, keptMachine, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaLog, reviewLog, qaVideo, qaPoster, publicQaVideo, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),
   };

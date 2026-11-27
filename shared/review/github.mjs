@@ -52,14 +52,19 @@ async function fetchPrImage({ slug, src, log }, env) {
 
 // Snapshot the credential once. The session's gh wrapper honors GH_TOKEN, so
 // validation and the contents request use the same token even during a refresh.
-export async function personalPrImageReader() {
+export async function personalGithubEnv() {
   const token = await run('gh', ['auth', 'token', '--hostname', 'github.com'], { timeoutMs: GH_TIMEOUT_MS });
   const value = token.stdout.trim();
   if (token.status !== 0 || !value || /\s/.test(value)) return null;
   const env = { ...process.env, GH_HOST: 'github.com', GH_TOKEN: value };
   const user = await run('gh', ['api', 'user', '--jq', '.login'], { env, timeoutMs: GH_TIMEOUT_MS });
   if (user.status !== 0 || !/^[A-Za-z0-9-]{1,39}$/.test(user.stdout.trim())) return null;
-  return (image) => fetchPrImage(image, env);
+  return env;
+}
+
+export async function personalPrImageReader() {
+  const env = await personalGithubEnv();
+  return env ? (image) => fetchPrImage(image, env) : null;
 }
 // The three things a review can say, and nothing else reaches argv. A map
 // rather than a check-then-interpolate, so an unknown action cannot become a
@@ -889,6 +894,73 @@ export function graphqlArgv({ query, strings = {}, numbers = {} }) {
     args.push('-F', `${key}=${n}`);
   }
   return args;
+}
+
+const UNRESOLVED_QUERY = `query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){
+  repository(owner:$owner,name:$repo){
+    pullRequest(number:$pr){
+      state
+      reviewThreads(first:100,after:$cursor){
+        pageInfo{ hasNextPage endCursor }
+        nodes{
+          id path line originalLine isResolved isOutdated viewerCanResolve
+          comments(first:1){ nodes{ state body url author{ login } } }
+        }
+      }
+    }
+  }
+}`;
+
+export async function fetchUnresolvedThreads({ pr, slug }, env) {
+  const [owner, repo] = slug.split('/');
+  const threads = [];
+  let cursor = null;
+  do {
+    const result = await run('gh', graphqlArgv({
+      query: UNRESOLVED_QUERY, strings: { owner, repo, cursor }, numbers: { pr },
+    }), { env, timeoutMs: GH_TIMEOUT_MS });
+    const read = readGraphql(result);
+    if (!read.ok) return read;
+    const pull = read.data?.repository?.pullRequest;
+    if (pull?.state !== 'OPEN') {
+      return { ok: false, status: 409, error: 'this pull request is no longer open' };
+    }
+    const { nodes, pageInfo } = pull.reviewThreads;
+    for (const thread of nodes) {
+      const comment = thread.comments.nodes[0];
+      if (thread.isResolved || !comment || comment.state === 'PENDING') continue;
+      threads.push({
+        id: thread.id, path: thread.path, line: thread.line ?? thread.originalLine,
+        outdated: thread.isOutdated, canResolve: thread.viewerCanResolve,
+        author: comment.author?.login || 'someone', body: comment.body, url: comment.url,
+      });
+    }
+    cursor = pageInfo.hasNextPage ? pageInfo.endCursor : null;
+  } while (cursor);
+  return { ok: true, threads };
+}
+
+// Send only IDs the caller matched against the current pull request. Aliases
+// keep the number of GitHub round trips small even for a long review.
+export async function resolveReviewThreads(ids, env) {
+  for (let start = 0; start < ids.length; start += 50) {
+    const strings = Object.fromEntries(ids.slice(start, start + 50).map((id, index) => ['id' + index, id]));
+    const keys = Object.keys(strings);
+    const variables = keys.map((key) => '$' + key + ':ID!').join(',');
+    const fields = keys.map((key) => `${key}:resolveReviewThread(input:{threadId:$${key}}){thread{isResolved}}`).join(' ');
+    const result = await run('gh', graphqlArgv({
+      query: `mutation(${variables}){${fields}}`, strings,
+    }), { env, timeoutMs: GH_TIMEOUT_MS });
+    const read = readGraphql(result);
+    if (!read.ok) {
+      const reason = result.timedOut ? 'timeout' : result.status !== 0 ? 'gh-failed' : 'invalid-graphql-response';
+      return { ...read, reason };
+    }
+    if (keys.some((key) => read.data?.[key]?.thread?.isResolved !== true)) {
+      return { ok: false, status: 502, error: 'GitHub did not confirm every resolution', reason: 'unconfirmed-resolution' };
+    }
+  }
+  return { ok: true };
 }
 
 // The merge risk and QA checks on the head commit, by name, in a read of their own: a token GitHub refuses part of a

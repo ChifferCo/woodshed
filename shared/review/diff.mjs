@@ -362,3 +362,20 @@ export function intraLineDiff(oldText, newText) {
     new: [start, b.length - end],
   };
 }
+
+/** A bounded excerpt of the saved diff, formatted as JSON lines for a review prompt. */
+export function diffExcerpt(files, limit) {
+  const excerpt = [];
+  let size = 0;
+  for (const file of files ?? []) {
+    for (const hunk of file.hunks ?? []) {
+      for (const row of [{ path: file.path, header: hunk.header }, ...hunk.lines]) {
+        const text = JSON.stringify(row);
+        size += text.length + 1;
+        if (size > limit) return [...excerpt, '[Remaining diff omitted]'].join('\n');
+        excerpt.push(text);
+      }
+    }
+  }
+  return excerpt.join('\n');
+}

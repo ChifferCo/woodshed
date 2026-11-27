@@ -168,6 +168,63 @@ test('a QA recording plays only for someone signed in who may open its session, 
   assert.deepEqual(served, [['video', { id: '0a1b2c3d', n: 1 }], ['poster', { id: '0a1b2c3d', secret }]]);
 });
 
+test('a QA run\'s log reads only for an admin or whoever started it, and for anyone else who may open the session it is refused', async (t) => {
+  const log = '## test\nEnded: ran out of turns\nLast said: PRIVATE-WORDS\n';
+  const sessions = [
+    { id: '0a1b2c3d', status: 'stopped', kind: 'pr', number: 7, title: 'QA', startedBy: 'starter', qa: { base: 'main', log } },
+    { id: '0a1b2c3e', status: 'stopped', kind: 'pr', number: 7, title: 'QA', qa: { base: 'main' } },
+    { id: '0a1b2c3f', status: 'stopped', kind: 'pr', number: 7, title: 'Work' },
+    { id: '0a1b2c40', status: 'stopped', kind: 'pr', number: 7, title: 'Theirs', owner: 'someone-else', qa: { base: 'main', log: 'SECRET' } },
+  ];
+  const fleet = { sessions: () => sessions, find: (id) => sessions.find((x) => x.id === id) ?? null };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+  };
+  const logins = { admin: 'admin', starter: 'starter', plain: 'plain' };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => {
+    const who = Object.keys(logins).find((k) => String(cookie).includes(`woodshed_session=${k}`));
+    return who ? { login: logins[who] } : null;
+  } };
+  const members = { hasAdmin: () => true, isAdmin: (login) => login === 'admin', hasGithubSessions: () => true, isMember: () => true, currentRole: () => 'member', hosted: false };
+  const handle = createHandler({ config, fleet, auth, members });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = (who) => (who ? { cookie: `woodshed_session=${who}` } : {});
+  const read = (id, headers) => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: `/api/sessions/${id}/qa-log`, headers: { host: `localhost:${port}`, ...headers } }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], nosniff: res.headers['x-content-type-options'], body }));
+    }).on('error', reject);
+  });
+
+  const asAdmin = await read('0a1b2c3d', as('admin'));
+  assert.deepEqual([asAdmin.status, asAdmin.type, asAdmin.nosniff, asAdmin.body], [200, 'text/plain; charset=utf-8', 'nosniff', log]);
+  assert.equal((await read('0a1b2c3d', as('starter'))).body, log, 'whoever started the run');
+  const plain = await read('0a1b2c3d', as('plain'));
+  assert.deepEqual([plain.status, plain.body.includes('PRIVATE-WORDS')], [403, false], 'a member who is neither reads nothing of it');
+  assert.equal((await read('0a1b2c3e', as('admin'))).status, 404, 'a QA session that sent no log');
+  // A review session's log is read the same way, at its own name: the starter reads it, others do not.
+  sessions.push({ id: '0a1b2c41', status: 'stopped', kind: 'pr', number: 7, title: 'Review', startedBy: 'starter', review: { base: 'main', log } });
+  const readReview = (id, headers) => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: `/api/sessions/${id}/review-log`, headers: { host: `localhost:${port}`, ...headers } }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    }).on('error', reject);
+  });
+  assert.equal((await readReview('0a1b2c41', as('starter'))).body, log);
+  const plainReview = await readReview('0a1b2c41', as('plain'));
+  assert.deepEqual([plainReview.status, plainReview.body.includes('PRIVATE-WORDS')], [403, false]);
+  assert.equal((await readReview('0a1b2c3d', as('admin'))).status, 404, 'a QA session is not read at the review name');
+  assert.equal((await read('0a1b2c3f', as('admin'))).status, 404, 'a session that is not QA');
+  const hidden = await read('0a1b2c40', as('plain'));
+  assert.deepEqual([hidden.status, hidden.body.includes('SECRET')], [404, false], 'a session this person cannot open');
+  assert.equal((await read('0a1b2c3d', as(null))).status, 401, 'signed out');
+});
+
 test('a public repo\'s QA video plays with no sign-in at its run\'s secret name, and no other name opens it', async (t) => {
   const share = 'c'.repeat(32);
   const session = { id: '0a1b2c3d', status: 'stopped', kind: 'pr', number: 7, title: 'QA', qa: { base: 'main', share, videos: [{ n: 1, bytes: 4 }] } };
@@ -263,6 +320,48 @@ test('the transcript a phone scrolls is read from the running session\'s statusd
   assert.equal((await fetch(`http://127.0.0.1:${port}/api/sessions/1b2c3d4e/transcript`)).status, 409);
   assert.equal((await fetch(`http://127.0.0.1:${port}/api/sessions/ffffffff/transcript`)).status, 404);
   assert.equal(asked.length, 5, 'nothing asked for a stopped or unknown session');
+});
+
+test('a stopped session\'s Chat reads the conversation it kept, only for whoever may open it, and never a tainted one\'s', async (t) => {
+  const conversation = { agent: 'claude', entries: [{ role: 'user', text: 'Fix it', at: null }, { role: 'assistant', text: 'Fixed.', at: null }], partial: false, writtenAt: 1764064800000 };
+  const texts = new Map([
+    ['octocat/sessions/0a1b2c3d/conversation.json', JSON.stringify({ ...conversation, savedAt: '2026-11-25T10:00:00.000Z' })],
+    ['_sessions/1b2c3d4e/conversation.json', JSON.stringify(conversation)],
+    ['octocat/sessions/3d4e5f6a/conversation.json', JSON.stringify(conversation)],
+  ]);
+  const read = [];
+  const homes = { getText: async (key) => { read.push(key); if (key.includes('broken')) throw new Error('S3 down'); return texts.get(key) ?? null; } };
+  const at = '2026-11-25T10:00:00.000Z';
+  const sessions = [
+    { id: '0a1b2c3d', status: 'stopped', title: 'mine', owner: 'octocat', conversationSavedAt: at },
+    { id: '1b2c3d4e', status: 'stopped', title: 'shared', owner: null, kept: true, conversationSavedAt: at },
+    { id: '2c3d4e5f', status: 'stopped', title: 'nothing kept', owner: 'octocat' },
+    { id: '3d4e5f6a', status: 'stopped', title: 'tainted', owner: 'octocat', taintedAt: at, conversationSavedAt: at },
+    { id: '4e5f6a7b', status: 'stopped', title: 'gone from the store', owner: 'octocat', conversationSavedAt: at },
+    { id: '5f6a7b8c', status: 'starting', title: 'resuming', owner: 'octocat', conversationSavedAt: at },
+    { id: '6a7b8c9d', status: 'stopped', title: 'theirs', owner: 'mia-dev', conversationSavedAt: at },
+  ];
+  const fleet = { sessions: () => sessions, find: (id) => sessions.find((s) => s.id === id) ?? null };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const server = http.createServer(createHandler({ config, fleet, auth, homes }));
+  const port = await listen(server);
+  t.after(() => server.close());
+  const get = async (id, query = '') => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${id}/transcript${query}`, { headers: { cookie: 'woodshed_session=octocat' } });
+    return { status: res.status, body: await res.json() };
+  };
+
+  assert.deepEqual(await get('0a1b2c3d'), { status: 200, body: { ...conversation, saved: true, savedAt: at } });
+  assert.deepEqual(await get('0a1b2c3d', '?since=1764064800000'), { status: 200, body: { agent: 'claude', unchanged: true, writtenAt: 1764064800000, savedAt: at } });
+  assert.equal((await get('0a1b2c3d', '?since=5')).body.entries.length, 2, 'another since: the whole of it');
+  assert.equal((await get('1b2c3d4e')).body.savedAt, at, 'a shared session\'s, with the record\'s time when the file has none');
+  assert.equal((await get('2c3d4e5f')).status, 409, 'nothing kept: not running, as before');
+  assert.equal((await get('3d4e5f6a')).status, 409, 'a tainted session\'s is never shown');
+  assert.equal((await get('4e5f6a7b')).status, 404, 'marked, but gone from the store');
+  assert.equal((await get('5f6a7b8c')).status, 409, 'one starting again reads the live one once it runs');
+  assert.equal((await get('6a7b8c9d')).status, 404, 'a teammate\'s private session is never found');
+  assert.ok(!read.some((k) => /3d4e5f6a|5f6a7b8c|6a7b8c9d/.test(k)), 'and none of those was read');
 });
 
 test('the Chat tab\'s Stop is an interrupt sent to the running session\'s statusd, and nothing else', async (t) => {
@@ -1033,7 +1132,7 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.match(await getBody(port, '/static/dictation.js', as('octocat')), /W\.dictation = /);
   // The settings pages are one page: each address loads every settings page's script, so common.js moves between
   // them in place. My settings' Repo settings card draws its layers with the repo page's parts, loaded before both.
-  const SETTINGS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+  const SETTINGS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js', 'analyticsDays.js', 'analytics.js'];
   for (const page of ['/settings', '/console-settings', '/console-settings/repos/app', '/secrets', '/people', '/events']) {
     const settingsScripts = [...(await getBody(port, page, as('octocat'))).matchAll(/<script src="\/static\/([\w.]+)\?v=[0-9a-f]{12}"/g)].map((m) => m[1]);
     assert.deepEqual(settingsScripts.slice(-SETTINGS.length), SETTINGS, `${page} is the settings page`);
@@ -1141,6 +1240,37 @@ test('New session offers only the agents set up to run, and a Codex start needs 
   assert.deepEqual(await agents(), { claude: true, codex: true, ...none }, 'their own sign-in runs Codex');
   claude.delete('mia-dev');
   assert.deepEqual(await agents(), { claude: false, codex: true, ...none }, 'no Claude token, no Claude');
+});
+
+test('a stopped private session\'s kept machine is read for its owner, and Resume on the latest image reaches the fleet', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const resumed = [];
+  const stopped = { id: '0a1b2c3d', owner: 'mia-dev', status: 'stopped', options: {} };
+  const fleet = {
+    sessions: () => [], find: (id) => (id === stopped.id ? stopped : null),
+    resumePrivate: async (args) => { resumed.push(args); return stopped; },
+    keptMachine: async ({ owner, id }) => {
+      if (owner !== stopped.owner || id !== stopped.id) throw Object.assign(new Error('no session you can open with that id'), { shown: true });
+      return { kept: true, outdated: true };
+    },
+  };
+  const userSettings = {
+    refresh: async () => {},
+    view: () => ({ claudeToken: { set: true, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: true, available: true, agentAuth: {} }),
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const server = http.createServer(createHandler({ config, fleet, auth, userSettings }));
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = (login) => ({ cookie: `woodshed_session=${login}` });
+
+  assert.deepEqual(JSON.parse(await getBody(port, `/api/my/sessions/${stopped.id}/machine`, as('mia-dev'))), { kept: true, outdated: true });
+  assert.deepEqual(JSON.parse(await getBody(port, `/api/my/sessions/${stopped.id}/machine`, as('joel'))), { error: 'no session you can open with that id' }, 'someone else\'s answers as none');
+  assert.equal((await post(port, `/api/my/sessions/${stopped.id}/resume`, { latestImage: true }, as('mia-dev'))).status, 201);
+  assert.equal((await post(port, `/api/my/sessions/${stopped.id}/resume`, {}, as('mia-dev'))).status, 201);
+  assert.equal((await post(port, `/api/my/sessions/${stopped.id}/resume`, { latestImage: 'yes' }, as('mia-dev'))).status, 201);
+  assert.deepEqual(resumed.map((r) => r.latestImage), [true, false, false], 'only a true asks for it');
 });
 
 test('Grok Build and OpenCode are offered and start only on their owner\'s own sign-in', async (t) => {

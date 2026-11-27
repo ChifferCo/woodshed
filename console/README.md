@@ -145,7 +145,25 @@ the page shows as `Not answered: <why>` with a way to the TUI tab; the console l
 the page` with the picks' numbers or the decision, never their text. A free-text answer, a question that takes
 several options, and anything else the agent asks only in its terminal stay **Answer in the TUI tab**. The agent still runs in its terminal, on
 the **TUI** tab (`?tab=tui`; `?tab=agent`, its old name, still opens it): hooks, Remote Control and Resume work as before. A session that is not running has
-no Chat tab and shows its start or its end there.
+no Chat tab and shows its start or its end there, unless it kept its conversation: then its Chat shows it read-only.
+
+**A stopped session's conversation.** At the stop's checkpoint, and every 5 minutes while the agent's record changes,
+statusd sends the conversation as Chat draws it to the session API (`POST /conversation`, shared/savedConversation.mjs:
+the newest 300 entries, at most 4 MB, the oldest dropped first and the thread saying so). The console keeps the last one
+beside the session's own Claude home (`<login>/sessions/<id>/conversation.json`, `_sessions/<id>/conversation.json`,
+console/homes.mjs), marks the session (`conversationSavedAt`), and deletes it with the home: the home store's `remove`
+takes both, and Forget my Claude home and Remove My Woodshed every one of the owner's. While the session is stopped,
+paused or failed, its Chat reads that copy (`GET /api/sessions/<id>/transcript` answers it with `saved: true` and
+`savedAt`), with no composer: in its place, how it ended, when the conversation was kept, **Details** (the TUI tab's
+end) and a private session's **Resume** (a shared one's is on the pane bar). Once it runs again, Chat reads the live
+record, which the copy was made from, so nothing shows twice. A question from Slack, a QA run and a review keep none,
+nor does a session that has seen production data: statusd sends nothing once tainted, the session API refuses one
+whose lockdown began (409), and the console shows none of a tainted session's. The console logs `sessionApi:
+conversation kept` with the entries and bytes, or `conversation refused, the session has seen production data`;
+statusd logs `statusd: conversation kept` with `why` (`stop` or `periodic`), `conversation not kept` with the
+console's answer, or, after a 404 or 409, `conversation not kept by the console, none sent again`. The stop gives up a
+periodic save still on its way, as it does the home's. A save that lands after the session was removed is deleted again
+(`sessionApi: conversation dropped, the session was removed as it came in`).
 
 **More than one agent in a session.** The owner of a running My Woodshed session can start another agent in it, beside
 its own: the agent switch on the pane bar, after the tabs while Chat or TUI shows (`components/AgentSwitch`), has
@@ -222,7 +240,8 @@ What the page does, from the shed's own review code:
   is kept under `/tmp/woodshed-review` for the session's life, and says when
   the checkout has moved since.
 - **Ask about a line** (its number), **or a file**: claude reads the code to
-  answer, in a few paragraphs.
+  answer, in a few paragraphs. **Dictate** adds speech to the editable question or follow-up on browsers
+  with speech recognition. Press **Stop** to finish dictating, then send the question when it is ready.
 - **Chat** beside it: one message at a time, with the conversation so far, the
   analysis and the files. It can only read; changes are made in the TUI tab.
 
@@ -442,7 +461,7 @@ with Enter, as the title's own rename does. `POST /api/my/sessions` still takes 
   listing their paths under the prompt as the shed does. They go with the
   session's Remove.
 
-**Dictate**, beside Attach files, speaks the prompt with the browser's speech recognition (`public/dictation.js`,
+**Dictate**, beside Attach files, speaks the prompt with the browser's speech recognition (`shared/dictation.mjs`,
 shared with the phone's message box): settled words go after what is typed, the line under the prompt shows the ones
 still settling, and **Stop**, or Start, keeps them. It is hidden where the browser has none (Firefox). Chrome and Edge
 send the audio to Google and Microsoft, Safari to Apple; the console sees only the text.
@@ -534,7 +553,8 @@ TUI and Terminal tabs):
   `GET /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>` answers what was asked, what the agent said, and a
   line for each tool it ran (marked when it failed, and with what an edit changed, as `diffs`), newest last, from the agent's own record (statusd's `GET
   /transcript`), or `{unchanged: true}` while nothing was written since the last answer. Anyone who can open the
-  session may read it, while it runs.
+  session may read it, while it runs, and once it has stopped, the copy it kept, with `saved: true` and `savedAt` (409
+  when it kept none).
 
 And what the shed shows about each session:
 - **The pull request's chip**, on the card and the pane bar: open, draft,
@@ -731,6 +751,10 @@ session again, with its page, branch and options, and runs
 newest transcript's name. When the restored home doesn't hold that
 conversation, the session starts its original prompt again: a session that
 never reached claude, or one stopped before sessions kept their own homes.
+A launcher that keeps the session's machine between runs (`keptMachine`, "Embedding the console") resumes it on the image
+that machine was made from, which may no longer start a branch that took a newer project file: when it says so, the page
+offers **Resume on the latest image** too, which asks first, then leaves that machine, with its databases and whatever
+else the session kept there, for a new one; the branch and the conversation go along as on any Resume.
 **Remove**, on a stopped private session's page, takes it off the list and
 deletes the home it kept; its branch stays on GitHub. **Forget it** on My
 settings and Remove My Woodshed delete your kept home and every one of your
@@ -1314,7 +1338,7 @@ console to post to GitHub:
   person's (`fleet: review threads resolved`).
 - **The merge risk** is the Merge risk check and the `merge risk: low|medium|high` label, the other two taken off.
 - **The PR comment** says `Reviewing`, with the spinner Claude's GitHub Action shows, as soon as the session starts, and becomes the review's comment when it ends.
-  A session that ends without a review turns it into `The review did not finish` with the reason
+  A session that ends without a review turns it into `The review did not finish` with the reason, quoted as code so nothing in it renders
   (`fleet: review ended without a report`).
 
 ### Who reviews: Claude Code, Codex, Grok Build, OpenCode, several or none
@@ -1348,6 +1372,12 @@ The review gets `review.agents` and `REVIEW_AGENTS` (any of `claude`, `codex`, `
 Before any of them starts, it removes the whole `.review/` folder: a branch can commit one, verdict and all, which a
 reviewer that writes none would leave to be reported as its own (the pane says `The pull request carries a .review
 folder of its own`).
+
+A review leaves a run log as a QA run does (`POST /review-log`; `fleet: review run log kept`), so one that ends with no
+verdict says why: the steps, how claude's pass ended (turns, cost, tool errors), what the agents said, and the verdict's
+word, scrubbed by value, by pattern and by a model's second look. An ended review session's page shows it under **Run log**
+(`GET /api/sessions/<id>/review-log`) to an admin and whoever started the review, and to no one else. A review is stopped
+before its first checkpoint leaves none.
 Codex works as in a Codex session: it reads the checkout, runs what it likes (the container is the sandbox) and writes
 its verdict's files itself, in `.review/codex/`. It gets `REVIEW_CODEX_MINUTES` (20 by default), then is stopped, and
 Claude's verdict goes out alone. Codex alone sends its own verdict.
@@ -2488,6 +2518,12 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   `linked`, `unmatched`, `manual` or `skipped`; Slack's bot needs `users:read.email`.
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
+- A launcher's `keptMachine(sessionId)`, for one that keeps a stopped session's machine between its runs: `null` for
+  none, else `{outdated}`, true when that machine was made from an older image of the session's repo than a new session
+  gets. The stopped private session's page then offers **Resume on the latest image** beside Resume, and the console
+  passes that start `{latestImage: true}` as `start`'s third argument: the launcher leaves an outdated machine, its data
+  with it, and makes a new one (`fleet: resuming a private session` with `latestImage`). One that threw answers none
+  (`fleet: kept machine not read`).
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
   `toMessage` makes the message from GitHub's own payload): the GitHub poll then runs only as a fallback.
 
@@ -2910,7 +2946,17 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
    WebM only, one at a time) to `POST /qa-video` and a still from the first one's last second (Playwright's own ffmpeg,
    PNG) to `POST /qa-poster`, which the fleet keeps through `qaRecordings.mjs` (`qaVideo`, `qaPoster`) for 14 days,
    then the verdict, the report, the commit it tested and the cost to `POST /qa-report` (`qaSessions.mjs` checks it),
-   once.
+   once. A run log (`shared/qa/runLog.mjs`) goes to `POST /qa-log` after each pass and before the report, the latest
+   replacing the last, so a run stopped before its report still leaves why. It holds the steps the script took and, for each claude
+   pass, how it ended, its turns, cost and counts, claude's last words and the tool errors' text, scrubbed by value (the
+   session's own secret variables and the install secrets), by pattern, and by a model's second look (`screenLog` in
+   `session/qa.sh`, a haiku call that names the lines holding a secret, which are blanked; `the model check for secrets did
+   not run` in the log when it could not). A checkpoint taken before the planner and as the tests start skips the model's look
+   and says so. It is the run's own output, so it may still quote what the app printed: only an admin, and whoever started the
+   run (or owns the session), read it (`fleet: QA run log kept`).
+
+   An ended QA session's page shows it under **Run log** (`GET /api/sessions/<id>/qa-log`, answered 403 to anyone else). A run
+   with no report says in its verdict why when a pass ran out of turns, was cut off or hit an error.
 5. The fleet writes the report into the QA comment, with the still linking to the first video at `/qa/<session id>/video/1` and a link to each
    (on a repo whose project file says `pullRequests.qa.recordings: public`, at `/qa-video/<session id>/<secret>/<n>.webm`,
    which plays with no sign-in: the session got its secret, `qa.share`, when it started, and pages never see it), posts the QA check on the commit tested with the verdict and the
@@ -3171,6 +3217,56 @@ Below the cards, **Sessions holding data** lists, checked again every minute:
 My Woodshed sessions never show there, nor the homes they keep under
 `<login>/sessions/`: those go only with the session's Remove, Forget it or
 Remove My Woodshed.
+
+## Analytics
+
+Console → **Analytics** (`/analytics`, `public/analytics.js`, `analytics.mjs`) is how the team uses Woodshed, for
+whoever leads it: admins only, behind a hosting proxy its owners (`GET /api/analytics?days=7|30|90`). Each viewer sees
+only the repos they may open themselves (`projectAccess.mjs`, `visible`): a repo they cannot write to on GitHub gives the
+page nothing, not its pull requests, its sessions or a link to one. Wherever people sign in (with GitHub, or through a
+hosting proxy, whose role says nothing of a repo) GitHub is asked about each repo, the default one included, and its
+answer is kept a minute: a write access lost shows within a minute, not at sign-in's hourly recheck. A repo GitHub does
+not answer for is left out. It is written for an
+engineering manager asking who has taken Woodshed up and who has not, and whether work through it goes as well as
+work without it, not for ranking people:
+
+- **Sessions**: work sessions started in the window (My Woodshed and shared ones; reviews, QA runs and questions from
+  Slack counted apart), how many members started one, which agents they ran, and a bar a week (a day for 7 days).
+  Each figure has an icon and a colour; lists show 25 rows with **Show more** and **Show all**.
+- **Pull requests**: those opened in the window on the console's repos, through Woodshed and without it, how many of
+  the merged ones went through Woodshed, the median time from opened to merged for each, and the merge risk of each
+  kind, with a bar a week of those merged.
+- **Pull requests, more**: how many had a person review them (a user other than the author, not a pending or
+  dismissed review; one with more than 100 reviews that shows none is "not known", not "no human") and how many models reviewed each (the agents of Woodshed's own review sessions when there were
+  any, else the distinct review bots on GitHub), merge risk counted at every level (low, medium, high, not reviewed)
+  for each kind, and bars of those opened each day and those merged.
+- **By repo**: pull requests for each repo, through Woodshed and without; a repo name filters the list below.
+- **By person**: each member, those who started nothing included, with their sessions, the days they started one, their
+  pull requests each way, the share through Woodshed, their time to merge and their high-risk count. Picking a name (here, or in the
+  Person menu at the top) shows only their sessions, pull requests, daily opens and repos.
+- **Sessions started** and **Pull requests**: the records behind the numbers, newest first, the pull requests filtered by
+  through Woodshed, without, medium or high risk, human reviewed or not, with the reviewers, models and coloured lines
+  changed (green added, red removed).
+
+A pull request is through Woodshed when a session reported it, or worked on its branch, and it is then that session's
+person's, whoever GitHub says opened it (a shared session's opens as the App). One opened by a bot with no session is
+left out. Merge risk is the tier the review gave it: the review's `merge risk: <tier>` label, which a review in a
+session puts on, read with the search; for the newest 100 with no label, the project file's
+`pullRequests.mergeRisk.check` on the head commit, asked 25 at a time (a review that runs as a workflow posts only the
+check, and asking every pull request's checks in the search made GitHub answer 502 on a busy repo); else the tier a
+review session reported (kept on it as `review.tier`). A label is a person's to change, so nothing gates on it: the
+page only reports it. Lines changed are shown quietly, last, as a rough size and never as a measure of anyone's output.
+
+A My Woodshed session is counted, and its pull request listed (GitHub shows it to the repo's writers anyway), but its
+title and prompt never are: on the page it is "Private session". Sessions come from the console's list and from
+`usageKept` in `state.json`: a record of each session as it leaves the list (Remove, a deleted shared session's last
+day), with no prompt and a private one's title left out, kept 180 days. A session that saw production data keeps none:
+nothing it held outlives it, and while it is on the list it is counted with no branch, pull request or title. Remove My
+Woodshed takes every record of its person's My Woodshed sessions, those removed one by one before included; shared
+sessions they started stay, as the team's. A branch is matched only on the repo it was pushed to, so a fork's pull
+request on the same branch name is not the session's. Pull requests are read from GitHub's search, each repo at most every 5 minutes and at most its newest
+2,000 in the window (GitHub's search answers 1,000 at most, so a repo with more is read in date ranges, halved until each fits): `analytics: pull requests not read` with the project and GitHub's error when a read fails, and the
+page names the repo it left out.
 
 ## Settings
 

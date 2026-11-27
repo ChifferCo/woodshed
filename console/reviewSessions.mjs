@@ -71,7 +71,16 @@ export function reviewRunningComment({ sessionUrl, agents = ['claude'] }) {
  */
 export function reviewEndedComment({ reason, sessionUrl }) {
   const where = sessionUrl ? ` ([session](${sessionUrl}))` : '';
-  return `⚠️ **The review did not finish**${where}: ${reason}. A new commit starts another.\n`;
+  return `⚠️ **The review did not finish**${where}: ${codeSpan(reason)}. A new commit starts another.\n`;
+}
+
+/** The reason quotes what the session met, a project file's unknown key among it, so it goes in as code: a link, an
+ * image, a tag or an @mention in it stays text on the pull request. The status and the log keep it as it was. A fence
+ * one backtick longer than the longest run inside holds it whole, and its padding keeps a backtick at either end apart. */
+function codeSpan(text) {
+  const line = String(text).replace(/\s+/g, ' ').trim();
+  const fence = '`'.repeat(Math.max(0, ...(line.match(/`+/g) ?? []).map((run) => run.length)) + 1);
+  return `${fence} ${line} ${fence}`;
 }
 
 /**

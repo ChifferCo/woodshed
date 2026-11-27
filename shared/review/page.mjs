@@ -19,7 +19,7 @@
 // TWO CONSTRAINTS ON EVERYTHING BELOW, both inherited from server.mjs:
 //
 //  1. No backticks and no ${ inside the template literal, except the deliberate
-//     interpolations of tokenizeLine and createAskState. A stray backtick
+//     interpolations of shared scripts and constants. A stray backtick
 //     corrupts the *client* script while the server still parses and serves
 //     200s — which is why install.sh re-parses the served page rather than just
 //     the source.
@@ -27,10 +27,13 @@
 //     string on this page comes from a PR title, a diff hunk or a model, i.e.
 //     from somewhere untrusted.
 
+import { readFileSync } from 'node:fs';
 import { tokenizeLine } from './highlight.mjs';
 import { createAskState } from './askState.mjs';
 import { layoutDiagram } from './diagram.mjs';
 import { MAX_ASK_DEPTH, MAX_USER_QUESTION } from './qa.mjs';
+
+const DICTATION_SCRIPT = readFileSync(new URL('../dictation.mjs', import.meta.url), 'utf8');
 
 // The dark palette, written once here and interpolated into both blocks that
 // need it — the device query and the explicit [data-theme="dark"] stamp. Two
@@ -624,6 +627,11 @@ ${DARK_PALETTE}
     /* The AI reviews tab: one box per review Claude Code or Codex posted, its
        parts and its findings, each with the follow-ups asked about it. */
     .aiintro { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 0 0 0.9rem; max-width: var(--prose-measure); }
+    .aibox .saidhead { flex-wrap: wrap; row-gap: 0.2rem; }
+    .aiheading { display: flex; align-items: baseline; gap: 0.45rem; min-width: 0; overflow-wrap: anywhere; }
+    .aiheading .caret { flex: none; }
+    .aibox .saidhead :is(.verdictword, .aitag, .when, a) { white-space: nowrap; }
+    .aibox .saidhead > a { margin-left: auto; }
     .aitag {
       font: 600 9.5px/1.6 ui-monospace, monospace; letter-spacing: 0.04em; color: var(--muted);
       border: 1px solid var(--rule); border-radius: 3px; padding: 0 0.3rem; background: var(--panel);
@@ -1096,7 +1104,7 @@ ${DARK_PALETTE}
       background: var(--sunk); border: 1px solid var(--rule);
       border-radius: 999px; padding: 0 0.42rem;
     }
-    .tabbar .right { margin-left: auto; display: flex; align-items: center; gap: 0.7rem; padding-bottom: 0.45rem; }
+    .tabbar .right { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 0.7rem; padding-bottom: 0.45rem; }
     .tally {
       font: 500 11.5px/1.6 ui-monospace, monospace; letter-spacing: 0.04em; color: var(--faint);
     }
@@ -1194,6 +1202,13 @@ ${DARK_PALETTE}
     }
     .sheet-x:hover { background: var(--sunk); color: var(--ink); filter: none; }
     .sheet-body { padding: 1rem; }
+    #conversationsSheet .sheet-body { max-height: 58vh; overflow: auto; overflow-wrap: anywhere; }
+    #conversationsList { list-style: none; padding: 0; margin: 0; }
+    #conversationsList li + li { border-top: 1px solid var(--rule); margin-top: 0.75rem; padding-top: 0.75rem; }
+    #conversationsList p { margin: 0.35rem 0; }
+    .conversation-meta { font-size: 12.5px; color: var(--muted); }
+    #conversationsStatus { margin: 0 0 0.7rem; }
+    #mergeConversations { margin-top: 0.7rem; }
     .sheet-body textarea {
       width: 100%; resize: vertical; padding: 0.55rem 0.65rem; font: inherit; font-size: 13.5px;
       line-height: 1.5; border: 1px solid var(--rule-strong); border-radius: 4px;
@@ -1262,6 +1277,7 @@ ${DARK_PALETTE}
     .flash {
       background: var(--add-bg); color: var(--add); border-left: 3px solid var(--add);
       padding: 0.7rem 0.85rem; border-radius: 4px; margin-bottom: 1.25rem; font-size: 14px;
+      overflow-wrap: anywhere;
     }
     /* The card no longer clips, so the last child rounds its own bottom
        corners — without this the final diff row's --add-bg/--del-bg squares
@@ -1503,6 +1519,7 @@ ${DARK_PALETTE}
       background: var(--panel); color: var(--ink);
     }
     .askrow button { padding: 0.4rem 0.8rem; font-size: 13px; }
+    .asklistening { color: var(--muted); font-size: 13px; margin: 0.4rem 0 0; }
     .aska { font-size: 13.5px; line-height: 1.6; margin-bottom: 0.6rem; }
     .aska:empty { display: none; }
     .askq {
@@ -1622,12 +1639,27 @@ ${DARK_PALETTE}
       </div>
       <ul class="mergelist" id="mergeList"></ul>
       <div id="mergeBlock"></div>
+      <button type="button" class="quiet" id="mergeConversations">Unresolved conversations</button>
       <p class="sheet-where" id="mergeWhere"></p>
     </div>
     <div class="sheet-foot">
       <span class="grow" id="mergeErr"></span>
       <button type="button" class="quiet" id="mergeCancel">Cancel</button>
       <button type="button" class="go merge-pr" id="mergeGo" disabled>Squash and merge</button>
+    </div>
+  </dialog>
+  <dialog class="sheet" id="conversationsSheet" aria-labelledby="conversationsTitle">
+    <div class="sheet-head">
+      <b id="conversationsTitle">Unresolved conversations</b>
+      <button type="button" class="sheet-x" id="conversationsClose" aria-label="Close">&times;</button>
+    </div>
+    <div class="sheet-body">
+      <p id="conversationsStatus" role="status"></p>
+      <ul id="conversationsList"></ul>
+    </div>
+    <div class="sheet-foot">
+      <span class="grow" id="conversationsError" role="alert"></span>
+      <button type="button" class="go" id="resolveConversations" disabled>Resolve all</button>
     </div>
   </dialog>
   <div class="layout" id="layout">
@@ -1665,6 +1697,8 @@ ${DARK_PALETTE}
   </button>
 
   <script>
+    ${DICTATION_SCRIPT}
+
     // Inlined from review/highlight.mjs so the tokenizer has exactly one
     // source of truth. It must be self-contained — see the note in that file.
     ${tokenizeLine.toString()}
@@ -2044,6 +2078,14 @@ ${DARK_PALETTE}
     // Every piece of ask-panel state, and the only place any of it lives. See
     // review/askState.mjs for why it is a module rather than four variables.
     var ask = createAskState();
+    var finishAskDictation = null;
+    window.addEventListener('message', function onReviewHidden(event) {
+      if (event.source === window.parent && event.origin === location.origin
+          && event.data === 'woodshed:review-hidden' && finishAskDictation) finishAskDictation();
+    });
+    document.addEventListener('visibilitychange', function onDictationVisibility() {
+      if (document.hidden && finishAskDictation) finishAskDictation();
+    });
     var pollTimer = null;
 
     function el(tag, cls, text) {
@@ -2127,6 +2169,7 @@ ${DARK_PALETTE}
     }
 
     function render() {
+      if (finishAskDictation) finishAskDictation();
       var content = document.getElementById('content');
       // Emptying the page collapses its height, and the browser clamps the
       // scroll to whatever is left — so pressing anything that re-renders
@@ -2279,6 +2322,12 @@ ${DARK_PALETTE}
         submit.addEventListener('click', openSubmitSheet);
         var merge = mergeControl();
         if (merge && merge.tagName === 'BUTTON') submit.classList.add('quiet');
+        if (state.livePr.state === 'open' || state.livePr.state === 'draft') {
+          var conversations = el('button', 'submit-review quiet', 'Unresolved conversations');
+          conversations.type = 'button';
+          conversations.addEventListener('click', openConversations);
+          right.appendChild(conversations);
+        }
         right.appendChild(submit);
         if (merge) right.appendChild(merge);
       }
@@ -2553,6 +2602,88 @@ ${DARK_PALETTE}
       return hint;
     }
 
+    function openConversations() {
+      var sheet = document.getElementById('conversationsSheet');
+      var status = document.getElementById('conversationsStatus');
+      var problem = document.getElementById('conversationsError');
+      var go = document.getElementById('resolveConversations');
+      var close = document.getElementById('conversationsClose');
+      var list = document.getElementById('conversationsList');
+      var session = state.session;
+      var route = '/reviews/' + session + '/conversations';
+      var busy = false;
+
+      function closeSheet() { sheet.close(); }
+      close.onclick = closeSheet;
+      sheet.oncancel = function (event) { if (busy) event.preventDefault(); };
+      problem.textContent = '';
+      sheet.showModal();
+      load();
+
+      async function load() {
+        go.disabled = true;
+        go.textContent = 'Resolve all';
+        list.replaceChildren();
+        status.textContent = 'Reading conversations from GitHub…';
+        try {
+          var got = await api('GET', route);
+          if (!sheet.open || close.onclick !== closeSheet || state.session !== session) return;
+          var threads = got.threads;
+          var ids = threads.filter(function (t) { return t.canResolve; }).map(function (t) { return t.id; });
+          status.textContent = threads.length
+            ? threads.length + ' unresolved' + (ids.length < threads.length ? ' · ' + ids.length + ' you can resolve' : '')
+            : 'No unresolved conversations.';
+          threads.forEach(function (thread) {
+            var item = el('li');
+            var location = thread.path + (thread.line == null ? '' : ':' + thread.line);
+            var href = webUrl(thread.url);
+            var label = el(href ? 'a' : 'b', null, location);
+            if (href) {
+              label.href = href;
+              label.target = '_blank';
+              label.rel = 'noopener noreferrer';
+            }
+            item.appendChild(label);
+            item.appendChild(el('p', 'conversation-meta', thread.author
+              + (thread.outdated ? ' · Outdated' : '')
+              + (thread.canResolve ? '' : ' · You can’t resolve this conversation')));
+            var body = el('div', 'md');
+            renderMarkdown(body, thread.body || '');
+            item.appendChild(body);
+            list.appendChild(item);
+          });
+          go.disabled = !ids.length;
+          if (ids.length && ids.length < threads.length) go.textContent = 'Resolve ' + ids.length + ' of ' + threads.length;
+          go.onclick = function () { resolve(ids); };
+        } catch (err) {
+          if (!sheet.open || close.onclick !== closeSheet || state.session !== session) return;
+          status.textContent = '';
+          problem.textContent = err.message;
+        }
+      }
+
+      async function resolve(ids) {
+        if (busy || session !== state.session) return;
+        busy = true;
+        close.disabled = go.disabled = true;
+        go.textContent = 'Resolving…';
+        problem.textContent = '';
+        try {
+          await api('POST', route, { ids: ids });
+        } catch (err) {
+          problem.textContent = err.message;
+        }
+        // GitHub can apply some resolutions even when the request reports an error.
+        // Read the remaining conversations and current merge rules after every attempt.
+        await load();
+        busy = false;
+        close.disabled = false;
+        if (session !== state.session) return;
+        loadDraft().then(render).catch(function ignore() {});
+        if (document.getElementById('mergeSheet').open) readMergeSheet();
+      }
+    }
+
     function openMergeSheet() {
       var sheet = document.getElementById('mergeSheet');
       var go = document.getElementById('mergeGo');
@@ -2565,8 +2696,16 @@ ${DARK_PALETTE}
       list.replaceChildren(mergeItem('wait', 'Asking GitHub where this pull request stands\\u2026'));
       go.disabled = true;
       sheet.showModal();
+      readMergeSheet();
+    }
+
+    function readMergeSheet() {
+      var go = document.getElementById('mergeGo');
+      var list = document.getElementById('mergeList');
+      go.disabled = true;
       api('GET', '/reviews/' + state.session + '/merge')
         .then(function read(got) {
+          document.getElementById('mergeErr').textContent = '';
           describeMergeWay(got.readiness);
           renderMergeReadiness(got);
           go.disabled = !!got.blocker;
@@ -2626,6 +2765,7 @@ ${DARK_PALETTE}
       if (r.mergeState === 'DIRTY') list.appendChild(mergeItem('no', 'Conflicts with ' + r.baseRef));
       else if (r.mergeState === 'UNKNOWN') list.appendChild(mergeItem('wait', 'GitHub is still checking for conflicts with ' + r.baseRef));
       else list.appendChild(mergeItem('ok', 'No conflicts with ' + r.baseRef));
+      document.getElementById('mergeBlock').replaceChildren();
       if (got.blocker) showMergeBlock(got.blocker);
     }
 
@@ -3126,14 +3266,8 @@ ${DARK_PALETTE}
 
     // --- Q&A ------------------------------------------------------------------
     //
-    // A model playing a junior developer, new to the codebase and lost in its
-    // jargon, asked about the change; another read the code and answered; the
-    // newcomer then asked about whatever in each answer it did not follow. The
-    // server keeps the result as a flat list whose parent ids make the tree.
-    // Every question starts folded: the reader opens only the ones they have.
-    // A reader asks their own questions too: a follow-up under any answer, or a
-    // question of theirs under the tree. The answerer answers it as it answered
-    // the newcomer's; it is written to the tree at once, waiting, and answered there.
+    // The server writes questions and answers in levels, with parent ids linking the tree.
+    // Questions start folded. A reader can also ask a question at the root or under an answer.
     var qaView = { session: null, data: null, loading: false, error: null, started: false, timer: null, open: {}, drafts: {}, sending: {}, refilled: {}, reads: 0, readsDone: 0, posted: {} };
 
     function qaTabCount() {
@@ -3205,7 +3339,7 @@ ${DARK_PALETTE}
             view.otherDiff = !!(view.data && (view.data.forDiff || null) !== (state.diffAt || null));
             if (view.otherDiff) view.data = null;
           } else {
-            view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
+            view.data = { status: 'running', phase: 'generating', depth: 1, items: [] };
           }
         }
       } catch (e) {
@@ -3279,22 +3413,15 @@ ${DARK_PALETTE}
       if (was !== qaView) return;
       clearTimeout(was.timer);
       var view = freshQaView(true);
-      if (!asked.kept) view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
+      if (!asked.kept) view.data = { status: 'running', phase: 'generating', depth: 1, items: [] };
       qaView = view;
       render();
       loadQa(!asked.kept);
     }
 
     function qaPhaseText(d) {
-      var open = 0;
-      var items = d.items || [];
-      for (var i = 0; i < items.length; i++) if (!items[i].answer) open++;
-      if (d.phase === 'answering') {
-        return 'Reading the code to answer ' + open + (open === 1 ? ' question' : ' questions')
-          + (d.depth > 1 ? ' (follow-ups, level ' + d.depth + ')' : '') + '…';
-      }
-      if (d.depth > 1) return 'Writing follow-up questions about the answers…';
-      return 'Writing the questions someone new to this code would ask…';
+      return d.depth > 1 ? 'Reading the code and writing follow-up questions and answers…'
+        : 'Reading the code and writing questions and answers…';
     }
 
     function renderQa(content) {
@@ -4063,7 +4190,9 @@ ${DARK_PALETTE}
       var verdict = AI_WORD[review.conclusion] || AI_WORD.COMMENT;
       var box = el('div', 'saidbox aibox' + (verdict.tone ? ' ' + verdict.tone : '') + (open ? '' : ' folded'));
       var head = el('div', 'saidhead');
-      head.appendChild(el('span', 'who', review.agents.length ? review.agents.join(' and ') : review.heading));
+      var heading = el('span', 'aiheading');
+      heading.appendChild(el('span', 'who', review.agents.length ? review.agents.join(' and ') : review.heading));
+      head.appendChild(heading);
       head.appendChild(el('span', 'verdictword ' + verdict.tone, verdict.word));
       // A maintainer dismissed it on GitHub: what it said stays, and so does that.
       if (review.state === 'dismissed') head.appendChild(el('span', 'aitag', 'dismissed'));
@@ -4075,9 +4204,8 @@ ${DARK_PALETTE}
       var n = review.findings.length;
       head.appendChild(el('span', 'aitag', n + (n === 1 ? ' finding' : ' findings')));
       if (review.at) head.appendChild(el('span', 'when', fmtWhen(review.at)));
-      head.appendChild(el('span', 'grow'));
       if (review.url) head.appendChild(openOnGitHub(review.url, 'Open on GitHub'));
-      foldable(head, review.id, open);
+      foldable(head, review.id, open, heading);
       box.appendChild(head);
       if (!open) return box;
 
@@ -4218,9 +4346,9 @@ ${DARK_PALETTE}
     // keep doing their own job.
     // A disclosure for the keyboard too: it takes the focus, says whether it is
     // open, and Enter or Space folds it, keeping the focus on it after the render.
-    function foldable(head, id, open) {
+    function foldable(head, id, open, caretParent = head) {
       head.classList.add('toggles');
-      head.insertBefore(el('span', 'caret', open ? '\\u25be' : '\\u25b8'), head.firstChild);
+      caretParent.prepend(el('span', 'caret', open ? '\\u25be' : '\\u25b8'));
       head.tabIndex = 0;
       head.setAttribute('role', 'button');
       head.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -5509,29 +5637,82 @@ ${DARK_PALETTE}
       input.setAttribute('aria-label', (followUp ? 'Follow-up about ' : 'Question about ') + where);
       input.value = ask.draft(anchor);
       var go = el('button', null, followUp ? 'Send' : 'Explain');
+      var dictate = el('button', 'quiet', 'Dictate');
+      dictate.type = 'button';
+      var speech = window.Woodshed.dictation;
+      var listening = el('p', 'asklistening');
+      listening.setAttribute('role', 'status');
+      listening.hidden = true;
       row.appendChild(input);
+      if (speech.available) row.appendChild(dictate);
       row.appendChild(go);
       panel.appendChild(row);
+      panel.appendChild(listening);
+
+      var recognition = null;
+      function updateDictation() {
+        dictate.textContent = recognition ? 'Stop' : 'Dictate';
+        input.readOnly = Boolean(recognition);
+        go.disabled = Boolean(recognition);
+        listening.hidden = !recognition;
+      }
+
+      function saveDraft() {
+        ask.setDraft(anchor, input.value);
+      }
+
+      function endDictation() {
+        recognition = null;
+        finishAskDictation = null;
+        updateDictation();
+      }
+
+      function finish() {
+        var pending = recognition.abort();
+        if (pending) input.value = (input.value.trimEnd() + ' ' + pending).trimStart();
+        saveDraft();
+        endDictation();
+      }
+
+      dictate.addEventListener('click', function onDictate() {
+        if (recognition) {
+          recognition.stop();
+          return;
+        }
+        recognition = speech.dictate(input, {
+          heard: function showWords(pending) {
+            listening.textContent = pending ? 'Listening. ' + pending : 'Listening.';
+          },
+          changed: saveDraft,
+          ended: endDictation,
+          error: showFlash,
+        });
+        if (!recognition) return;
+        finishAskDictation = finish;
+        listening.textContent = 'Listening.';
+        updateDictation();
+      });
 
       // A run that is still going when the panel is rebuilt: say so rather
       // than showing an idle box that looks like nothing was asked.
       if (ask.isBusy(anchor)) {
+        dictate.disabled = true;
         go.disabled = true;
         input.disabled = true;
         out.appendChild(waitingRow());
       }
 
-      input.addEventListener('input', function onEdit() {
-        ask.setDraft(anchor, input.value);
-      });
+      input.addEventListener('input', saveDraft);
 
       function run() {
+        if (recognition) return;
         var asked = input.value.trim();
         if (!asked && followUp) return;
         // Sent before this turn is added, so the server sees only what came before it.
         var before = ask.thread(anchor);
         ask.setDraft(anchor, input.value);
         ask.setBusy(anchor, true);
+        dictate.disabled = true;
         go.disabled = true;
         input.disabled = true;
         var oldErr = out.querySelector('.askerr');
@@ -6332,6 +6513,7 @@ ${DARK_PALETTE}
     document.getElementById('sheetClose').addEventListener('click', function close() {
       document.getElementById('submitSheet').close();
     });
+    document.getElementById('mergeConversations').addEventListener('click', openConversations);
     document.getElementById('mergeGo').addEventListener('click', mergePullRequest);
     document.getElementById('mergeCancel').addEventListener('click', function cancel() {
       document.getElementById('mergeSheet').close();

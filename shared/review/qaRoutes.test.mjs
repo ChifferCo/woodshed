@@ -2,11 +2,8 @@
 //
 // The Q&A's routes, from POST /qa to the tree saved on disk, and Discard in the middle of a run.
 //
-// `claude` is a stand-in first on the PATH, and what it answers is fixed: the newcomer (the run with --system-prompt)
-// asks two questions, then one follow-up about the first answer it was shown, and the answerer answers every id the
-// prompt lists. So this proves the rounds, the ids, the parents and what is written when, never the quality of a
-// question; README.md's warning about stubbing `claude` is about the second, which only a real run shows. A run under
-// a `slow` worktree sleeps instead, for Discard to land on.
+// The stand-in writes complete pairs for each level and reads a.txt from its working directory.
+// Reader-submitted questions use the separate answer schema.
 
 import { execFileSync } from 'node:child_process';
 import { test } from 'node:test';
@@ -20,16 +17,29 @@ const BIN = path.join(DIR, 'bin');
 fs.mkdirSync(BIN);
 fs.writeFileSync(path.join(BIN, 'claude'), `#!/usr/bin/env node
 const argv = process.argv.slice(2);
-if (process.cwd().endsWith('slow')) setTimeout(() => {}, 60_000);
-else {
+{
   const prompt = argv[argv.indexOf('-p') + 1];
   const ids = [...prompt.matchAll(/^--- id: (\\S+)$/gm)].map((m) => m[1]);
+  const schema = JSON.parse(argv[argv.indexOf('--json-schema') + 1]);
+  const generated = schema.properties.questions;
+  const fs = require('node:fs');
+  if (fs.existsSync('slow-qa')) {
+    setTimeout(() => {}, 60_000);
+    return;
+  }
+  const seen = fs.existsSync('a.txt') ? fs.readFileSync('a.txt', 'utf8').trim() : '';
+  const answer = (id) => 'Answer to ' + id + '.' + (seen ? ' a.txt: ' + seen : '');
+  const mode = generated && fs.existsSync('qa-mode') ? fs.readFileSync('qa-mode', 'utf8') : '';
+  if (mode === 'provider-error' && ids.length) {
+    console.log(JSON.stringify({ is_error: true, result: 'the provider was unavailable' }));
+    return;
+  }
   let out;
-  if (!argv.includes('--system-prompt') && prompt.includes('please fail')) {
+  if (!generated && prompt.includes('please fail')) {
     process.stdout.write(JSON.stringify({ type: 'result', is_error: true, result: 'the stand-in refused', total_cost_usd: 0.001 }));
     process.exit(0);
   }
-  if (!argv.includes('--system-prompt') && prompt.includes('take your time')) {
+  if (!generated && prompt.includes('take your time')) {
     // A reader's question that is still being answered while the test asks another in its box. ", a long time" waits
     // past a whole Ask again, and the answer names the question, so a test can tell whose answer landed.
     const asked = [...prompt.matchAll(/^question: (.*)$/gm)].map((m) => m[1]).pop() || '';
@@ -38,14 +48,19 @@ else {
     }, prompt.includes('take your time, a long time') ? 10_000 : 1_500);
     return;
   }
-  if (!argv.includes('--system-prompt')) {
-    // The answerer quotes a.txt from the folder it runs in, so a test can see which copy of the code it read.
-    let seen = '';
-    try { seen = require('node:fs').readFileSync('a.txt', 'utf8').trim(); } catch {}
-    out = { answers: ids.map((id) => ({ id, answer: 'Answer to ' + id + '.' + (seen ? ' a.txt: ' + seen : '') })) };
+  if (!generated) out = { answers: ids.map((id) => ({ id, answer: answer(id) })) };
+  else {
+    if (argv[argv.indexOf('--tools') + 1] !== 'Read,Grep,Glob' || fs.existsSync('.git')) {
+      throw new Error('generated Q&A must have read tools and run in the snapshot');
+    }
+    if (mode === 'first-empty' || (mode === 'empty-followup' && ids.length)) out = { questions: [] };
+    else if (mode === 'invalid-followup' && ids.length) {
+      out = { questions: [{ about: ids[0], question: 'What happened?', answer: ' ' }] };
+    } else out = { questions: ids.length
+      ? [{ about: ids[0], question: 'What does that word mean?', answer: answer(ids[0] + '.1') }]
+      : [{ question: seen ? 'Why does a.txt say ' + seen + '?' : 'What is a webhook?', answer: answer('q1') },
+         { question: 'Why retry?', answer: answer('q2') }] };
   }
-  else if (!ids.length) out = { questions: ['What is a webhook?', 'Why retry?'] };
-  else out = { questions: [{ about: ids[0], question: 'What does that word mean?' }] };
   process.stdout.write(JSON.stringify({ type: 'result', is_error: false, num_turns: 1, total_cost_usd: 0.001, structured_output: out }));
 }
 `, { mode: 0o755 });
@@ -71,10 +86,12 @@ const { writeSessionReview, writeDiff, readQa, writeQa } = await import('./store
 const { makeSnapshot, removeSnapshot, sweepStaleSnapshots, reservedSnapshotBytes } = await import('./qa.mjs');
 
 // A worktree review of a real checkout, whose snapshot is the commit made here: what the diff was taken from.
-function makeReview(session, worktree, createdAt = '2026-11-19T10:00:00.000Z', { aTxt, attributes } = {}) {
+function makeReview(session, worktree, createdAt = '2026-11-19T10:00:00.000Z', { aTxt, attributes, qaMode } = {}) {
   fs.mkdirSync(worktree, { recursive: true });
   const git = (...args) => execFileSync('git', ['-C', worktree, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
   if (!fs.existsSync(path.join(worktree, '.git'))) git('init', '-q');
+  if (path.basename(worktree) === 'slow') fs.writeFileSync(path.join(worktree, 'slow-qa'), '');
+  if (qaMode) fs.writeFileSync(path.join(worktree, 'qa-mode'), qaMode);
   if (aTxt !== undefined) fs.writeFileSync(path.join(worktree, 'a.txt'), aTxt);
   if (attributes !== undefined) fs.writeFileSync(path.join(worktree, '.gitattributes'), attributes);
   fs.writeFileSync(path.join(worktree, 'src.mjs'), `// ${createdAt}\n`);
@@ -152,6 +169,26 @@ test('POST /qa runs the rounds and saves the tree: questions, a follow-up, its f
   assert.equal((await call('GET', `/reviews/${session}/qa`)).body.qa, null);
 });
 
+test('POST /qa distinguishes empty, invalid and failed rounds', async () => {
+  const cases = [
+    ['first-empty', 'failed', 0, null, 'no complete questions and answers were written about this change'],
+    ['empty-followup', 'ready', 2, null, null],
+    ['invalid-followup', 'ready', 2, 'no complete follow-up questions and answers were written', null],
+    ['provider-error', 'ready', 2, 'the provider was unavailable', null],
+  ];
+  for (const [i, [qaMode, status, count, stoppedEarly, error]] of cases.entries()) {
+    const session = `claude-dadadad${i}`;
+    makeReview(session, path.join(DIR, qaMode), undefined, { qaMode });
+    assert.equal((await call('POST', `/reviews/${session}/qa`)).body.status, 'running');
+    const qa = await until(() => {
+      const saved = readQa(session);
+      return ['ready', 'failed'].includes(saved?.status) ? saved : null;
+    });
+    assert.deepEqual([qa.status, qa.items.length, qa.stoppedEarly, qa.error], [status, count, stoppedEarly, error], qaMode);
+    assert.ok(qa.items.every((item) => item.answer));
+  }
+});
+
 test('Discard during a run stops it, and nothing it was doing is written back', async () => {
   const session = 'claude-3d3d3d3d';
   makeReview(session, path.join(DIR, 'slow'));
@@ -160,7 +197,7 @@ test('Discard during a run stops it, and nothing it was doing is written back', 
 
   assert.equal((await call('POST', `/reviews/${session}/discard`)).status, 200);
   assert.equal(readQa(session), null);
-  // The cancelled newcomer's process closes after the discard; its round must not write the tree back.
+  // The cancelled Q&A process closes after the discard; its round must not write the tree back.
   await new Promise((resolve) => setTimeout(resolve, 1_000));
   assert.equal(readQa(session), null);
   assert.equal((await call('GET', `/reviews/${session}/qa`)).body.qa, null);
@@ -220,7 +257,7 @@ test('the diff says which review it belongs to, read with it', async () => {
 
 // The answers are about the diff on screen. Edits made in the session after the diff was taken must not reach them,
 // or an answer quotes code the diff beside it does not have.
-test('the answerer reads the code the diff was taken from, not edits made in the checkout since', async () => {
+test('generated questions and answers use the pinned code even after the checkout changes', async () => {
   const session = 'claude-7b7b7b7b';
   const worktree = path.join(DIR, 'pinned');
   // export-ignore too: a copy made by `git archive` would leave a.txt out, though the diff may show it.
@@ -229,6 +266,7 @@ test('the answerer reads the code the diff was taken from, not edits made in the
   await call('POST', `/reviews/${session}/qa`);
   const qa = await until(() => { const q = readQa(session); return q?.status === 'ready' || q?.status === 'failed' ? q : null; });
   assert.equal(qa.status, 'ready', qa.error);
+  assert.equal(qa.items[0].question, 'Why does a.txt say as the diff has it?');
   for (const item of qa.items) assert.match(item.answer, /a\.txt: as the diff has it$/, item.id);
   // The copy is gone once the run is.
   assert.deepEqual(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith(`woodshed-qa-${session}-`)), []);

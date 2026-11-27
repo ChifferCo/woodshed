@@ -12,6 +12,7 @@ import { createSessionApi, sessionForAuthorization } from './sessionApi.mjs';
 import { createUserSettings } from './userSettings.mjs';
 import agents from '../shared/agents.cjs';
 import { readRepoSettings, writeEnvFiles } from '../shared/project.mjs';
+import { MAX_CONVERSATION_BYTES } from '../shared/savedConversation.mjs';
 
 const SESSIONS = [
   { id: 'aaaaaaaa', status: 'running', token: 'live-token' },
@@ -391,6 +392,44 @@ test('a QA session gets a read-only token, and sends its report once through /qa
   assert.equal((await report('Bearer qa-token', { verdict, report: '## TC-1: a ❌', sha, costUsd: 2.25 })).status, 204);
   assert.equal((await report('Bearer qa-token', { verdict, report: 'again', sha })).status, 409);
   assert.deepEqual(finished, [{ id: 'aaaaaaaa', verdict, report: '## TC-1: a ❌', sha, costUsd: 2.25 }]);
+});
+
+test('a QA session sends its run log through /qa-log, as often as it likes and even after its report; nothing else, and no other session, can', async (t) => {
+  const qa = { id: 'aaaaaaaa', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main', conclusion: 'neutral' } };
+  const sessions = [qa, { id: 'bbbbbbbb', status: 'running', token: 'pr-token', kind: 'pr', number: 7 }];
+  const kept = [];
+  const fleet = { sessions: () => sessions, qaLog: (session, text) => kept.push({ id: session.id, text }) };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({ token: 'ghs', expiresAt: 0 }) } });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const send = (authorization, body, headers = {}) => request(port, { path: '/qa-log', authorization, body, headers });
+
+  assert.equal((await send('Bearer pr-token', 'x')).status, 404, 'only a QA session has a run log');
+  assert.equal((await send('Bearer qa-token', '## plan\nEnded: finished\n')).status, 200);
+  assert.equal((await send('Bearer qa-token', '## plan\nEnded: finished\n## test\nEnded: ran out of turns\n')).status, 200);
+  // Last: a body that says it is too big is refused before it is read, and leaves its connection waiting for the rest.
+  assert.equal((await send('Bearer qa-token', 'x', { 'content-length': String(1024 * 1024) })).status, 413);
+  assert.deepEqual(kept.map((k) => k.id), ['aaaaaaaa', 'aaaaaaaa']);
+  assert.match(kept[1].text, /ran out of turns/);
+});
+
+test('a review session sends its run log through /review-log, as a QA run does, and no other session can', async (t) => {
+  const review = { id: 'aaaaaaaa', status: 'running', token: 'rv-token', kind: 'pr', number: 7, review: { base: 'main' } };
+  const sessions = [review, { id: 'bbbbbbbb', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } }];
+  const kept = [];
+  const fleet = { sessions: () => sessions, reviewLog: (session, text) => kept.push({ id: session.id, text }) };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({ token: 'ghs', expiresAt: 0 }) } });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const send = (authorization, body) => request(port, { path: '/review-log', authorization, body });
+
+  assert.equal((await send('Bearer qa-token', 'x')).status, 404, 'a QA session has none to send here');
+  assert.equal((await send('Bearer rv-token', 'what the agents said')).status, 200);
+  assert.deepEqual(kept.map((k) => [k.id, k.text]), [['aaaaaaaa', 'what the agents said']]);
 });
 
 test('a QA session sends its WebM videos through /qa-video before its report; nothing else, and no other session, can', async (t) => {
@@ -1132,4 +1171,61 @@ test('an ask session opens issues through /issues with the console\'s App; every
   // A session that has seen production data opens none.
   sessions[0].taintedAt = '2026-11-24T10:00:00.000Z';
   assert.match((await file('ask-token', {})).body.error, /production/);
+});
+
+test('a session\'s conversation is kept beside its own home, never a tainted one\'s, and only in the shape the Chat reads', async (t) => {
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'stopping', token: 'shared-token', owner: null },
+    { id: 'bbbbbbbb', status: 'running', token: 'joel-token', owner: 'Octocat' },
+    { id: 'cccccccc', status: 'running', token: 'mia-token', owner: 'mia-dev' },
+    { id: 'dddddddd', status: 'running', token: 'tainted-token', owner: 'octocat', taintedAt: '2026-11-25T10:00:00Z' },
+    { id: 'eeeeeeee', status: 'running', token: 'locking-token', owner: 'octocat' },
+    { id: 'ffffffff', status: 'running', token: 'ask-token', owner: null, kind: 'ask' },
+    { id: '0a0a0a0a', status: 'stopping', token: 'removed-token', owner: 'octocat' },
+  ];
+  const texts = new Map();
+  const marked = [];
+  const homes = {
+    putText: async (key, text) => {
+      texts.set(key, text);
+      // Removed while its write was on its way.
+      if (key.includes('0a0a0a0a')) sessions.splice(sessions.findIndex((s) => s.id === '0a0a0a0a'), 1);
+    },
+    removeKey: async (key) => { texts.delete(key); },
+  };
+  const userSettings = { view: (login) => ({ setUp: login !== 'mia-dev' }) };
+  const fleet = { sessions: () => sessions, isLocked: (s) => s.id === 'eeeeeeee', conversationSaved: (s, at) => marked.push([s.id, at]) };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({}) }, userSettings, homes });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const send = (token, body) => request(port, { path: '/conversation', authorization: `Bearer ${token}`, body: typeof body === 'string' ? body : JSON.stringify(body) });
+  const good = { agent: 'claude', entries: [{ role: 'user', text: 'Fix it' }, { role: 'assistant', text: 'Fixed.' }], partial: false, writtenAt: 1764064800000, savedAt: '2000-01-01T00:00:00Z' };
+
+  assert.equal((await send('joel-token', good)).status, 204);
+  const kept = JSON.parse(texts.get('octocat/sessions/bbbbbbbb/conversation.json'));
+  assert.deepEqual(kept.entries, good.entries, 'beside its own home, under its owner\'s login as the stores keep it');
+  assert.notEqual(kept.savedAt, good.savedAt, 'when the console kept it, not what the session said');
+  assert.deepEqual(marked.map(([id]) => id), ['bbbbbbbb'], 'the session is marked, for its page');
+  assert.equal(marked[0][1], kept.savedAt);
+  assert.equal((await send('shared-token', good)).status, 204, 'a shared session\'s, during its stop');
+  assert.ok(texts.has('_sessions/aaaaaaaa/conversation.json'));
+
+  assert.equal((await send('tainted-token', good)).status, 409, 'never a tainted session\'s');
+  assert.equal((await send('locking-token', good)).status, 409, 'nor one whose lockdown began as it came in');
+  assert.equal((await send('mia-token', good)).status, 409, 'nor for someone who removed My Woodshed');
+  assert.equal((await send('ask-token', good)).status, 404, 'nor a question from Slack\'s');
+  assert.equal((await send('removed-token', good)).status, 409, 'one removed as it came in');
+  assert.ok(!texts.has('octocat/sessions/0a0a0a0a/conversation.json'), 'leaves no copy behind');
+  assert.ok(![...texts.keys()].some((k) => /dddddddd|eeeeeeee|ffffffff|mia-dev/.test(k)));
+
+  for (const bad of ['not json', { ...good, agent: 'gemini' }, { ...good, entries: [] }, { ...good, entries: [{ role: 'system', text: 'x' }] },
+    { ...good, entries: [{ role: 'user', text: 3 }] }, { ...good, writtenAt: 'soon' }]) {
+    assert.equal((await send('joel-token', bad)).status, 400, JSON.stringify(bad).slice(0, 60));
+  }
+  const huge = { ...good, entries: [{ role: 'user', text: 'x'.repeat(MAX_CONVERSATION_BYTES) }] };
+  assert.equal((await send('joel-token', huge)).status, 413);
+  assert.equal((await send('nobody', good)).status, 401);
+  assert.equal(marked.length, 2, 'only what was kept is marked');
 });

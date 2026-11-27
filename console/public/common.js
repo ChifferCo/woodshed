@@ -1552,6 +1552,8 @@
   const CONSOLE_LINKS = [
     { href: '/console-settings', label: 'Settings', also: ['/secrets', '/events'] },
   ];
+  // How the team uses Woodshed (analytics.js), an admin's page of its own after Settings.
+  const ANALYTICS_LINK = { href: '/analytics', label: 'Analytics' };
   const isCurrent = (link, current) => link.href === current || Boolean(link.also?.includes(current));
   // The tabs under Settings' title: the page's own cards, and the secrets. Links, as the rail's Mine | Everyone are.
   const SETTINGS_TABS = [
@@ -1603,7 +1605,7 @@
     const also = [...CONSOLE_LINKS[0].also, ...(peopleTab(me) && me.admin ? [PEOPLE_TAB.href] : []), ...host.map((tab) => tab.href)];
     const settings = { ...CONSOLE_LINKS[0], icon: CONSOLE_LINKS[0].href, also };
     if (!me?.admin) return host.length ? [{ ...settings, href: host[0].href }] : [];
-    return [settings];
+    return [settings, ANALYTICS_LINK];
   }
 
   // The workflows that build the images and apply the infrastructure, in the installation's repo, as its project file's
@@ -1784,7 +1786,7 @@
   // The settings pages' left column, in the rail's place: back to the sessions, the avatar menu, and a list of every
   // settings page, as Linear and GitHub keep theirs. Fixed beside the page, which the CSS moves over to make room. One
   // node, like userSlot: each render of each settings page puts the same list back, so moving between them never redraws it.
-  const SETTINGS_ICONS = { '/settings': '◉', '/people': '☺', '/secrets': '◇', '/events': '≋', '/console-settings': '⚙' };
+  const SETTINGS_ICONS = { '/settings': '◉', '/people': '☺', '/secrets': '◇', '/events': '≋', '/console-settings': '⚙', '/analytics': '◔' };
   let sideNav = null;
   function markCurrent(scope, selector) {
     for (const a of scope.querySelectorAll(selector)) {
