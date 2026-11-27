@@ -35,6 +35,14 @@
     target?.scrollIntoView({ block: 'start' });
   }
 
+  // A form's fields from the browser's own getter: a control named `elements` hides the property on that form.
+  const formFields = Object.getOwnPropertyDescriptor(window.HTMLFormElement?.prototype ?? {}, 'elements')?.get;
+
+  /** @returns {Iterable<Element>}  every field of `form`, one outside it that names it (`form=`) too */
+  function fieldsOf(form) {
+    return form instanceof window.HTMLFormElement && formFields ? formFields.call(form) : [];
+  }
+
   /** Shows or masks a secret field's paste, its button saying which press undoes it. */
   function showSecret(field, button, shown) {
     field.type = shown ? 'text' : 'password';
@@ -95,7 +103,7 @@
     // fields, not what it holds, so a field outside it that names it (`form=`) is masked too. `form.submit()` fires no
     // submit event, so a program's script sends with `requestSubmit()` (components/SecretField).
     root.addEventListener('submit', (e) => {
-      for (const field of e.target.elements ?? []) {
+      for (const field of fieldsOf(e.target)) {
         const button = field.closest?.('.secret-field')?.querySelector('[data-reveal]');
         if (button && field.type === 'text') showSecret(field, button, false);
       }

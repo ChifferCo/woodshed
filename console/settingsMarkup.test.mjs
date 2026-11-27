@@ -162,7 +162,11 @@ test('Show shows a secret field\'s paste, and Hide or sending its form masks it 
   };
   const click = (e) => listeners.click(e);
   const target = { closest: (q) => (q === '.secret-field > [data-reveal]' ? show : null) };
-  const window = { addEventListener() {} };
+  // A form, its fields read through the prototype's getter, as a browser's are.
+  class HTMLFormElement {
+    get elements() { return this.fields; }
+  }
+  const window = { addEventListener() {}, HTMLFormElement };
   vm.runInContext(fs.readFileSync(new URL('./public/hostRows.js', import.meta.url), 'utf8'), vm.createContext({ window, document: {}, location: { hash: '' }, CSS: { escape: (x) => x } }));
   window.WoodshedHostRows.wire(root);
   click({ target });
@@ -173,8 +177,11 @@ test('Show shows a secret field\'s paste, and Hide or sending its form masks it 
   click({ target });
   const secret = { querySelector: (q) => (q === '[data-reveal]' ? show : null) };
   field.closest = (q) => (q === '.secret-field' ? secret : null);
-  // A form's `elements`, which also lists a field outside it that names it with `form=`.
-  listeners.submit({ target: { elements: [{ type: 'text', closest: () => null }, field] } });
+  // A form's `elements`, which also lists a field outside it that names it with `form=`, read with the browser's own
+  // getter: a control named `elements` hides the property on its form.
+  const sent = Object.assign(new HTMLFormElement(), { fields: [{ type: 'text', closest: () => null }, field] });
+  Object.defineProperty(sent, 'elements', { value: { name: 'elements', type: 'text' } });
+  listeners.submit({ target: sent });
   assert.deepEqual([field.type, show.textContent, show.attrs['aria-pressed']], ['password', 'Show', 'false']);
 });
 
