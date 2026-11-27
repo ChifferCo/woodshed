@@ -16,6 +16,16 @@ later layer wins.
   logged; then a mono textarea, **Save** (the card's one `btn-open`), and quiet **Clear** and **Hide**. Save is off until
   the text changed. Clear asks first, and says what a session reads instead. Under it, the no-production-credentials
   rule, every time.
+- Where a program that embeds the console has a source of its own for the file's installation values (a secret
+  manager, say "Vault"), the layer opens on a segmented choice (`components/Segmented`), **Typed here** and the
+  source's name, then "In use: Vault · 3 keys" or "In use: the values typed here" in `meta` mono. It opens on the side
+  in use; picking the other shows it and changes nothing. The source's side is the program's own controls, made with
+  `settingsMarkup.mjs` (a note of its state, its form). Typed here is the editable layer as ever; while the source is on
+  a `cap-note` goes before it: "The values typed here are kept, but no session gets them while Vault is on.", then any
+  typed keys the source does not set, which are not set in sessions. In the table the source's keys are the
+  Installation column's, and where that layer wins the tag is the source's name. Closed, the row says "From Vault · 3
+  keys" with the pill `From Vault` (`is-ok`). On My settings the layer is read only: "From Vault · 3 keys" in `meta`
+  mono and "Vault sets `API_URL`, `API_TOKEN`.", with no typed values and none of the program's controls.
 - A refusal from the console (a 400, 409 or 502) is a `form-error` line right under the buttons, in the console's own
   words, and never repeats the text. What was typed stays in the field.
 - Set by the session: the keys of the file's `overrides` ("Its overrides:"), those written only when the session has a value, and the

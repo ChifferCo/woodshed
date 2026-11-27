@@ -65,7 +65,7 @@ function cannotStart(err) {
  * (scripts/devReviewerConsole.mjs); the image passes none.
  */
 /** `withProvider`, for a dev program alone: the provider it was given, with a hook of its own added (scripts/devHostConsole.mjs). */
-export function run({ repos = null, projectReadiness = null, hostApp = null, repoPage = null, withProvider = null } = {}) {
+export function run({ repos = null, projectReadiness = null, hostApp = null, repoPage = null, envSources = null, withProvider = null } = {}) {
   let config;
   let provider;
   // A setting that is wrong, such as a secrets folder without its key, is said in one line, not a stack trace.
@@ -86,7 +86,7 @@ export function run({ repos = null, projectReadiness = null, hostApp = null, rep
     process.exit(0);
   }
   console.log('console: provider', { name: provider.name });
-  startConsole({ provider, config, repos, projectReadiness, hostApp, repoPage }).catch(cannotStart);
+  startConsole({ provider, config, repos, projectReadiness, hostApp, repoPage, envSources }).catch(cannotStart);
 }
 
 if (isMain(import.meta.url)) run();

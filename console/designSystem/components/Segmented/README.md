@@ -8,4 +8,8 @@ desktop and on a phone (Chat, TUI) (`public/mySettings.js`, `.theme-seg` and `.t
 - Lowercase words for a value (`device`, `folded`), the tab's own name for a tab (`Chat`, `TUI`), each with a `title`
   that says it in full.
 - While a save is on its way the strip is disabled, at 60% opacity.
+- It also switches what a part of a page shows, with nothing saved: a repo's Instructions, Env files or Your files on
+  My settings (`public/myRepoSettings.js`), and, on a repo's settings page, where an env file's installation values come
+  from, **Typed here** or a program's own source by its name (`public/repoSettings.js`, `components/LayeredFile`). It
+  opens on the side in use and a pick only shows the other side; a line under it says which is in use.
 - Use it for two or three options of a word or two. More, or options that need a line each, are ChoiceCards or a select.

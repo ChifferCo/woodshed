@@ -1,4 +1,4 @@
-<!-- @dsCard group="Cards" height=1420 subtitle="An env file's layers on a repo's settings, and which one wins each key" -->
+<!-- @dsCard group="Cards" height=1900 subtitle="An env file's layers on a repo's settings, and which one wins each key" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@300..900&family=Red+Hat+Mono:wght@300..700&display=swap">
 <style>
  body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font:14px/1.5 "Red Hat Display",system-ui,sans-serif}
@@ -25,6 +25,12 @@
  .tb{border:1px solid var(--line);border-radius:8px;overflow-x:auto}
  .path{font:600 12px "Red Hat Mono",monospace;color:var(--sub)} .rp{color:var(--meta);font-weight:400}
  .gap{height:16px}
+ .seg{display:flex;width:max-content;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+ .seg button{height:28px;margin:0;padding:0 12px;border:0;background:none;color:var(--meta);font:inherit;font-size:12px;font-weight:500}
+ .seg button+button{border-left:1px solid var(--line)}
+ .seg button[aria-pressed="true"]{background:var(--amber-tint);color:var(--amber-ink)}
+ .ok{font-size:13px;color:var(--green)} input{width:100%;box-sizing:border-box;min-height:32px;padding:0 10px;border:1px solid var(--line);border-radius:4px;background:var(--ground);color:var(--ink);font:12.5px "Red Hat Mono",monospace}
+ .plain{border:1px solid var(--line);background:var(--ground);color:var(--ink)}
 </style>
 <div class="box">
  <div class="head"><b>api/.env</b><span class="meta">key api-env</span></div>
@@ -75,5 +81,29 @@ API_URL=http://localhost:4000</pre><p class="sub">Set by your admins, for every 
    <tr><td class="mono">LOG_LEVEL <span class="rp">in api/.env</span></td><td class="m">✓</td><td class="m">✓</td><td class="m"></td><td><span class="tag wins">Installation</span></td></tr>
    <tr><td class="mono">LOG_LEVEL <span class="rp">in worker/.env</span></td><td class="m"></td><td class="m">✓</td><td class="m"></td><td><span class="tag wins">Installation</span></td></tr>
    <tr><td class="mono">SQL_URL</td><td class="m"></td><td class="m"></td><td class="m">✓</td><td><span class="tag wins">Session</span></td></tr>
+  </tbody></table></div></div>
+</div>
+<p class="sub" style="margin:20px 0 8px">Where a program has its own source for the installation's values: its controls, and the typed values while it is on.</p>
+<div class="box">
+ <div class="head"><b>api/.env</b><span class="meta">key api-env</span></div>
+ <div class="layer"><div class="lh"><span class="tag">Installation</span><b>This installation's values</b></div>
+  <div class="seg" role="group" aria-label="Where this installation's values for api/.env come from"><button aria-pressed="false">Typed here</button><button aria-pressed="true">Vault</button></div>
+  <p class="meta">In use: Vault · 3 keys</p>
+  <p class="ok">On: sessions get this file's values from acme/dev/api, read at each session's start.</p>
+  <input value="acme/dev/api" aria-label="Path in Vault">
+  <div class="foot"><button class="btn open">Save</button><button class="btn plain">Turn off</button></div></div>
+ <div class="layer"><div class="lh"><span class="tag">Installation</span><b>This installation's values</b></div>
+  <div class="seg" role="group" aria-label="Where this installation's values for api/.env come from"><button aria-pressed="true">Typed here</button><button aria-pressed="false">Vault</button></div>
+  <p class="meta">In use: Vault · 3 keys</p>
+  <p class="note">The values typed here are kept, but no session gets them while Vault is on. Vault does not set <code>LOG_LEVEL</code>, so it is not set in sessions.</p>
+  <p class="meta">Saved Nov 12, 10:04 · by @mia-dev · 47 bytes · 2 keys</p>
+  <textarea>LOG_LEVEL=warn
+API_TOKEN=…</textarea>
+  <div class="foot"><button class="btn open">Save</button><button class="btn quiet">Clear</button><button class="btn quiet">Hide</button></div></div>
+ <div class="layer"><b>What a session gets</b>
+  <div class="tb"><table><thead><tr><th>Key</th><th>Repo</th><th>Installation</th><th>Session</th><th>Wins</th></tr></thead><tbody>
+   <tr><td class="mono">API_URL</td><td class="m"></td><td class="m">✓</td><td class="m"></td><td><span class="tag wins">Vault</span></td></tr>
+   <tr><td class="mono">API_TOKEN</td><td class="m"></td><td class="m">✓</td><td class="m"></td><td><span class="tag wins">Vault</span></td></tr>
+   <tr><td class="mono">PORT</td><td class="m"></td><td class="m"></td><td class="m">✓</td><td><span class="tag wins">Session</span></td></tr>
   </tbody></table></div></div>
 </div>

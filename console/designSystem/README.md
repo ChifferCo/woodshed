@@ -290,7 +290,9 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   (the pull request channel). A closed row says what it holds. An env file and the instructions are a layered file
   (`components/LayeredFile`): the layers in the order a session writes them, the layer's word as a grey tag, and for an
   env file a table of which layer wins each key. Values never appear in the table, a log or a tooltip: only in their
-  own layer's field, behind **Show and edit** once saved.
+  own layer's field, behind **Show and edit** once saved. Where a program that embeds the console has its own source
+  for an env file's installation values, that layer has a segmented choice, **Typed here** or the source's name, and
+  the row says "From Vault · 3 keys" while the source is on.
 - With no env files, the Env files group's box holds a short how-to: numbered steps (`cmd-steps`), the YAML in a
   mono `stopped` block, a link to the project file on GitHub (↗), and where the docs are.
 - **Slack** is one box of the same shape: the channel ID field (mono), a `meta` mono line saying where the next pull

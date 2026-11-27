@@ -295,10 +295,16 @@
           h('span', { class: 'data-meta' }, h('span', null, `key ${f.key}`))),
         pathsOf(f).length > 1 && L.sharedNote(f),
         read && L.defaultsLayer(f, v.repo),
-        layer('installation', 'This installation\'s values',
-          h('p', { class: 'layer-meta' }, savedLine(f.installation)),
-          installationBlock(project, f.key, f.installation),
-          h('p', { class: 'sub' }, byAdmins(project))),
+        // From a program's source while it is on: its keys by name, and no typed values, which reach no session.
+        f.source?.on
+          ? layer('installation', 'This installation\'s values',
+            h('p', { class: 'layer-meta' }, L.sourceLine(f.source)),
+            L.sourceKeys(f.source),
+            h('p', { class: 'sub' }, byAdmins(project)))
+          : layer('installation', 'This installation\'s values',
+            h('p', { class: 'layer-meta' }, savedLine(f.installation)),
+            installationBlock(project, f.key, f.installation),
+            h('p', { class: 'sub' }, byAdmins(project))),
         layer('personal', 'Your values',
           h('p', { class: 'layer-meta' }, savedLine(f.personal)),
           ownEditor(project, f.key, f.personal, `Your values for ${labelOf(f)}`),

@@ -10,7 +10,8 @@ import {
 } from './repoSettings.mjs';
 import { createUserSettings } from './userSettings.mjs';
 import { createHandler } from './server.mjs';
-import { group, pill, row } from './settingsMarkup.mjs';
+import { createInstallation } from './installation.mjs';
+import { group, note, pill, row } from './settingsMarkup.mjs';
 import { parseProject } from '../shared/project.mjs';
 
 // Every value a test saves carries one of these: none may ever reach a log line.
@@ -44,7 +45,7 @@ function memorySecrets(initial = {}) {
   };
 }
 
-function setup({ state = {}, secrets = memorySecrets(), files = FILES } = {}) {
+function setup({ state = {}, secrets = memorySecrets(), files = FILES, envSources = null } = {}) {
   const store = { state: { sessions: [], ...state }, save() {} };
   const config = { projects: PROJECTS, repo: 'acme/app' };
   const readerOf = (name) => ({
@@ -55,7 +56,7 @@ function setup({ state = {}, secrets = memorySecrets(), files = FILES } = {}) {
     },
   });
   let clock = Date.parse('2026-11-12T10:00:00Z');
-  const repoSettings = createRepoSettings({ store, secrets, config, readerOf, now: () => (clock += 1000) });
+  const repoSettings = createRepoSettings({ store, secrets, config, readerOf, now: () => (clock += 1000), envSources });
   return { store, secrets, config, repoSettings };
 }
 
@@ -218,7 +219,7 @@ test('forget deletes a removed repo\'s values, the installation\'s and everyone\
 });
 
 // The routes behind the pages, over HTTP, as three people: an admin, a member who writes to tools, one who does not.
-async function startConsole(t, { secrets: initial = memorySecrets(), people = {}, repoPage = null } = {}) {
+async function startConsole(t, { secrets: initial = memorySecrets(), people = {}, repoPage = null, envSources = null } = {}) {
   const state = {
     people,
     members: {
@@ -227,7 +228,7 @@ async function startConsole(t, { secrets: initial = memorySecrets(), people = {}
       'ana-k': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' },
     },
   };
-  const { store, secrets, config, repoSettings } = setup({ state, secrets: initial });
+  const { store, secrets, config, repoSettings } = setup({ state, secrets: initial, envSources });
   const members = createMembers({ store });
   const userSettings = createUserSettings({ store, secrets });
   const auth = {
@@ -522,4 +523,135 @@ test('a program\'s own groups for a repo\'s page come with the admin\'s view, an
   answer = () => null;
   assert.equal((await call('mia-dev', 'GET', '/api/console-settings/repos/tools')).body.host, null, 'none for this repo');
   assert.equal((await call('sam-ops', 'GET', '/api/console-settings/repos/tools')).status, 403, 'still an admin\'s alone');
+});
+
+// A program's own source of env files' installation values, a made-up secret manager: `files` by env file key.
+const VAULT_ENV = `API_URL=http://vault.test\nAPI_TOKEN=vault-${SECRET_MARK}\n`;
+function vault(files) {
+  const asked = { view: [], forSession: [] };
+  return {
+    asked,
+    async view(args) {
+      asked.view.push(args);
+      return Object.fromEntries(Object.entries(files).map(([key, f]) => [key, { label: 'Vault', on: f.on, keys: f.keys, markup: note(`Vault for ${key}`) }]));
+    },
+    async forSession(args) {
+      asked.forSession.push(args);
+      return Object.fromEntries(Object.entries(files).filter(([, f]) => f.on).map(([key, f]) => [key, f.text]));
+    },
+  };
+}
+
+test('an env file whose source is on hands the session the source\'s text in place of the typed one, which stays kept', async () => {
+  const envSources = vault({ 'api-env': { on: true, keys: ['API_URL', 'API_TOKEN'], text: VAULT_ENV }, 'web-env-local': { on: true, keys: ['PUBLIC_URL'], text: 'PUBLIC_URL=http://web.test\r\n' } });
+  const { repoSettings, secrets } = setup({ envSources });
+  await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
+  await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'api-env', text: OWN_ENV });
+  let answer;
+  const lines = await captureLog(async () => { answer = await repoSettings.forSession({ id: 'a1', project: 'app', owner: 'sam-ops' }); });
+  assert.deepEqual(answer.envFiles, {
+    'api-env': { installation: VAULT_ENV, personal: OWN_ENV },
+    'web-env-local': { installation: 'PUBLIC_URL=http://web.test\n', personal: null },
+  }, 'the source\'s text, a file with no typed record included, and the person\'s own untouched');
+  assert.deepEqual(envSources.asked.forSession, [{ name: 'app', repo: 'acme/app', session: { id: 'a1', owner: 'sam-ops' } }]);
+  assert.equal(secrets.values.get('repos/app/env/api-env'), INSTALLATION_ENV, 'the typed value is still kept');
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /repoSettings: handed out/);
+  assert.match(lines[0], /fromSource: \[ 'api-env', 'web-env-local' \]/);
+  assert.ok(!lines.join('\n').includes(SECRET_MARK), 'no value in the log');
+  assert.equal(await repoSettings.forSession({ id: 'd4', project: 'app', kind: 'ask' }), null, 'an ask session gets nothing');
+  assert.equal(envSources.asked.forSession.length, 1, 'and the source is not asked for it');
+});
+
+test('a source that is off, or names no file, leaves the typed values; text that cannot be used leaves the layer with none', async () => {
+  const off = vault({ 'api-env': { on: false, keys: [], text: VAULT_ENV } });
+  const first = setup({ envSources: off });
+  await first.repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
+  const lines = await captureLog(async () => {
+    assert.deepEqual((await first.repoSettings.forSession({ id: 'a1', project: 'app', owner: null })).envFiles, { 'api-env': { installation: INSTALLATION_ENV, personal: null } });
+  });
+  assert.match(lines[0], /fromSource: \[\]/);
+
+  let given = { 'api-env': 7, 'web-env-local': `BIG=${'x'.repeat(70_000)}`, 'Not A Key': 'A=1', tools: '  \n' };
+  const bad = setup({ envSources: { view: async () => null, forSession: async () => given } });
+  await bad.repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
+  let answer;
+  const warned = await captureLog(async () => { answer = await bad.repoSettings.forSession({ id: 'b2', project: 'app', owner: null }); });
+  assert.deepEqual(answer.envFiles, {
+    'api-env': { installation: null, personal: null }, 'web-env-local': { installation: null, personal: null }, tools: { installation: null, personal: null },
+  }, 'none, never the typed text: the page says it is not used while the source is on');
+  assert.equal(warned.filter((l) => l.includes('repoSettings: env source text refused, the installation layer handed out as none')).length, 3);
+  assert.match(warned.join('\n'), /key: 'api-env',\s+why: 'not text'/);
+  assert.match(warned.join('\n'), /key: 'web-env-local',\s+why: 'over the 64 KB a value can hold'/);
+  assert.match(warned.join('\n'), /why: "not an env file's key"/);
+  assert.match(warned.at(-1), /fromSource: \[ 'api-env', 'web-env-local', 'tools' \]/);
+
+  // A hook that throws, or answers no object, says nothing of which sources are on.
+  for (const fail of [() => { throw new Error(`the vault is away\n${SECRET_MARK}`); }, () => 'api-env']) {
+    given = null;
+    const failing = setup({ envSources: { view: async () => null, forSession: async () => fail() } });
+    await failing.repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
+    const said = await captureLog(async () => { answer = await failing.repoSettings.forSession({ id: 'c3', project: 'app', owner: null }); });
+    assert.deepEqual(answer.envFiles, { 'api-env': { installation: INSTALLATION_ENV, personal: null } });
+    assert.match(said[0], /repoSettings: env sources not read, the typed values handed out/);
+    assert.ok(!said.join('\n').includes(SECRET_MARK));
+  }
+});
+
+test('the views say which env files have a source, and the table\'s installation layer is the source\'s keys while it is on', async (t) => {
+  const envSources = vault({ 'api-env': { on: true, keys: ['API_URL', 'VAULT_ONLY'], text: VAULT_ENV }, 'web-env-local': { on: false, keys: ['IGNORED'], text: '' }, 'not-in-the-file': { on: true, keys: [], text: '' } });
+  const { call } = await startConsole(t, { envSources });
+  await call('mia-dev', 'POST', '/api/console-settings/repos/app/env/api-env', { text: INSTALLATION_ENV });
+  const admin = (await call('mia-dev', 'GET', '/api/console-settings/repos/app', undefined, { 'x-org': 'acme' })).body;
+  const [api, web] = admin.envFiles;
+  assert.deepEqual(api.source, { label: 'Vault', on: true, keys: ['API_URL', 'VAULT_ONLY'], html: '<p class="form-note">Vault for api-env</p>', scripts: [] });
+  assert.deepEqual(web.source, { label: 'Vault', on: false, keys: [], html: '<p class="form-note">Vault for web-env-local</p>', scripts: [] }, 'off: its keys are not the session\'s');
+  assert.deepEqual(api.installation.keys, ['API_URL', 'API_TOKEN', 'LOG_LEVEL'], 'the typed record stays');
+  const set = Object.fromEntries(api.table.map((r) => [r.key, r.setBy]));
+  assert.ok(set.VAULT_ONLY.includes('installation') && set.API_URL.includes('installation'), 'the source\'s keys');
+  assert.ok(!set.API_TOKEN, 'a typed key the source does not set reaches no session');
+  assert.deepEqual(set.LOG_LEVEL, ['repo'], 'nor wins over the repo\'s default');
+  const asked = envSources.asked.view.at(-1);
+  assert.deepEqual({ name: asked.name, repo: asked.repo, keys: asked.keys }, { name: 'app', repo: 'acme/app', keys: ['api-env', 'web-env-local'] }, 'asked of the keys the project file names');
+  assert.equal(asked.headers['x-org'], 'acme', 'with the request\'s headers');
+  assert.equal(admin.envFiles.length, 2, 'a key the project file does not name adds no file');
+
+  const mine = (await call('sam-ops', 'GET', '/api/my/repos/app')).body;
+  assert.deepEqual(mine.envFiles[0].source, { label: 'Vault', on: true, keys: ['API_URL', 'VAULT_ONLY'] }, 'My settings: never the program\'s controls');
+  assert.ok(mine.envFiles[0].table.some((r) => r.key === 'VAULT_ONLY'));
+});
+
+test('a source that throws or answers badly adds nothing to the views, and no hook leaves them as they were', async (t) => {
+  let answer = () => { throw new Error('the vault is away'); };
+  const { call } = await startConsole(t, { envSources: { view: async (args) => answer(args), forSession: async () => null } });
+  const plain = await startConsole(t);
+  const expected = (await plain.call('mia-dev', 'GET', '/api/console-settings/repos/app')).body;
+  const bad = [
+    answer,
+    () => 'api-env',
+    () => ({ 'api-env': { label: '', on: true } }),
+    () => ({ 'api-env': { label: 'x'.repeat(41), on: true } }),
+    () => ({ 'api-env': { label: 'Vault', on: true, keys: [`API_TOKEN=${SECRET_MARK}`] } }),
+    () => ({ 'api-env': { label: 'Vault', on: true, keys: 'API_URL' } }),
+    () => ({ 'api-env': { label: 'Vault', on: true, markup: '<p>Vault</p>' } }),
+  ];
+  const lines = await captureLog(async () => {
+    for (const next of bad) {
+      answer = next;
+      assert.deepEqual((await call('mia-dev', 'GET', '/api/console-settings/repos/app')).body, expected);
+    }
+  });
+  assert.equal(lines.filter((l) => l.includes('repoSettings: the program\'s env sources not given')).length, bad.length);
+  assert.ok(!lines.join('\n').includes(SECRET_MARK), 'a name that was a value by mistake is not logged');
+  answer = () => null;
+  assert.deepEqual((await call('mia-dev', 'GET', '/api/console-settings/repos/app')).body, expected, 'none for this repo');
+  answer = () => ({ 'api-env': { label: ' Vault ', on: 'yes', scripts: ['/assets/vault.js', 'https://x.test/a.js'] } });
+  assert.deepEqual((await call('mia-dev', 'GET', '/api/console-settings/repos/app')).body.envFiles[0].source, { label: 'Vault', on: false, keys: [] }, 'on is true alone, and no markup carries no scripts');
+});
+
+test('envSources is view and forSession, both functions, or the installation is not made', async () => {
+  const base = { config: {}, store: { state: {} }, provider: {} };
+  await assert.rejects(createInstallation({ ...base, envSources: async () => null }), /envSources needs view and forSession/);
+  await assert.rejects(createInstallation({ ...base, envSources: { view: async () => null } }), /envSources needs view and forSession/);
+  assert.throws(() => setup({ envSources: { forSession: async () => null } }), /envSources needs view and forSession/);
 });

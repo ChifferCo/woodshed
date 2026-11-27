@@ -2381,6 +2381,27 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   groups anew (a save answering with new ones). Its forms post to the program, which sends the page back to
   `/console-settings/repos/<project>#<row>`, opening that row. A hook that throws, or answers anything else, adds none
   and logs `repoSettings: the program's groups not given`; the page is shown without them.
+- `envSources: {view, forSession}`: a source of the program's own for an env file's installation values, such as a
+  secret manager, in place of the values an admin typed ("Repo settings" below, "A program's source"). Both are async
+  and must answer fast: the first is asked on each read of a repo's settings, the second at each session's start.
+  - `view({name, repo, keys, headers})` is for the pages: `keys` are the env file keys the repo's project file names,
+    and it answers `null`, or for some of them `{label, on, keys?, markup?, scripts?}`: `label`, the source's name as
+    people read it ("Vault", 1 to 40 characters); `on`, `true` when sessions get this file's installation values from
+    the source; `keys`, the names of the variables it sets while on, never a value; `markup`, its own controls for this
+    file, made with `settingsMarkup.mjs` (never a string), which the repo's page draws inside the file's installation
+    layer; `scripts`, as `repoPage`'s, loaded once. Its forms post to the program, which sends the page back to
+    `/console-settings/repos/<project>?file=<key>`. The views carry `source: {label, on, keys}` on the env file, and
+    the admin's `html` and `scripts` too; My settings never gets the controls. A hook that throws, or answers anything
+    else (a label too long, a key that is no variable's name, markup that is a string), adds nothing for the repo and
+    logs `repoSettings: the program's env sources not given`; the pages are then the typed values' alone.
+  - `forSession({name, repo, session: {id, owner}})` answers `null`, or the text (`NAME=value` lines) of each env file
+    whose source is on, by key. A session is handed that text as the file's installation layer, in place of the typed
+    one, which stays kept and is not read; a key with no typed values is handed out too. The program keeps its own
+    fallback for a source that does not answer: text that is not a string, or over the 64 KB a typed value may be, leaves
+    that file's installation layer with none (`repoSettings: env source text refused, the installation layer handed out
+    as none`, with the key and why), never the typed text, since the page says it is not used. A hook that throws, or
+    answers no object, says nothing of which sources are on, so the typed values are handed out (`repoSettings: env
+    sources not read, the typed values handed out`). The console keeps none of a source's text and logs none of it.
 - `standalonePage({title, body, brand: {label, href, icon?}, groups?, current?, login?, signOut?, dialog?, refresh?, styles?, scripts?})`
   from `server.mjs`: a page of the program's that stands outside any console, such as a first visit before there is a
   console to be in. It is the settings pages' frame drawn by the server, the program's name (and its mark, `icon`, a path) heading the side list in
@@ -3141,20 +3162,32 @@ public/repoLayers.js, which the admin page shares), for each repo they can write
 files that share a key are one tab there too (`app-env → api/.env, worker/.env`), and a person's values are written to
 each of them.
 
-Repo settings are the only place an env file's values are set: no secret on Secrets & webhooks, Terraform or the task
-definition holds them. A value saved by the old start-time copy from a Terraform secret says `copied from Terraform` in
-place of who saved it.
+Repo settings are the only place the console keeps an env file's values: no secret on Secrets & webhooks, Terraform
+or the task definition holds them. A value saved by the old start-time copy from a Terraform secret says `copied from
+Terraform` in place of who saved it.
+
+**A program's source.** A program that embeds the console may give an env file's installation values from a source of
+its own, such as a secret manager (its `envSources` hook, "Embedding the console" above). The file's installation layer
+on the repo's page then opens on a switch, **Typed here** or the source's name ("Vault"), with a line saying which is in
+use. It opens on the side in use, and picking the other only shows it: turning a source on or off is the program's own
+form, on the source's side, which is the program's controls. While the source is on, sessions get its text as layer 2
+and the typed values are kept but handed to no session: Typed here says so, and names the typed keys the source does not
+set, which are not set in sessions. The row says `From Vault · 3 keys`, the table's Installation column is the
+source's keys, and where that layer wins the tag is the source's name. My settings shows the same layer read only,
+`From Vault · 3 keys` and the names of its keys, with no typed values and none of the program's controls. A person's own
+values, the session's wiring and the instructions are as ever. The console asks the program at each session's start and
+keeps none of the text. With no hook, or no source for a file, both pages are what they are without one.
 
 The JSON API:
 
 | Route | Who | Answers |
 | --- | --- | --- |
-| `GET /api/console-settings/repos/<project>` | admins | the project file's env files, one a key (key, `paths`, and `files`: each path's defaults and wiring, `overrides`, `optional`, `env`; `path`, `defaults` and `wiring` are the first path's), each layer's records, `table` (each key, the layers that set it and the one that `wins`, one row for all the paths where they agree, else one a path with its `path`), `unnamed` (keys saved that the file no longer names), the instructions' records |
+| `GET /api/console-settings/repos/<project>` | admins | the project file's env files, one a key (key, `paths`, and `files`: each path's defaults and wiring, `overrides`, `optional`, `env`; `path`, `defaults` and `wiring` are the first path's), each layer's records, `table` (each key, the layers that set it and the one that `wins`, one row for all the paths where they agree, else one a path with its `path`), `unnamed` (keys saved that the file no longer names), the instructions' records. An env file a program has a source for carries `source`: `{label, on, keys, html?, scripts?}` |
 | `GET`, `POST /api/console-settings/repos/<project>/env/<key>` | admins | `{"text"}`, the installation's values; a POST of `{"text": ""}` clears them |
 | `POST /api/console-settings/repos/<project>/env/<key>/remove` | admins | deletes the installation's and everyone's values for a key the project file no longer names |
 | `GET`, `POST /api/console-settings/repos/<project>/instructions` | admins | `{"text"}` |
 | `GET /api/my/repos` | everyone | the repos you can write to, each with the keys and instructions you keep for it, and `defaultProject`, the person's default |
-| `GET /api/my/repos/<project>` | writers | the admin view, plus your own records (`personal`) |
+| `GET /api/my/repos/<project>` | writers | the admin view, plus your own records (`personal`); a `source` is `{label, on, keys}` alone |
 | `GET`, `POST /api/my/repos/<project>/env/<key>` | writers | `{"text": yours, "installation": the installation's or null}`; a POST saves yours |
 | `GET`, `POST /api/my/repos/<project>/instructions` | writers | the same, for the instructions |
 
@@ -3171,7 +3204,9 @@ by what it asks for: `{"project", "envFiles": {"<key>": {"installation", "person
 "personal"}, "personalFor"}`, every key the console keeps for the project (null where a layer has none). `personal` is
 filled only in a private session, from its owner's names; a shared or QA session gets the installation's alone, an ask session
 404, and 503 while the store does not answer. The console logs `repoSettings: handed out` with the session, the project,
-the keys each layer gave and whether each has instructions. The session writes them into its env files and rules
+the keys each layer gave and whether each has instructions. Where a program gives env files' installation values from
+a source of its own ("A program's source" above), `installation` is the source's text for each file it is on for, and
+the line also has `fromSource`, those files' keys. The session writes them into its env files and rules
 (session/README.md, "What a container does").
 
 The database template's seed (`session/dbAdmin.mjs`, `seedEnvFiles`) writes the env files its databases name from the
@@ -3181,7 +3216,8 @@ reads them itself, as
 role may read that project's `repos/<project>/env/*` and no other repo's (`TheSeedsEnvFiles` in
 `providers/aws/terraform/ecs.tf`). A key that two env files name (they share a secret) is read once and written to
 both. Its log says `Seed env files read` with where each key came from (`repo settings` or `none`) and the paths that
-name it, never a value.
+name it, never a value. The seed reads the store, so it does not see a program's source: for a file whose source is
+on it writes the typed values, where any are kept.
 
 **Remove** on the Repos card deletes the repo's installation values and every person's own for it
 (`repoSettings: repo forgotten`, with how many), and **Remove My Woodshed** deletes the person's for every repo.
