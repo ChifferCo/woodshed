@@ -314,7 +314,7 @@ export function createAnalytics({ config, sessions, state, githubFor, gatesOf = 
     const held = reads.get(key);
     // With no read yet, a failure is kept for the retry interval so a poll for another repo does not repeat the search; the
     // button reads again at once.
-    if (!held?.value && held?.error && held.retryAt > now()) throw held.error;
+    if (!held?.value && !held?.reading && held?.error && held.retryAt > now()) throw held.error;
     if (!held?.value) await (held?.reading ?? startRead(project, key, held));
     else if (!held.reading && now() - held.at >= REFRESH_MS && !(held.retryAt > now())) startRead(project, key, held).catch(logRefreshFailed(project));
     const read = reads.get(key);
