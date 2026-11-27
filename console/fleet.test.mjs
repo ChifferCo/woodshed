@@ -4854,16 +4854,19 @@ test('a message sent to a session reads it again in a moment, and the live check
 
   const counts = () => [reads(sent), reads(working), reads(idle)];
   const was = counts();
-  await fleet.checkLive();
+  fleet.checkLive();
+  await settle();
   assert.deepEqual(counts(), [was[0] + 1, was[1] + 1, was[2]], 'the idle session waits for the tick');
 
   // Done, and the 30 s past: read once more while its card says Working, then left to the tick.
   statuses[sent.id] = { state: 'done' };
   advance(31_000);
-  await fleet.checkLive();
+  fleet.checkLive();
+  await settle();
   assert.equal(sent.state, 'done');
   const after = reads(sent);
-  await fleet.checkLive();
+  fleet.checkLive();
+  await settle();
   assert.equal(reads(sent), after);
 });
 
@@ -4890,7 +4893,8 @@ test('an answer asked for before a newer one was applied is not applied after it
   await settle();
   advance(1_000);
   statuses[second.id] = { state: 'working' };
-  await fleet.checkLive();
+  fleet.checkLive();
+  await settle();
   assert.equal(second.state, 'working');
   answer({ state: 'working' });
   await ticking;
@@ -4936,17 +4940,19 @@ test('a session is marked when its conversation is kept, and the mark goes with 
   assert.ok(removed.includes(`_sessions/${shared.id}`));
 });
 
-test('a working session slow to answer delays only its own next live read', async () => {
+test('a working session slow to answer delays only its own next live read, as the loop calls it', async () => {
   const { fleet, sessions: [slow, quick], statuses, reads } = await runningSessions(2, 'working');
   let answer;
   statuses[slow.id] = new Promise((resolve) => { answer = resolve; });
-  const first = fleet.checkLive();
+  // As loops.every runs it: each pass awaited before the next is scheduled.
+  await fleet.checkLive();
   await settle();
   const before = [reads(slow), reads(quick)];
   statuses[quick.id] = { state: 'done' };
   await fleet.checkLive();
+  await settle();
   assert.deepEqual([reads(slow), reads(quick)], [before[0], before[1] + 1], 'the quick one read again; the slow one not asked twice');
   assert.equal(quick.state, 'done');
   answer({ state: 'working' });
-  await first;
+  await settle();
 });

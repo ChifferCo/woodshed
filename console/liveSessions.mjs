@@ -205,10 +205,12 @@ export function createLiveSessions({ bodyFor, onChange = null, later = setTimeou
       });
       res.write(`retry: ${RETRY_MS}\n\n`);
       const stream = { res, login, stillAllowed, openedAt: now(), sent: diffList(null, body).sent };
-      write(stream, 'full', body);
+      // Kept before the opening list goes, so a list too big for a browser that is not reading ends it for good.
       streams.add(stream);
       res.on('close', () => streams.delete(stream));
       req.on('error', () => streams.delete(stream));
+      write(stream, 'full', body);
+      if (!streams.has(stream)) return;
       sweepTimer ??= unref(later(sweep, SWEEP_MS));
       heartbeatTimer ??= unref(later(heartbeat, HEARTBEAT_MS));
     },

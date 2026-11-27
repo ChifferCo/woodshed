@@ -188,3 +188,13 @@ test('a browser that stopped reading has its stream ended rather than every chan
   assert.equal(res.ended, true);
   assert.equal(live.open(), 0);
 });
+
+test('an opening list too big for a browser that is not reading ends its stream, which is never kept', async () => {
+  const { live, timers } = setup([{ id: 'aaaa1111', state: 'done' }]);
+  const res = fakeResponse();
+  res.writableLength = MAX_BUFFERED_BYTES + 1;
+  await live.handle(new EventEmitter(), res, 'joel');
+  assert.equal(res.ended, true);
+  assert.equal(live.open(), 0);
+  assert.deepEqual(timers.pending(), [], 'no sweep or heartbeat left for it');
+});

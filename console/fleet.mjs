@@ -1365,22 +1365,19 @@ export function createFleet({
 
   // Every couple of seconds, the running sessions likely to change soon: those working, which turn to done or to
   // needing someone, and those just sent something, which turn to working. The rest wait for the tick.
-  // No guard of its own: a session still being read is skipped (readStatus), so one slow to answer delays only its own
-  // next read, never the others'.
-  async function checkLive() {
+  // Starts the reads and returns without waiting for them: the loop that calls it waits for what it returns before its
+  // next pass, so one session slow to answer would hold up every other session's next read. A session still being read
+  // is skipped (readStatus), so it delays only its own.
+  function checkLive() {
     for (const [id, until] of liveUntil) if (until <= now()) liveUntil.delete(id);
     for (const id of statusAskedAt.keys()) {
       const session = find(id);
       if (!session || !ACTIVE_STATUSES.has(session.status)) statusAskedAt.delete(id);
     }
     const live = state.sessions.filter((s) => s.status === 'running' && s.endpoint && (s.state === 'working' || liveUntil.has(s.id)));
-    await Promise.all(live.map(async (session) => {
-      try {
-        await readStatus(session);
-      } catch (err) {
-        console.error('fleet: session check failed', { id: session.id, message: firstLine(err) });
-      }
-    }));
+    for (const session of live) {
+      readStatus(session).catch((err) => console.error('fleet: session check failed', { id: session.id, message: firstLine(err) }));
+    }
   }
 
   // While a start waits for room (waitsForRetry), its launcher may say how the wait is going, as steps: an embedding
