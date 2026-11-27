@@ -105,6 +105,26 @@ databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }
 log() { echo "[woodshed $(date -u +%H:%M:%S)] $*"; }
 die() { log "ERROR: $*"; exit 1; }
 
+# The project file's first read (`project get from`), into the variable <name>. One that fails stops the start with the
+# repo's own file's reason in its ERROR (the field it refused, the YAML error): the console shows that line as a failed
+# start's status, and a session that never started leaves no log its person can read. That reason comes from the reader
+# alone (`project repo-file-error`), which never reads the installation's file: the status reaches a review's comment on
+# the pull request, and the installation's file is not the repo's to show (its errors name its path and can quote it).
+# The reader's whole message still goes to the log.
+readProjectFrom() {
+  local out status=0 errors why
+  errors=$(mktemp)
+  out=$(project get from 2>"$errors") || status=$?
+  if [ "$status" != 0 ]; then
+    cat "$errors" >&2
+    rm -f "$errors"
+    why=$(project repo-file-error 2>/dev/null) || why=
+    die "the project file could not be read${why:+: $why}"
+  fi
+  rm -f "$errors"
+  printf -v "$1" %s "$out"
+}
+
 tainted() { [ "${WOODSHED_TAINTED:-}" = 1 ] || [ -f /tmp/woodshed-tainted ]; }
 
 # A POST to the console's session API, its answer into <file>, and the status code on stdout: 000 when the console
@@ -234,7 +254,7 @@ configureGitIdentity() {
 writeEnvFiles() {
   local exports written from skipped line settings=
   # The first read of the project file: one that does not parse stops the start here, naming the field.
-  from=$(project get from) || die "the project file could not be read"
+  readProjectFrom from
   log "Project file read" "(from: $from)"
   # The installation's file stood in for a repo's own that does not parse: say why, or it reads as a repo with none.
   skipped=$(project get repoFileError) || skipped=
@@ -523,7 +543,7 @@ appRules() {
     rules+=$'\n'"${address//"{{APP_URL}}"/"https://$SESSION_ID.$SESSION_APP_DOMAIN/"}"
   fi
   [ -z "$(project get apps)" ] || return 0
-  from=$(project get from) || die "the project file could not be read"
+  readProjectFrom from
   if [ "$from" = none ]; then
     missing='This repo has no `.woodshed/project.yaml`'
   else

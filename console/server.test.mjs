@@ -322,6 +322,48 @@ test('the transcript a phone scrolls is read from the running session\'s statusd
   assert.equal(asked.length, 5, 'nothing asked for a stopped or unknown session');
 });
 
+test('a stopped session\'s Chat reads the conversation it kept, only for whoever may open it, and never a tainted one\'s', async (t) => {
+  const conversation = { agent: 'claude', entries: [{ role: 'user', text: 'Fix it', at: null }, { role: 'assistant', text: 'Fixed.', at: null }], partial: false, writtenAt: 1764064800000 };
+  const texts = new Map([
+    ['octocat/sessions/0a1b2c3d/conversation.json', JSON.stringify({ ...conversation, savedAt: '2026-11-25T10:00:00.000Z' })],
+    ['_sessions/1b2c3d4e/conversation.json', JSON.stringify(conversation)],
+    ['octocat/sessions/3d4e5f6a/conversation.json', JSON.stringify(conversation)],
+  ]);
+  const read = [];
+  const homes = { getText: async (key) => { read.push(key); if (key.includes('broken')) throw new Error('S3 down'); return texts.get(key) ?? null; } };
+  const at = '2026-11-25T10:00:00.000Z';
+  const sessions = [
+    { id: '0a1b2c3d', status: 'stopped', title: 'mine', owner: 'octocat', conversationSavedAt: at },
+    { id: '1b2c3d4e', status: 'stopped', title: 'shared', owner: null, kept: true, conversationSavedAt: at },
+    { id: '2c3d4e5f', status: 'stopped', title: 'nothing kept', owner: 'octocat' },
+    { id: '3d4e5f6a', status: 'stopped', title: 'tainted', owner: 'octocat', taintedAt: at, conversationSavedAt: at },
+    { id: '4e5f6a7b', status: 'stopped', title: 'gone from the store', owner: 'octocat', conversationSavedAt: at },
+    { id: '5f6a7b8c', status: 'starting', title: 'resuming', owner: 'octocat', conversationSavedAt: at },
+    { id: '6a7b8c9d', status: 'stopped', title: 'theirs', owner: 'mia-dev', conversationSavedAt: at },
+  ];
+  const fleet = { sessions: () => sessions, find: (id) => sessions.find((s) => s.id === id) ?? null };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const server = http.createServer(createHandler({ config, fleet, auth, homes }));
+  const port = await listen(server);
+  t.after(() => server.close());
+  const get = async (id, query = '') => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${id}/transcript${query}`, { headers: { cookie: 'woodshed_session=octocat' } });
+    return { status: res.status, body: await res.json() };
+  };
+
+  assert.deepEqual(await get('0a1b2c3d'), { status: 200, body: { ...conversation, saved: true, savedAt: at } });
+  assert.deepEqual(await get('0a1b2c3d', '?since=1764064800000'), { status: 200, body: { agent: 'claude', unchanged: true, writtenAt: 1764064800000, savedAt: at } });
+  assert.equal((await get('0a1b2c3d', '?since=5')).body.entries.length, 2, 'another since: the whole of it');
+  assert.equal((await get('1b2c3d4e')).body.savedAt, at, 'a shared session\'s, with the record\'s time when the file has none');
+  assert.equal((await get('2c3d4e5f')).status, 409, 'nothing kept: not running, as before');
+  assert.equal((await get('3d4e5f6a')).status, 409, 'a tainted session\'s is never shown');
+  assert.equal((await get('4e5f6a7b')).status, 404, 'marked, but gone from the store');
+  assert.equal((await get('5f6a7b8c')).status, 409, 'one starting again reads the live one once it runs');
+  assert.equal((await get('6a7b8c9d')).status, 404, 'a teammate\'s private session is never found');
+  assert.ok(!read.some((k) => /3d4e5f6a|5f6a7b8c|6a7b8c9d/.test(k)), 'and none of those was read');
+});
+
 test('the Chat tab\'s Stop is an interrupt sent to the running session\'s statusd, and nothing else', async (t) => {
   const asked = [];
   const statusd = http.createServer((req, res) => {
@@ -1090,7 +1132,7 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.match(await getBody(port, '/static/dictation.js', as('octocat')), /W\.dictation = /);
   // The settings pages are one page: each address loads every settings page's script, so common.js moves between
   // them in place. My settings' Repo settings card draws its layers with the repo page's parts, loaded before both.
-  const SETTINGS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+  const SETTINGS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js', 'analyticsDays.js', 'analytics.js'];
   for (const page of ['/settings', '/console-settings', '/console-settings/repos/app', '/secrets', '/people', '/events']) {
     const settingsScripts = [...(await getBody(port, page, as('octocat'))).matchAll(/<script src="\/static\/([\w.]+)\?v=[0-9a-f]{12}"/g)].map((m) => m[1]);
     assert.deepEqual(settingsScripts.slice(-SETTINGS.length), SETTINGS, `${page} is the settings page`);
@@ -1198,6 +1240,37 @@ test('New session offers only the agents set up to run, and a Codex start needs 
   assert.deepEqual(await agents(), { claude: true, codex: true, ...none }, 'their own sign-in runs Codex');
   claude.delete('mia-dev');
   assert.deepEqual(await agents(), { claude: false, codex: true, ...none }, 'no Claude token, no Claude');
+});
+
+test('a stopped private session\'s kept machine is read for its owner, and Resume on the latest image reaches the fleet', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const resumed = [];
+  const stopped = { id: '0a1b2c3d', owner: 'mia-dev', status: 'stopped', options: {} };
+  const fleet = {
+    sessions: () => [], find: (id) => (id === stopped.id ? stopped : null),
+    resumePrivate: async (args) => { resumed.push(args); return stopped; },
+    keptMachine: async ({ owner, id }) => {
+      if (owner !== stopped.owner || id !== stopped.id) throw Object.assign(new Error('no session you can open with that id'), { shown: true });
+      return { kept: true, outdated: true };
+    },
+  };
+  const userSettings = {
+    refresh: async () => {},
+    view: () => ({ claudeToken: { set: true, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: true, available: true, agentAuth: {} }),
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const server = http.createServer(createHandler({ config, fleet, auth, userSettings }));
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = (login) => ({ cookie: `woodshed_session=${login}` });
+
+  assert.deepEqual(JSON.parse(await getBody(port, `/api/my/sessions/${stopped.id}/machine`, as('mia-dev'))), { kept: true, outdated: true });
+  assert.deepEqual(JSON.parse(await getBody(port, `/api/my/sessions/${stopped.id}/machine`, as('joel'))), { error: 'no session you can open with that id' }, 'someone else\'s answers as none');
+  assert.equal((await post(port, `/api/my/sessions/${stopped.id}/resume`, { latestImage: true }, as('mia-dev'))).status, 201);
+  assert.equal((await post(port, `/api/my/sessions/${stopped.id}/resume`, {}, as('mia-dev'))).status, 201);
+  assert.equal((await post(port, `/api/my/sessions/${stopped.id}/resume`, { latestImage: 'yes' }, as('mia-dev'))).status, 201);
+  assert.deepEqual(resumed.map((r) => r.latestImage), [true, false, false], 'only a true asks for it');
 });
 
 test('Grok Build and OpenCode are offered and start only on their owner\'s own sign-in', async (t) => {
@@ -3167,4 +3240,41 @@ test('the live session list needs a sign-in, shows only what that person may ope
   assert.equal(events[1].event, 'patch');
   assert.deepEqual(events[1].data.sessions.map((s) => [s.id, s.state]), [['0a1b2c3d', 'working']]);
   res.destroy();
+});
+
+test('someone taken off People with the live list open gets no more of their private session, and the stream ends', async (t) => {
+  const mine = { id: '0a1b2c3d', status: 'running', state: 'done', title: 'Mine', owner: 'octo' };
+  const listeners = [];
+  const fleet = { sessions: () => [mine], find: (id) => (id === mine.id ? mine : null), onChange: (fn) => listeners.push(fn) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  let member = true;
+  // As auth.mjs: someone taken off the list is no longer signed in to the console.
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => (member && String(cookie).includes('woodshed_session=good') ? { login: 'octo' } : null) };
+  const handle = createHandler({ config, fleet, auth });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => { handle.liveSessions.closeAll(); server.close(); });
+
+  const res = await new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/api/sessions/live', headers: { host: `localhost:${port}`, cookie: 'woodshed_session=good' } }, resolve);
+    req.on('error', reject);
+    req.end();
+  });
+  assert.equal(res.statusCode, 200);
+  res.setEncoding('utf8');
+  let body = '';
+  res.on('data', (chunk) => { body += chunk; });
+  const ended = new Promise((resolve) => res.on('end', resolve));
+  await new Promise((resolve) => { const check = () => (body.includes('event: full') ? resolve() : setTimeout(check, 10)); check(); });
+
+  member = false;
+  mine.state = 'working';
+  mine.lastMessage = 'something private';
+  for (const fn of listeners) fn(mine.id);
+  const outcome = await Promise.race([ended.then(() => 'ended'), new Promise((resolve) => { setTimeout(() => resolve('still open'), 2000).unref(); })]);
+  res.destroy();
+  assert.equal(outcome, 'ended', 'the stream ends');
+  assert.ok(!body.includes('event: patch'), 'no change reached the stream');
+  assert.ok(!body.includes('something private'));
+  assert.equal((await getWith(port, '/api/sessions/live', { cookie: 'woodshed_session=good' })).status, 401);
 });

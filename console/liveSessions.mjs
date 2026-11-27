@@ -8,9 +8,10 @@
 // chips, Slack's waits) is compared every SWEEP_MS. The page still polls, less often, so a stream a proxy holds back
 // or cuts costs it nothing but time.
 //
-// A stream ends after MAX_AGE_MS and the browser opens it again, which signs it in again: one person removed from
-// People, or signed out, stops getting the list at the latest then. The console's stop ends them all (closeAll), so a
-// redeploy is not held up by them.
+// Before each send the stream's own request is signed in again (`stillAllowed`, the same check every request gets): one
+// person removed from People, or signed out, gets nothing more, and their stream ends. A stream also ends after
+// MAX_AGE_MS and the browser opens it again. The console's stop ends them all (closeAll), so a redeploy is not held up
+// by them.
 
 export const DEBOUNCE_MS = 100;
 export const SWEEP_MS = 3_000;
@@ -75,10 +76,40 @@ export function createLiveSessions({ bodyFor, onChange = null, later = setTimeou
     stream.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   }
 
+  let flushing = null;
+  let flushAgain = false;
   function flush() {
     flushTimer = null;
+    // One at a time: a change while the sign-ins are checked is sent once this one is done.
+    if (flushing) {
+      flushAgain = true;
+      return flushing;
+    }
+    flushing = flushAll().finally(() => {
+      flushing = null;
+      if (flushAgain) {
+        flushAgain = false;
+        flush();
+      }
+    });
+    return flushing;
+  }
+
+  async function flushAll() {
     for (const stream of [...streams]) {
       if (now() - stream.openedAt >= MAX_AGE_MS) {
+        end(stream);
+        continue;
+      }
+      let allowed;
+      try {
+        allowed = await stream.stillAllowed();
+      } catch {
+        allowed = false;
+      }
+      if (!streams.has(stream)) continue;
+      if (!allowed) {
+        console.log('liveSessions: stream ended, its sign-in no longer lets it in', { login: stream.login });
         end(stream);
         continue;
       }
@@ -126,8 +157,10 @@ export function createLiveSessions({ bodyFor, onChange = null, later = setTimeou
      * @param {import('node:http').IncomingMessage} req
      * @param {import('node:http').ServerResponse} res
      * @param {string|null} login
+     * @param {{stillAllowed?: () => boolean|Promise<boolean>}} [opts]  whether the request that opened the stream still
+     *   signs in as `login`, asked before each send
      */
-    handle(req, res, login) {
+    handle(req, res, login, { stillAllowed = () => true } = {}) {
       let body;
       try {
         body = bodyFor(login);
@@ -144,7 +177,7 @@ export function createLiveSessions({ bodyFor, onChange = null, later = setTimeou
         'x-accel-buffering': 'no',
       });
       res.write(`retry: ${RETRY_MS}\n\n`);
-      const stream = { res, login, openedAt: now(), sent: diffList(null, body).sent };
+      const stream = { res, login, stillAllowed, openedAt: now(), sent: diffList(null, body).sent };
       write(stream, 'full', body);
       streams.add(stream);
       res.on('close', () => streams.delete(stream));
@@ -159,5 +192,7 @@ export function createLiveSessions({ bodyFor, onChange = null, later = setTimeou
       flushTimer = sweepTimer = heartbeatTimer = null;
     },
     open: () => streams.size,
+    // For tests: what is being sent now.
+    settled: () => flushing ?? Promise.resolve(),
   };
 }

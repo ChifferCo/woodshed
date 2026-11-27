@@ -53,7 +53,9 @@
 //   POST /api/my/github/disconnect
 //   POST /api/my/home/forget     deletes your saved Claude home: MCP logins, memory, transcripts
 //   POST /api/my/sessions/<id>/resume   a stopped private session again, claude's conversation and all; {"herdrParent": true}
-//                                       as a start's, for that run alone
+//                                       as a start's, for that run alone; {"latestImage": true} on a new machine from the
+//                                       repo's latest image, leaving the one its launcher kept for it, data and all
+//   GET  /api/my/sessions/<id>/machine  {kept, outdated}: whether its launcher keeps a machine for it, made from an older image
 //   POST /api/my/sessions/<id>/handoff  {"agent": "codex", "model"?, "effort"?, "permissionMode"?, "note"?: "...",
 //                                       "conversation"?: true}   a running private session's work into a new one run by
 //                                       that agent, on its branch, with its conversation attached; it stops (handoff.mjs)
@@ -123,8 +125,11 @@
 //   POST /api/sessions/<id>/delete  a shared session's conversation and databases, deleted now (a running one is stopped first)
 //   POST /api/sessions/<id>/remove  a shared session already deleted, off the list for everyone
 //   Admins only (members.mjs), with 403 for anyone else: /api/people*, /api/secrets*, /api/webhook*,
-//   /api/console-settings*, the API behind People, Secrets & webhooks, Webhook events and Console settings.
+//   /api/console-settings*, /api/analytics, the API behind People, Secrets & webhooks, Webhook events, Console settings
+//   and Analytics.
 //   GET  /api/webhook-events     what the console did with each queued webhook, and which sources are switched off
+//   GET  /api/analytics?days=7|30|90   the Analytics page: sessions started, pull requests through Woodshed and not, by
+//                                person, time to merge and merge risk (analytics.mjs)
 //   GET  /api/secrets            each secret's state (never a value) and the GitHub App's webhook settings
 //   GET/POST /api/secrets-manager  where this console keeps its secrets: {"kind": "local"|"aws", "prefix"}. Only where the
 //                                local provider has no WOODSHED_LOCAL_SECRETS_DIR (providers/local/secretSlot.mjs)
@@ -254,10 +259,13 @@ import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { QA_POSTER_RE, QA_PUBLIC_VIDEO_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
 import { CONNECTION_PATH } from './dbTunnel.mjs';
 import { checkGh } from './github.mjs';
+import { WINDOWS } from './analytics.mjs';
 import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
 import agentsRegistry from '../shared/agents.cjs';
 import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetup.mjs';
 import { createInstallation } from './installation.mjs';
+import { conversationKey, sessionHomeName } from './homes.mjs';
+import { parseSavedConversation } from '../shared/savedConversation.mjs';
 import { ACTIVE_STATUSES, activePrivateCount, canSee, isQa, isReview, linkQueryString, prUrlsOf, publicSession, sessionOptions, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
 import { WEBHOOK_SECRET } from './settings.mjs';
 import { openStore } from './store.mjs';
@@ -287,6 +295,7 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // read as well (shared/agents.cjs). The console image copies each to the same place (Dockerfile).
 const STATIC_ELSEWHERE = {
   'attention.mjs': path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'desktop', 'attention.mjs'),
+  'dictation.js': fileURLToPath(new URL('../shared/dictation.mjs', import.meta.url)),
   'agents.cjs': path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'shared', 'agents.cjs'),
 };
 const staticPath = (file) => STATIC_ELSEWHERE[file] ?? path.join(PUBLIC_DIR, file);
@@ -295,7 +304,7 @@ const staticPath = (file) => STATIC_ELSEWHERE[file] ?? path.join(PUBLIC_DIR, fil
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
 // The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
 export const MAX_MESSAGE_CHARS = 8000;
-const SETTINGS_SCRIPTS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+const SETTINGS_SCRIPTS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js', 'analyticsDays.js', 'analytics.js'];
 const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminalPaste.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
@@ -328,6 +337,8 @@ const STATIC_FILES = {
   'attention.mjs': 'text/javascript; charset=utf-8',
   'session.js': 'text/javascript; charset=utf-8',
   'events.js': 'text/javascript; charset=utf-8',
+  'analytics.js': 'text/javascript; charset=utf-8',
+  'analyticsDays.js': 'text/javascript; charset=utf-8',
   'secrets.js': 'text/javascript; charset=utf-8',
   'webhookSetup.js': 'text/javascript; charset=utf-8',
   'slackSetup.js': 'text/javascript; charset=utf-8',
@@ -386,7 +397,7 @@ const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 // A repo's settings page: its project's name, as Console settings' Repos card links it.
 const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
 // The console's own settings pages, served as one page with /settings (SETTINGS_SCRIPTS).
-const SETTINGS_PAGE_RE = new RegExp(`^/(?:events|secrets|people|console-settings)$|${REPO_SETTINGS_PAGE_RE.source}`);
+const SETTINGS_PAGE_RE = new RegExp(`^/(?:events|secrets|people|console-settings|analytics)$|${REPO_SETTINGS_PAGE_RE.source}`);
 const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove|reviews))?$/;
 // An agent that runs on its owner's own sign-in alone (shared/agents.cjs, OWN_SIGN_IN_AGENTS): any other id is a 404.
 const MY_AGENT_AUTH_RE = /^\/api\/my\/agent-auth\/([a-z]+)(?:\/(remove|reviews))?$/;
@@ -411,6 +422,7 @@ const PULLS_FRESH_MS = 60_000;
 const MY_FILE_RE = /^\/api\/my\/files\/([a-z-]+)(\/reset)?$/;
 const MY_GITHUB_RE = /^\/api\/my\/github\/(identity|disconnect)$/;
 const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove|handoff)$/;
+const MY_SESSION_MACHINE_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/machine$/;
 const MY_PULL_REVIEW_RE = /^\/api\/my\/pulls\/([1-9][0-9]{0,8})\/review$/;
 const MY_TUNNEL_RE = /^\/api\/my\/tunnel-token(\/remove)?$/;
 const MY_CLI_REVOKE_RE = /^\/api\/my\/cli-tokens\/([0-9a-f]{16})\/revoke$/;
@@ -452,7 +464,7 @@ const REVIEWER_SETUP_PATH = '/api/setup/github/reviewer';
 const WEBHOOK_RE = /^\/api\/webhook\/(rotate|apply|url)$/;
 // The calls behind People, Secrets & webhooks, Webhook events and Console settings. Their pages load for anyone signed
 // in, and say what these calls answer.
-const ADMIN_API_RE = /^\/api\/(?:people|secrets|secrets-manager|webhook|console-settings|setup)(?:\/|$)|^\/api\/webhook-events$/;
+const ADMIN_API_RE = /^\/api\/(?:people|secrets|secrets-manager|webhook|console-settings|setup|analytics)(?:\/|$)|^\/api\/webhook-events$/;
 const APP_ID_RE = /^[0-9a-f]{8}$/;
 const APP_AUTH_PATH = '/__woodshed/auth';
 const APP_SHARE_PATH = '/__woodshed/share';
@@ -948,7 +960,7 @@ export function createHandler({
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
-  cli = null, reviewReadiness = null,
+  cli = null, reviewReadiness = null, analytics = null,
 }) {
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
@@ -1020,6 +1032,18 @@ export function createHandler({
     if (trusted) return user?.role === 'owner';
     const login = user?.login;
     return !auth?.enabled() || !login || !members || !members.hasAdmin() || members.isAdmin(login);
+  }
+
+  // The Analytics page's report (analytics.mjs), with each person's display name. Admins only (ADMIN_API_RE).
+  // Only the repos the viewer may open themselves count (projectAccess.mjs, visible): being an admin, or a hosting
+  // proxy's owner, does not open a private repo they cannot read on GitHub.
+  async function analyticsReply(res, daysAsked, login) {
+    if (!analytics) return reply(res, 404, { error: 'this console keeps no analytics' });
+    const days = WINDOWS.includes(Number(daysAsked)) ? Number(daysAsked) : 30;
+    const repos = projectAccess ? (await (projectAccess.visible ?? projectAccess.startable)(login)).map((p) => p.repo) : null;
+    const report = await analytics.report({ days, repos });
+    const logins = [...report.people.map((p) => p.login), ...report.pulls.recent.map((p) => p.login), ...report.sessions.recent.map((s) => s.login)];
+    return reply(res, 200, { ...report, windows: WINDOWS, names: namesFor([...new Set(logins.filter(Boolean))]) });
   }
 
   function cliRepoRole(login) {
@@ -1842,7 +1866,7 @@ export function createHandler({
    * My Woodshed's Resume, with its checks, for the page and for a session resuming one it started (sessionStarts.mjs).
    * @returns {Promise<{status: number, body: object}>}
    */
-  async function resumeMine(login, id, { herdrParent = false } = {}) {
+  async function resumeMine(login, id, { herdrParent = false, latestImage = false } = {}) {
     const resuming = fleet.find(id);
     // Whose it is before anything of it is read: someone else's private session answers as one that does not exist.
     if (!resuming || resuming.owner !== login) return { status: 409, body: { error: 'no session you can open with that id' } };
@@ -1858,7 +1882,7 @@ export function createHandler({
       return { status: 403, body: { error: `you can no longer start sessions on ${resuming.project}: you have no write access to its repo, or it is not one of this console's` } };
     }
     try {
-      return { status: 201, body: publicSession(await fleet.resumePrivate({ owner: login, id, background: true, herdrParent })) };
+      return { status: 201, body: publicSession(await fleet.resumePrivate({ owner: login, id, background: true, herdrParent, latestImage })) };
     } catch (err) {
       if (!err?.shown) throw err;
       return { status: err.status ?? 409, body: { error: err.message } };
@@ -1999,7 +2023,7 @@ export function createHandler({
           return reply(res, 200, { removed: actionMatch[1] });
         }
         if (actionMatch[2] === 'handoff') return await handOff(res, login, actionMatch[1], body);
-        const answer = await resumeMine(login, actionMatch[1], { herdrParent: body?.herdrParent === true });
+        const answer = await resumeMine(login, actionMatch[1], { herdrParent: body?.herdrParent === true, latestImage: body?.latestImage === true });
         return reply(res, answer.status, answer.body);
       }
       if (pathname === '/api/my/home/forget') {
@@ -2012,6 +2036,8 @@ export function createHandler({
         // The sessions' first, so a failure leaves the owner's home, and the size My settings shows for it, as they were.
         if (homes) {
           await homes.removeSessionsOf(login);
+          // The conversations went with the session homes: their marks go now, whatever the owner's home does next.
+          fleet.forgetConversations?.(login);
           await homes.remove(login);
         }
         await claudeSettings?.remove(login);
@@ -2235,6 +2261,29 @@ export function createHandler({
       return { kind: 'approval', decision: body.decision, key: body.key };
     }
     return null;
+  }
+
+  // Whether a session that is not running has a conversation to show: one it kept at a save (sessionApi.mjs,
+  // /conversation). Never a tainted session's: none is kept after its taint, and one kept before it is not shown.
+  function keptConversation(session) {
+    return Boolean(homes?.getText) && Boolean(session.conversationSavedAt) && !session.taintedAt;
+  }
+
+  // A stopped or paused session's Chat: the conversation it kept, in the live route's shape with `saved` and `savedAt`,
+  // or 404 when it is gone from the store. With `since`, {unchanged: true} while it is still the one the page has.
+  async function savedConversationReply(res, session, since) {
+    let text;
+    try {
+      text = await homes.getText(conversationKey(sessionHomeName(session)));
+    } catch (err) {
+      console.warn('console: saved conversation not read', { id: session.id, message: String(err?.message ?? err).split('\n')[0] });
+      return reply(res, 502, { error: 'the saved conversation could not be read' });
+    }
+    const saved = text ? parseSavedConversation(text) : null;
+    if (!saved) return reply(res, 404, { error: 'no conversation was kept for this session' });
+    const savedAt = saved.savedAt ?? session.conversationSavedAt;
+    if (since && saved.writtenAt !== null && String(saved.writtenAt) === since) return reply(res, 200, { agent: saved.agent, unchanged: true, writtenAt: saved.writtenAt, savedAt });
+    return reply(res, 200, { ...saved, saved: true, savedAt });
   }
 
   function runningFor(id, login) {
@@ -3036,6 +3085,10 @@ export function createHandler({
   // A running session's applog, diff, transcript or prompt, read from its statusd for whoever may open it.
   function statusdRead(req, res, url, login, [, id, what]) {
     const session = runningFor(id, login);
+    if (!session && what === 'transcript') {
+      const ended = findFor(id, login);
+      if (ended && !ACTIVE_STATUSES.has(ended.status) && keptConversation(ended)) return savedConversationReply(res, ended, url.searchParams.get('since'));
+    }
     if (!session) return reply(res, findFor(id, login) ? 409 : 404, { error: 'the session is not running' });
     const limit = what === 'transcript' ? url.searchParams.get('limit') : null;
     const since = what === 'transcript' ? url.searchParams.get('since') : null;
@@ -3201,9 +3254,16 @@ export function createHandler({
     if (pathname === `${SLACK_SETUP_PATH}/channels`) return slackChannelsReply(res, { query: url.searchParams.get('q') });
     if (pathname === `${PROJECTS_PATH}/repos`) return repoChoicesReply(res);
     if (pathname === '/api/people') return peopleReply(res);
+    if (pathname === '/api/analytics') return analyticsReply(res, url.searchParams.get('days'), user.login);
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
     if (pathname === '/api/sessions') return reply(res, 200, sessionsBody(user.login));
-    if (pathname === '/api/sessions/live') return liveSessions.handle(req, res, user.login);
+    if (pathname === '/api/sessions/live') {
+      // Signed in again before each send: someone taken off People, or signed out, gets nothing more on a stream they
+      // opened before (signedIn, the check every request gets).
+      const headers = req.headers;
+      const stillAllowed = signInOn() ? async () => (await consoleUser(headers))?.login === user.login : () => true;
+      return liveSessions.handle(req, res, user.login, { stillAllowed });
+    }
     if (pathname === '/api/my') {
       // The first look waits for the store, so the page never shows a sign-in missing that is there. Later ones ask it in
       // the background: the page polls, and sees a change on a later poll.
@@ -3220,6 +3280,15 @@ export function createHandler({
       return reply(res, 200, viewPrefs.sessionView(user.login));
     }
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
+    const machineMatch = MY_SESSION_MACHINE_RE.exec(pathname);
+    if (machineMatch) {
+      try {
+        return reply(res, 200, await fleet.keptMachine({ owner: user.login, id: machineMatch[1] }));
+      } catch (err) {
+        if (!err?.shown) throw err;
+        return reply(res, 404, { error: err.message });
+      }
+    }
     if (pathname === '/api/my/projects') return reply(res, 200, await projectsView(user.login));
     if (pathname === '/api/my/codex-models') return reply(res, 200, codexModels ? await codexModels.list(user.login) : { models: BUILT_IN_CODEX_MODELS, source: 'built-in', note: null });
     if (pathname === '/api/my/grok-models') return reply(res, 200, grokModels ? await grokModels.list(user.login) : { models: [], source: null, note: 'type a model name, since this console reads no Grok Build models' });

@@ -187,7 +187,11 @@ export function createReviewHost({
       }
     }
     let writable = null;
-    if (isGithubWrite({ method: req.method, pathname }) || (req.method === 'GET' && pathname.startsWith('/reviews/') && !sectionOf(pathname))) {
+    if (req.method === 'POST' && sectionOf(pathname) === 'conversations') {
+      // The handler verifies and pins the current personal credential. A
+      // cached account only controls the page and the other write routes.
+      writable = sessionKind === 'private';
+    } else if (isGithubWrite({ method: req.method, pathname }) || (req.method === 'GET' && pathname.startsWith('/reviews/') && !sectionOf(pathname))) {
       writable = writesAllowed({ sessionKind, account: await accountNow() });
     }
     if (writable === false && isGithubWrite({ method: req.method, pathname })) {

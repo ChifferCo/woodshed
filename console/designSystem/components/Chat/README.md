@@ -1,5 +1,5 @@
 The Chat tab (`public/chat.js`): a running session's conversation, read from the agent's own record of it, in place of
-its terminal. One column, at most 800px wide and centred in the pane, on `ground`, over a composer pinned to the foot.
+its terminal; and a stopped session's, as it kept it at its last save, read-only. One column, at most 800px wide and centred in the pane, on `ground`, over a composer pinned to the foot.
 
 - **The person's message**: on the right, at most 85% of the column, a bubble on `slate-tint` with a `line` border and
   `radius 14 14 4 14`, `ink` text as typed (line breaks kept). One sent from the page that the record does not hold yet
@@ -72,3 +72,11 @@ its terminal. One column, at most 800px wide and centred in the pane, on `ground
   send. Files waiting to go are mono chips on `chip-count` over the field. A message the console refuses (a session
   started before Chat could send safely, whose statusd would type it blind) goes back in the field, and a toast says
   `Not sent: <why>`.
+- **A stopped session's conversation**: the thread as it was last saved, with nothing live (no Working, no open question:
+  one left unanswered says `Not answered`). In the composer's place, a box on `stopped` with a `line` border
+  (`radius 12`), padded as the composer is: how it ended in `ink` 600 (`Paused`, `Stopped`, `Failed`, or a shared
+  session's word, `Finished`), then in `sub` `Read-only, saved <when>.` (why there is no message box, and how old the copy is) and what Resume does (for an agent that
+  keeps no conversation between runs, that Resume starts a new one), and at the right a quiet `btn-plain` **Details**
+  (the TUI tab's end, with everything else) and, for a private session, **Resume** on `action`: the view's one primary
+  action, as Send is while it runs. A shared session's Resume is on the pane bar, so the box has none. Never `wait`:
+  nothing asks for the person.

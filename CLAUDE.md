@@ -1010,6 +1010,15 @@ URL on top of each env file's Repo settings values
   console logs `console: message from the page refused, the session cannot send safely`. Type in the TUI tab, or start
   a new session. Messages the console sends itself (Slack follow-ups, review feedback) still go to such a session, one
   right after each status read that says it is idle.
+- **A stopped session has no Chat tab, or its Chat is older than where the session stopped.** Chat shows a stopped
+  session's conversation only when the session kept one (console/README.md, "A stopped session's conversation"): its
+  record has `conversationSavedAt`. At its stop statusd logged `statusd: conversation kept` with `why` and the entries,
+  or `conversation not kept` with the console's answer (`not kept by the console, none sent again` after a 404 or 409); the console logged `sessionApi: conversation kept`, or `conversation
+  refused, the session has seen production data`. None is kept for a question from Slack, a QA run, a review, a tainted
+  session, an image from before it, or a console with no home store (`this console keeps no Claude homes`). A task that
+  ended without its checkpoint (a crash) shows the periodic copy, up to 5 minutes older. `console: saved conversation
+  not read` with the store's error is the 502 the page shows; a 404 is a copy gone from the store, such as after Forget
+  my Claude home.
 - **Chat's Needs you line offers only the TUI tab, for a prompt it should read.** statusd's `GET /prompt` answered 503
   `pane-unread`: statusd logs `statusd: prompt not read, the pane could not be read` with tmux's error. A send refused as
   busy (`why: 'typing'`) right after a session's lockdown is the reopen of claude holding the pane until the new claude
@@ -1110,6 +1119,13 @@ URL on top of each env file's Repo settings values
   (with `timed out`, `the answer is not JSON` or `the catalog is too large`), `the catalog listed no models` (a key with
   only image or video models), `own login expired, not read` (a Grok session refreshes it at its stop) or `credential
   not read`. It tries again a minute after a failure, and at once after the sign-in is saved again.
+- **The Analytics page leaves a repo out, or counts no merge risk.** The page names the repo GitHub did not answer for,
+  and the console logs `analytics: pull requests not read` with the project and GitHub's error; it reads each repo again
+  after 5 minutes; its `message` is gh's own error (`gh: HTTP 502`). A pull request's merge risk is the review's `merge
+  risk: <tier>` label, else its `mergeRisk` check's tier (asked apart, for the newest 100 with no label: `analytics:
+  merge risk checks not read, the labels only` when that failed), else the tier its review session reported: one no
+  review has seen says `not reviewed` (console/README.md, "Analytics"). A person with no sessions though they used Woodshed started them before their sessions were kept in
+  `usageKept`, which only sessions leaving the list since then are.
 - **The `/` list in New session is empty.** The console logs `console: skills
   read` with the count, or `console: skills not readable` with gh's error.
 - **A pin or rename does not stick.** The page says `Not saved` with the
@@ -1284,7 +1300,8 @@ tab's approvals.
 (`scripts/devHostConsole.mjs`): Console settings' Repos card then lists `acme/api`, `acme/web` and `acme/lib`, asks for no
 name, and refuses any other typed repo with a link to give the App access, as a hosted console does. Each repo's settings page
 then ends with two made-up groups of the program's own (the `repoPage` hook, drawn with `console/settingsMarkup.mjs`),
-whose forms post nowhere. With
+whose forms post nowhere. Its launcher keeps a made-up machine from an older image for `/s/fa11ed01`, whose page then
+offers Resume on the latest image (`keptMachine`, providers/README.md). With
 `DEV_CONSOLE_BLOCKED_REPO=acme/api` its made-up `projectReadiness` hook says that repo's image is not built, for the
 Needs setup card on New session and the Repos card; with `WOODSHED_PROJECTS` naming the three, the default can be the
 blocked one. The dev console has no sign-in, so everyone is an admin: to see the card as anyone else, answer `/api/me`
@@ -1309,6 +1326,8 @@ review's comment, verdict, rename and merge, and a made-up review by Claude Code
 `DEV_CONSOLE_WEBHOOKS=1` names a webhook receiver (which never listens, since polling is off), so the Console
 settings page shows its GitHub webhooks switch (Slack's needs a console that answers Slack questions), and the
 Webhook events page lists made-up deliveries: acted on, ignored, skipped and failed.
+`/analytics` shows 90 days of made-up history (`devAnalytics.mjs`): sessions in `usageKept` and the pull requests the
+stand-in `gh` answers the page's search with, through Woodshed and without, with merge risk tiers.
 `DEV_CONSOLE_PEOPLE=1` gives the People page four made-up members, with their switches every way, and two people asking
 to join.
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on

@@ -4,6 +4,7 @@
 // another program can build one from services of its own and serve it from its own servers (README.md, "Embedding the
 // console").
 
+import { createAnalytics } from './analytics.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -558,7 +559,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     token: tokens ? async () => (await tokens.console.token()).token : null,
   }) : null;
   // Behind a hosting proxy nobody's write access is asked: the host says who is in.
-  projectAccess = createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) });
+  projectAccess = createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()), hosted: () => Boolean(trusted) });
   const handle = createHandler({
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
@@ -578,6 +579,11 @@ export async function createInstallation({ config: loaded, store, provider, trus
     woodshedUpdate,
     slackSetup,
     cli,
+    // The Analytics page: the fleet's sessions and those kept since they left its list, and each repo's pull requests.
+    analytics: createAnalytics({
+      config, sessions: () => fleet.sessions(), state: () => store.state, githubFor, gatesOf: fileGatesOf,
+      members: () => (members ? members.view().members.map((m) => m.login) : []),
+    }),
     // Whether a repo's review can run in a session, for `woodshed review`: none with no GitHub App to run it.
     reviewReadiness: config.githubApp || hostApp ? createReviewReadiness({
       publicUrl: config.publicUrl, reviewer: reviewerApp, ownReviewer: !hostApp, appLogin: () => appIdentity.login(),

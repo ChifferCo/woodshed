@@ -30,11 +30,13 @@ import { fileURLToPath } from 'node:url';
 import { currentName, envValue, isSettingName } from '../../shared/envNames.mjs';
 import { startDevAppsSession } from './devAppsSession.mjs';
 import { startDevChatSession } from './devChatSession.mjs';
+import { devAnalytics } from './devAnalytics.mjs';
 import { writeDevGh } from './devGh.mjs';
 import { enableReview } from '../../cli/projectReview.mjs';
 import { startDevReview } from './devReviewSession.mjs';
 import { startDevTerminal } from './devTerminalSession.mjs';
 import { makeDevClone } from './devWoodshedClone.mjs';
+import { writeSavedConversations } from './devSavedConversations.mjs';
 
 const port = process.argv[2] || '7690';
 const sessionApp = process.env.DEV_CONSOLE_SESSION_APP === '1';
@@ -141,6 +143,10 @@ const realCodex = realAllowed && process.env.DEV_CONSOLE_REAL_CODEX === '1'
   ? await startDevChatSession({ id: REAL_CODEX_ID, ...tokensOf(REAL_CODEX_ID), agent: 'codex', real: true,
     nextPath: [realClaude?.binDir, agentsChat?.binDir, newChat?.binDir, openCodeChat?.binDir, grokChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) })
   : null;
+// Saved Claude homes, and the conversations stopped sessions kept beside them, in DEV_CONSOLE_HOMES_DIR or the state
+// folder (providers/local/homeStore.mjs).
+const homesDir = process.env.DEV_CONSOLE_HOMES_DIR || path.join(stateDir, 'homes');
+const savedConversations = writeSavedConversations(homesDir);
 function session(id, number, title, extra = {}) {
   return {
     id, repo: 'example-org/example-repo', kind: 'pr', number, title, startedBy: 'octocat', trigger: 'console', prompt: '',
@@ -283,7 +289,7 @@ Verdict: APPROVE
     kind: 'issue', trigger: 'label', startedBy: 'local', plan: 'local', assignee: 'ana-dev', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null,
   }),
   // Finished: its pull request is in Slack. Listed under Finished on Mine and on Everyone.
-  session('ab12cd34', 26690, 'manage_datasets query returns too many rows', { kept: true, slackPostedAt: now, stopReason: null, assignee: 'octocat' }),
+  session('ab12cd34', 26690, 'manage_datasets query returns too many rows', { kept: true, slackPostedAt: now, stopReason: null, assignee: 'octocat', conversationSavedAt: savedConversations.ab12cd34 }),
   // Two private sessions with plan readings: the older one's pane shows the newer reading, since the plan is shared.
   session('fedc0000', null, 'Removed timing on Woodshed', {
     kind: 'task', trigger: 'my-woodshed', owner: 'octocat', status: 'running', state: 'needs-you', stoppedAt: null, stopReason: null, prUrl: null,
@@ -363,8 +369,9 @@ Verdict: APPROVE
     app: 'running', appServers: { frontend: true, backend: true, frontendPort: 5173, backendPort: 8080 },
   }),
   // Paused when idle, so it waits in Mine's Needs you, with Move to Stopped in its ⋯ menu.
-  session('ba5ed001', null, 'A private session paused when idle', { kind: 'task', trigger: 'my-woodshed', owner: 'local', stopReason: 'idle for 1 h', prUrl: null }),
-  session('c0dec0d1', null, 'Stopped Codex session', { kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'codex' }, prUrl: null }),
+  // Both kept their conversation at their last save (devSavedConversations.mjs), which their Chat shows while stopped.
+  session('ba5ed001', null, 'A private session paused when idle', { kind: 'task', trigger: 'my-woodshed', owner: 'local', stopReason: 'idle for 1 h', prUrl: null, conversationSavedAt: savedConversations.ba5ed001 }),
+  session('c0dec0d1', null, 'Stopped Codex session', { kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'codex' }, prUrl: null, conversationSavedAt: savedConversations.c0dec0d1 }),
   // Deleted, so listed under Ended with Remove in its ⋯ menu. The older one has been deleted for longer than the
   // Console setting's days, so the first tick takes it off the list.
   session('de1e7e01', 26689, 'manage_datasets convert_file keeps headers', { cleanedAt: now, stopReason: 'its pull request merged 3 days ago', prClosedAt: now, prMerged: true }),
@@ -499,7 +506,10 @@ if (execPort) {
     endpoint: { host: '127.0.0.1', statusPort: execPort, termPort: execPort },
   }));
 }
-fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null, mcpServers, ...people }));
+// The Analytics page's made-up history: sessions taken off the list over 90 days, and the pull requests GitHub's search
+// answers with (devAnalytics.mjs).
+const analytics = devAnalytics(Date.now());
+fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null, mcpServers, usageKept: analytics.usageKept, ...people }));
 
 // The shell's own console settings, under either name (shared/envNames.mjs: a GitHub App, required sign-in, the ECS
 // launcher), would turn this back into the real console, so none of them are passed on, but hosted mode's
@@ -613,6 +623,7 @@ const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'), {
     ...(reviewOn ? { 'example-org/example-repo': process.env.DEV_CONSOLE_REVIEW_ON === 'default' ? 'version: 1\n' : REVIEW_ON_FILE } : {}),
   },
   mine: reviewOn ? { repo: 'example-org/example-repo', login: 'local' } : null,
+  recentPulls: analytics.pulls,
 });
 
 // A local secret store, as the local provider keeps one.
@@ -684,8 +695,9 @@ function startConsole() {
         : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
       ...repoSettingsDev?.env,
       // DEV_CONSOLE_HOMES_DIR keeps saved Claude homes in that folder (providers/local/homeStore.mjs), as the console's
-      // own at `_sessions/<id>/claude-home.tar.gz`, for Console settings' Sessions holding data.
-      ...(process.env.DEV_CONSOLE_HOMES_DIR ? { WOODSHED_LOCAL_HOMES_DIR: process.env.DEV_CONSOLE_HOMES_DIR } : {}),
+      // own at `_sessions/<id>/claude-home.tar.gz`, for Console settings' Sessions holding data. Without it, in the state
+      // folder, which goes with the run.
+      WOODSHED_LOCAL_HOMES_DIR: homesDir,
       // DEV_CONSOLE_SESSION_IMAGE starts New session's sessions from that session image, with the variables in the JSON
       // file DEV_CONSOLE_SESSION_ENV_FILE on top (such as GIT_CONFIG_* pointing the made-up repo's clone at a local
       // one), for a start in the real image: cli/README.md, "Trying session herdr". DEV_CONSOLE_SESSION_API_PORT puts

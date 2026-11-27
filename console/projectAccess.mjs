@@ -5,6 +5,8 @@
 import { allProjects, defaultProject, projectNamed } from './projects.mjs';
 
 const FRESH_MS = 10 * 60_000;
+// The Analytics page shows another repo's private pull requests: a lost write access counts within a minute.
+const VISIBLE_FRESH_MS = 60_000;
 
 const firstLine = (err) => String(err?.message ?? err).split('\n')[0];
 
@@ -15,7 +17,7 @@ const firstLine = (err) => String(err?.message ?? err).split('\n')[0];
  *   `githubFor` is the GitHub client of a project's repo, null where the console has no GitHub to ask; `signIn` says
  *   whether people sign in, without which the login is a stand-in GitHub knows nothing of
  */
-export function createProjectAccess({ config, githubFor, viewPrefs = null, signIn = () => true, now = Date.now }) {
+export function createProjectAccess({ config, githubFor, viewPrefs = null, signIn = () => true, hosted = () => false, now = Date.now }) {
   const checked = new Map();
   let toldUnchecked = false;
 
@@ -29,9 +31,14 @@ export function createProjectAccess({ config, githubFor, viewPrefs = null, signI
       toldUnchecked = true;
       return true;
     }
+    return askWrite(login, project, github);
+  }
+
+  // GitHub's answer for whether the person writes to the project's repo, kept `freshMs`. A failure is a no.
+  async function askWrite(login, project, github, freshMs = FRESH_MS) {
     const key = `${login}\n${project.name}\n${project.repo}`;
     const kept = checked.get(key);
-    if (kept && now() - kept.at < FRESH_MS) return kept.ok;
+    if (kept && now() - kept.at < freshMs) return kept.ok;
     try {
       const ok = await github.canWrite(login);
       checked.set(key, { at: now(), ok });
@@ -48,6 +55,24 @@ export function createProjectAccess({ config, githubFor, viewPrefs = null, signI
     const projects = allProjects(config);
     if (projects.length === 1) return projects;
     const allowed = await Promise.all(projects.map((project) => canStart(login, project)));
+    return projects.filter((_, i) => allowed[i]);
+  }
+
+  /**
+   * The projects whose repo the person may read about on the Analytics page (analytics.mjs). Wherever people are told
+   * apart (GitHub sign-in, or a hosting proxy, whose role says nothing of a repo) GitHub is asked of each repo, the
+   * default one included: sign-in proved it only when it was last checked, and access can go since. An answer is kept a
+   * minute, and a repo GitHub cannot answer for is left out. With nobody signing in, every one.
+   * @returns {Promise<object[]>}
+   */
+  async function visible(login) {
+    const projects = allProjects(config);
+    if (!hosted() && !signIn()) return projects;
+    const allowed = await Promise.all(projects.map((project) => {
+      const github = githubFor(project);
+      if (!login || !github?.canWrite) return false;
+      return askWrite(login, project, github, VISIBLE_FRESH_MS);
+    }));
     return projects.filter((_, i) => allowed[i]);
   }
 
@@ -86,5 +111,5 @@ export function createProjectAccess({ config, githubFor, viewPrefs = null, signI
     return (await canStart(login, project)) ? project : null;
   }
 
-  return { view, setDefault, forStart, startable };
+  return { view, setDefault, forStart, startable, visible };
 }

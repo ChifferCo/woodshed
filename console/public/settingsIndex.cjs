@@ -17,6 +17,7 @@
     '/secrets': { label: 'Secrets & webhooks', scope: 'everyone', admin: true },
     '/people': { label: 'People', scope: 'everyone', admin: true },
     '/events': { label: 'Webhook events', scope: 'everyone', admin: true },
+    '/analytics': { label: 'Analytics', scope: 'everyone', admin: true },
   };
 
   const ENTRIES = [
@@ -99,6 +100,14 @@
     // Webhook events (admins)
     { page: '/events', id: 'events', title: 'Webhook events', note: 'Every delivery the console took off the queue, and what it did.',
       words: 'webhook log deliveries github slack events debug queue ignored queued label comment mention history' },
+
+    // Analytics (admins)
+    { page: '/analytics', id: 'analytics-totals', title: 'Analytics', note: 'How the team uses Woodshed: sessions, pull requests, time to merge.',
+      words: 'analytics usage adoption stats statistics metrics report dashboard manager team engineers sessions started pull requests pr merged time to merge cycle lead time' },
+    { page: '/analytics', id: 'analytics-people', title: 'By person', note: 'Each person\'s sessions, and their pull requests through Woodshed and not.',
+      words: 'people engineers team per person who adoption usage share through woodshed outside lines added removed' },
+    { page: '/analytics', id: 'analytics-pulls', title: 'Pull requests and merge risk', note: 'Recent pull requests, through Woodshed or not, with their merge risk.',
+      words: 'pull requests pr merge risk high medium low review tier time to merge open merged' },
   ];
 
   const words = (text) => String(text ?? '').toLowerCase().split(/[^a-z0-9.#]+/).filter(Boolean);

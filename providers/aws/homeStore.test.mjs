@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Readable } from 'node:stream';
 
-import { byteLimit, privateSessionHomeName } from '../../console/homes.mjs';
+import { byteLimit, conversationKey, privateSessionHomeName } from '../../console/homes.mjs';
 import { createHomeStore } from './homeStore.mjs';
 
 // A stand-in for `aws s3 cp`, which keeps what it is given and hands it back.
@@ -107,3 +107,28 @@ test('a person\'s session homes go in batches of the most S3 deletes at once', a
   await assert.rejects(refusing.removeSessionsOf('octocat'), /did not delete 1 session homes: AccessDenied/, 'a key S3 kept is a failure, not a count');
 });
 
+
+test('a session\'s conversation beside its home goes in the same delete, and a person\'s session homes are counted alone', async () => {
+  const s3 = fakeS3();
+  const homes = createHomeStore({ bucket: 'b', aws: s3.aws, spawnImpl: s3.spawnImpl });
+  const own = privateSessionHomeName('Octocat', 'aaaaaaaa');
+  await homes.put(own, Readable.from([Buffer.from('tar')]));
+  await homes.putText(conversationKey(own), '{"entries":[]}');
+  await homes.put(privateSessionHomeName('octocat', 'bbbbbbbb'), Readable.from([Buffer.from('tar')]));
+  await homes.putText(conversationKey(privateSessionHomeName('octocat', 'bbbbbbbb')), '{}');
+  assert.ok(s3.objects.has('s3://b/octocat/sessions/aaaaaaaa/conversation.json'));
+  s3.calls.length = 0;
+  await homes.remove(own);
+  assert.deepEqual(s3.calls, ['s3api delete-objects'], 'one call for both');
+  assert.ok(!s3.objects.has('s3://b/octocat/sessions/aaaaaaaa/conversation.json'));
+  assert.ok(!s3.objects.has('s3://b/octocat/sessions/aaaaaaaa/claude-home.tar.gz'));
+  assert.equal(await homes.removeSessionsOf('octocat'), 1, 'the homes, not the conversations beside them');
+  assert.equal(s3.objects.size, 0);
+});
+
+test('a home S3 would not delete is an error, for the caller to try again', async () => {
+  const s3 = fakeS3();
+  const aws = async (args) => (args[1] === 'delete-objects' ? { Errors: [{ Key: 'k', Code: 'AccessDenied' }] } : s3.aws(args));
+  const homes = createHomeStore({ bucket: 'b', aws, spawnImpl: s3.spawnImpl });
+  await assert.rejects(homes.remove('_sessions/aaaaaaaa'), /AccessDenied/);
+});

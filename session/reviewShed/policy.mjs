@@ -7,6 +7,7 @@
 // [method, the path after /reviews/claude-<id>, or /reviews/claude-<id>-pr<n> for the review of another of its pull requests]
 const WRITES = [
   ['POST', 'comments'], ['DELETE', 'comments'], ['POST', 'submit'], ['PATCH', 'title'], ['POST', 'viewed'], ['POST', 'merge'],
+  ['POST', 'conversations'],
 ];
 
 /** @returns {string} the part after /reviews/<review name>/, '' for the status call */

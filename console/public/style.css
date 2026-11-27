@@ -643,16 +643,17 @@ dialog.wizard:focus { outline: none; }
   .pphone-meta { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 11px; color: var(--bar-sub); }
   .pphone-meta > * { flex: none; }
   .pphone-meta .papp { display: inline-flex; align-items: center; gap: 5px; }
-  .pane-bar .pmore { display: grid; place-items: center; order: 2; flex: none; width: 38px; height: 34px; margin: 0; padding: 0; font: inherit; font-size: 17px; letter-spacing: 1px; color: var(--bar-ink); background: none; border: 1px solid var(--bar-well-line); border-radius: 6px; cursor: pointer; }
+  .pane-bar .pmore { display: grid; place-items: center; order: 3; flex: none; width: 38px; height: 34px; margin: 0; padding: 0; font: inherit; font-size: 17px; letter-spacing: 1px; color: var(--bar-ink); background: none; border: 1px solid var(--bar-well-line); border-radius: 6px; cursor: pointer; }
   .pane-bar .pmore[aria-expanded="true"] { background: var(--bar-on); }
-  .pane-bar .ptabs { order: 3; flex: 1 1 100%; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+  .pane-bar .ptabs { order: 4; flex: 1 1 100%; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
   .pane-bar .ptab { justify-content: center; padding: 6px 0; font-size: 13px; }
-  .pane-bar .psubtabs { order: 4; flex: 1 1 100%; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); margin: 0; }
+  .pane-bar .psubtabs { order: 5; flex: 1 1 100%; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); margin: 0; }
   .pane-bar .psubtab { padding: 5px 0; font-size: 12.5px; }
   .pane-bar > .ptitle, .pane-bar > .status, .pane-bar > .prchip, .pane-bar .pright, .pane-bar .pkeys,
   .pane-bar .pref, .pane-bar .pmark, .pane-bar .pbtn { display: none; }
-  /* The agent switch stays, on a row of its own under the tabs: on a phone it is how Chat and TUI reach another agent. */
-  .pane-bar .pbtn.pagent { display: inline-flex; order: 5; flex: 1 1 100%; justify-content: center; min-height: 30px; font-size: 12.5px; }
+  .pane-bar .pbtn.pagent { display: inline-flex; order: 2; max-width: 42%; min-height: 34px; font-size: 12.5px; }
+  .pagent .pagent-label { overflow: hidden; text-overflow: ellipsis; }
+  .pagent .pagent-count { display: none; }
 
   /* The message box under claude's terminal (messageBox.js): 📎, the field, and the mic or Send. */
   .msgbox:not([hidden]) { display: flex; flex: none; flex-direction: column; gap: 6px; padding: 7px 8px 8px; background: var(--bar); border-top: 1px solid var(--bar-line); }
@@ -829,7 +830,7 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .btn-danger { border: 1px solid var(--bad); background: transparent; color: var(--bad); }
 .pill.is-work { background: var(--slate-tint); color: var(--slate); }
 .pill.is-bad { background: var(--del-tint); color: var(--bad); }
-.pill:not(.is-ok):not(.is-warn):not(.is-work):not(.is-bad) { background: var(--stopped); color: var(--meta); }
+.pill:not(.is-ok):not(.is-warn):not(.is-work):not(.is-bad):not(.is-woodshed):not(.is-model) { background: var(--stopped); color: var(--meta); }
 .set-card.is-wide { max-width: 880px; }
 /* My settings: groups of rows that open in place (designSystem/components/SettingsRows). */
 .set-group { display: flex; flex-direction: column; gap: 6px; max-width: 780px; scroll-margin-top: 12px; }
@@ -1413,6 +1414,38 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 .people-table .edit-row td { border-top: 0; padding-top: 0; }
 .people-table .role-head th { border-top: 1px solid var(--line-soft); padding-top: 10px; }
 .people-table .sign-ins { min-width: 160px; }
+/* The Analytics page (analytics.js): the people table's look for its tables, numbers right-aligned in mono, and its
+   trend bars (components/TrendBars): Woodshed's in slate on the others' in idle grey, a legend and tooltips saying the
+   numbers. */
+.analytics-page .set-group { max-width: none; margin-bottom: 8px; }
+.page.analytics-page:has(> .settings-side) { max-width: 1440px; }
+.analytics-table th, .analytics-table td { padding-left: 10px; padding-right: 10px; }
+.analytics-table .person, .analytics-table .link-btn { white-space: nowrap; }
+.analytics-table .num { text-align: right; white-space: nowrap; }
+.analytics-table td.num { font-family: var(--mono); font-size: 12.5px; }
+.analytics-table td.mono { white-space: nowrap; font-size: 12px; }
+.analytics-table .quiet, .analytics-page .quiet { color: var(--meta); }
+.analytics-table tr.is-picked td { background: var(--slate-tint); }
+/* meta is 4.1:1 on slate-tint: the picked row's quiet text is sub, 4.5:1 or better. */
+.analytics-table tr.is-picked .quiet { color: var(--sub); }
+.analytics-table .analytics-title { min-width: 260px; }
+.analytics-table .link-btn { padding: 0; border: 0; background: none; color: var(--slate); font: inherit; cursor: pointer; text-align: left; }
+.analytics-table .link-btn:hover { text-decoration: underline; }
+.analytics-bar { padding: 10px 14px; }
+.analytics-more { padding: 8px 14px; margin: 0; }
+.trend { padding: 12px 14px; border-top: 1px solid var(--line-soft); }
+.trend-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-bottom: 8px; }
+.trend-legend { display: inline-flex; gap: 14px; font-size: 12.5px; color: var(--sub); }
+.trend-key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.trend-max { margin-left: auto; font-size: 11.5px; color: var(--meta); }
+.trend-svg { display: block; width: 100%; height: 120px; overflow: visible; }
+.trend-bar.is-woodshed, .trend-key.is-woodshed { fill: var(--slate); background: var(--slate); }
+.trend-bar.is-violet, .trend-key.is-violet { fill: var(--proj-violet); background: var(--proj-violet); }
+.trend-bar.is-other, .trend-key.is-other { fill: var(--proj-teal); background: var(--proj-teal); }
+.trend-hit { fill: transparent; }
+.trend-svg g:hover .trend-bar { opacity: 0.8; }
+.trend-base { stroke: var(--line); stroke-width: 1; }
+.trend-axis { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11.5px; color: var(--meta); }
 .sign-in-list { display: flex; flex-wrap: wrap; gap: 4px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .slack-line { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
@@ -1630,6 +1663,9 @@ h1.title .pill { vertical-align: middle; font-family: "Red Hat Display", system-
 .chat-needs-error { flex: 1 1 100%; order: 4; margin: 0; color: var(--bad); }
 .chat-needs-actions { flex: none; display: flex; gap: 6px; margin-left: auto; }
 .chat-needs-actions .chat-answer { margin-left: 0; }
+/* A stopped session's kept conversation: in the composer's place, how it ended and its Resume, on the stopped ground. */
+.chat-status.is-ended { flex-wrap: wrap; gap: 12px; padding: 10px 10px 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--stopped); }
+.chat-ended-text { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
 .chat-composer { display: flex; flex-direction: column; gap: 6px; padding: 10px 8px 8px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--ground); }
 .chat-composer:focus-within { border-color: var(--amber); }
 .chat-field { min-height: 44px; margin: 0; padding: 0 6px 0 0; resize: none; border: 0; outline: none; background: none; color: var(--ink); font: 15px/22px "Red Hat Display", system-ui, sans-serif; }
@@ -1690,3 +1726,41 @@ h1.title .pill { vertical-align: middle; font-family: "Red Hat Display", system-
 .peek-rows dt { color: var(--meta); }
 .peek-rows dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .peek-rows dd.is-mono { font-family: var(--mono); font-size: 11.5px; line-height: 1.6; }
+
+/* Analytics colour and icons (analytics.js): a tone for each figure and icon, tier and state pills, green and red lines,
+   the merge risk bar, the repo split bar, and Show more. Each tone is a project colour or a status colour on its tint. */
+.a-ico { display: inline-flex; vertical-align: -3px; margin-right: 6px; color: var(--meta); }
+.a-ico.is-slate { color: var(--slate); } .a-ico.is-violet { color: var(--proj-violet); } .a-ico.is-teal { color: var(--proj-teal); }
+.a-ico.is-green { color: var(--green); } .a-ico.is-amber { color: var(--amber-ink); } .a-ico.is-rose { color: var(--proj-rose); }
+.analytics-page .figure { border-top: 2px solid var(--line-soft); }
+.analytics-page .figure.is-slate { border-top-color: var(--slate); } .analytics-page .figure.is-violet { border-top-color: var(--proj-violet); }
+.analytics-page .figure.is-teal { border-top-color: var(--proj-teal); } .analytics-page .figure.is-green { border-top-color: var(--green); }
+.analytics-page .figure.is-amber { border-top-color: var(--amber); } .analytics-page .figure.is-rose { border-top-color: var(--proj-rose); }
+.analytics-page .figure.is-slate .figure-value { color: var(--slate); } .analytics-page .figure.is-violet .figure-value { color: var(--proj-violet); }
+.analytics-page .figure.is-teal .figure-value { color: var(--proj-teal); } .analytics-page .figure.is-green .figure-value { color: var(--green); }
+.analytics-page .figure.is-amber .figure-value { color: var(--amber-ink); } .analytics-page .figure.is-rose .figure-value { color: var(--proj-rose); }
+.lines { white-space: nowrap; } .lines-add { color: var(--add); font-weight: 600; } .lines-del { color: var(--del); font-weight: 600; }
+.analytics-table td.num.is-violet-ink { color: var(--proj-violet); font-weight: 600; } .analytics-table td.num.is-green-ink { color: var(--green); font-weight: 600; }
+.pill.is-woodshed { background: var(--proj-violet-tint); color: var(--proj-violet); } .pill.is-woodshed a { color: inherit; text-decoration: none; font-weight: 600; }
+.pill.is-model { background: var(--proj-teal-tint); color: var(--proj-teal); } .pill.is-model .a-ico { color: inherit; margin-right: 4px; vertical-align: -3px; }
+.reviewers { white-space: nowrap; }
+.agent-tag { font-size: 11.5px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--stopped); color: var(--sub); white-space: nowrap; }
+.agent-tag.is-claude { background: var(--amber-tint); color: var(--amber-ink); } .agent-tag.is-codex { background: var(--proj-teal-tint); color: var(--proj-teal); }
+.agent-tag.is-grok { background: var(--proj-violet-tint); color: var(--proj-violet); } .agent-tag.is-opencode { background: var(--proj-rose-tint); color: var(--proj-rose); }
+.risk { padding: 12px 14px; border-top: 1px solid var(--line-soft); }
+.risk-row { display: grid; grid-template-columns: minmax(150px, 220px) 1fr auto; gap: 6px 14px; align-items: center; margin-top: 8px; }
+.risk-name { font-size: 13px; font-weight: 600; } .risk-name .quiet { font-weight: 400; }
+.risk-bar { display: flex; gap: 2px; height: 12px; border-radius: 6px; overflow: hidden; background: var(--stopped); }
+.risk-seg.is-low { background: var(--add); } .risk-seg.is-medium { background: var(--amber); } .risk-seg.is-high { background: var(--del); } .risk-seg.is-none { background: var(--idle-dot); }
+.risk-counts { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 700px) { .risk-row { grid-template-columns: 1fr; } }
+.share-bar { display: flex; height: 8px; min-width: 120px; border-radius: 4px; overflow: hidden; background: var(--stopped); }
+.share-w { background: var(--proj-violet); } .share-o { background: var(--proj-teal); }
+.analytics-table .bar-cell { width: 28%; }
+.analytics-table .link-btn .a-ico { margin-right: 6px; }
+.analytics-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.analytics-more-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 10px 14px; }
+.analytics-btn { display: inline-flex; align-items: center; gap: 2px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--ground); color: var(--slate); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.analytics-btn:hover { background: var(--slate-tint); } .analytics-btn .a-ico { margin-right: 4px; color: inherit; }
+.person-pick { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--sub); }
+.person-pick select { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--ground); color: var(--ink); }

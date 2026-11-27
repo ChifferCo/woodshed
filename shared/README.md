@@ -4,6 +4,7 @@ Modules the console and the sessions both run. They import nothing outside this 
 Woodshed can embed them too.
 
 - `review/` (with its own README) and `prStatus.mjs`, which import each other: code review and a session's pull requests.
+- `dictation.mjs`: browser speech recognition for the console composers and the standalone review page.
 - `sessionState.mjs`: what a session's pane and transcript say it is doing.
 - `terminalImages.mjs` and `devServerProcs.mjs`: which file a click in a terminal may open, and which dev servers may be
   stopped.

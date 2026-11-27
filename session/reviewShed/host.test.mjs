@@ -71,6 +71,7 @@ test('a shared session is read-only: no pull request on the page, and a write is
   assert.equal(status.ghAccount, null);
   const refused = await call('POST', '/shed-review/reviews/claude-0a1b2c3d/merge', { subject: 's' });
   assert.equal(refused.status, 403);
+  assert.equal((await call('POST', '/shed-review/reviews/claude-0a1b2c3d/conversations', { ids: ['thread'] })).status, 403);
   assert.equal(shed.calls.length, 1, 'only the status call reached the shed');
   assert.equal((await call('POST', '/shed-review/reviews/claude-0a1b2c3d/chat', { question: 'q' })).status, 200);
 });

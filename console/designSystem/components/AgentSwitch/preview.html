@@ -7,6 +7,10 @@
  .sw.needs{border-color:var(--bar-amber-line)}
  .count{font-weight:500;color:var(--bar-sub)}
  .needs-word{color:var(--bar-amber)}
+ .phone{max-width:374px;gap:10px;color:var(--bar-ink)}
+ .phone b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .phone .sw{min-height:34px;font-size:12.5px}
+ .phone .more{box-sizing:border-box;width:38px;justify-content:center;border-radius:6px}
  .menu{width:300px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--ground);box-shadow:0 8px 24px rgba(27,34,50,.18)}
  .group{padding:6px 10px 2px;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--sub)}
  .item{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:6px}
@@ -15,6 +19,7 @@
  .item.bad b{color:var(--bad)}
 </style>
 <div class="bar"><span class="sw">Codex ▾</span><span class="sw needs">Claude · opus <span class="count">3 agents</span> <span class="needs-word">1 needs you</span> ▾</span></div>
+<div class="bar phone"><span>‹</span><b>Several agents in one session</b><span class="sw">Codex ▾</span><span class="sw more">⋯</span></div>
 <div class="menu">
  <div class="group">AGENTS</div>
  <div class="item"><b>Codex (the session's own)</b><span>Needs you</span></div>

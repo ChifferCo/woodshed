@@ -9,7 +9,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
-import { byteLimit, MAX_HOME_BYTES } from '../../console/homes.mjs';
+import { byteLimit, conversationKey, MAX_HOME_BYTES } from '../../console/homes.mjs';
 import logins from '../../console/public/logins.cjs';
 
 const { loginKey } = logins;
@@ -82,7 +82,9 @@ export function createHomeStore({ dir }) {
     }
   }
 
+  // With the conversation kept beside it (console/homes.mjs).
   async function remove(login) {
+    await removeFile(fileOf(conversationKey(login)));
     await removeFile(homeFile(login));
     console.log('homes: deleted', { login });
   }

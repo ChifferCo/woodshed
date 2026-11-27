@@ -60,17 +60,17 @@ function setup(sessions) {
     onChange: (fn) => { listener = fn; },
     later: timers.later, cancel: timers.cancel, now: () => clock,
   });
-  const open = (login = 'joel') => {
+  const open = (login = 'joel', opts = {}) => {
     const res = fakeResponse();
-    live.handle(new EventEmitter(), res, login);
+    live.handle(new EventEmitter(), res, login, opts);
     return res;
   };
   return { live, timers, open, asked, changed: () => listener(), advance: (ms) => { clock += ms; } };
 }
 
-test('a page gets the whole list first, then each change within a moment of the fleet making it', () => {
+test('a page gets the whole list first, then each change within a moment of the fleet making it', async () => {
   const sessions = [{ id: 'aaaa1111', state: 'done' }];
-  const { open, timers, changed, asked } = setup(sessions);
+  const { live, open, timers, changed, asked } = setup(sessions);
   const res = open();
   assert.equal(res.head.status, 200);
   assert.equal(res.head.headers['content-type'], 'text/event-stream; charset=utf-8');
@@ -82,27 +82,31 @@ test('a page gets the whole list first, then each change within a moment of the 
   changed();
   changed();
   assert.equal(timers.run(DEBOUNCE_MS), 1, 'many changes at once, one patch');
+  await live.settled();
   assert.deepEqual(res.events().slice(1), [{ event: 'patch', data: { top: { running: 1 }, sessions: [{ state: 'working', id: 'aaaa1111' }] } }]);
 });
 
-test('what changes outside the fleet is found by the sweep, and a quiet list sends nothing', () => {
+test('what changes outside the fleet is found by the sweep, and a quiet list sends nothing', async () => {
   const sessions = [{ id: 'aaaa1111', state: 'done', pr: null }];
-  const { open, timers } = setup(sessions);
+  const { live, open, timers } = setup(sessions);
   const res = open();
   timers.run(SWEEP_MS);
+  await live.settled();
   assert.equal(res.events().length, 1);
   sessions[0].pr = { state: 'open' };
   timers.run(SWEEP_MS);
+  await live.settled();
   assert.deepEqual(res.events().at(-1), { event: 'patch', data: { sessions: [{ pr: { state: 'open' }, id: 'aaaa1111' }] } });
   assert.ok(timers.pending().includes(SWEEP_MS), 'and goes on');
 });
 
-test('a stream ends after five minutes, for the browser to open it again signed in afresh, and all end at the stop', () => {
+test('a stream ends after five minutes, for the browser to open it again signed in afresh, and all end at the stop', async () => {
   const { live, open, timers, advance } = setup([{ id: 'aaaa1111', state: 'done' }]);
   const old = open();
   advance(MAX_AGE_MS);
   const fresh = open();
   timers.run(SWEEP_MS);
+  await live.settled();
   assert.equal(old.ended, true);
   assert.equal(fresh.ended, false);
   assert.equal(live.open(), 1);
@@ -112,7 +116,7 @@ test('a stream ends after five minutes, for the browser to open it again signed 
   assert.deepEqual(timers.pending(), [], 'nothing keeps running');
 });
 
-test('a page that went is not written to again', () => {
+test('a page that went is not written to again', async () => {
   const sessions = [{ id: 'aaaa1111', state: 'done' }];
   const { live, open, timers, changed } = setup(sessions);
   const res = open();
@@ -121,5 +125,21 @@ test('a page that went is not written to again', () => {
   sessions[0].state = 'working';
   changed();
   timers.run(DEBOUNCE_MS);
+  await live.settled();
   assert.equal(res.events().length, 1);
+});
+
+test('a stream whose sign-in no longer lets it in gets nothing more, and ends', async () => {
+  const sessions = [{ id: 'aaaa1111', state: 'done' }];
+  const { live, open, timers, changed } = setup(sessions);
+  let member = true;
+  const res = open('joel', { stillAllowed: async () => member });
+  member = false;
+  sessions[0].state = 'working';
+  changed();
+  timers.run(DEBOUNCE_MS);
+  await live.settled();
+  assert.equal(res.events().length, 1, 'only the list it had when it was let in');
+  assert.equal(res.ended, true);
+  assert.equal(live.open(), 0);
 });

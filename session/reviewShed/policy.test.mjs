@@ -11,6 +11,8 @@ test('every call that writes to GitHub is recognised, and reads are not', () => 
   assert.equal(isGithubWrite({ method: 'PATCH', pathname: `${s}/title` }), true);
   assert.equal(isGithubWrite({ method: 'POST', pathname: `${s}/viewed` }), true);
   assert.equal(isGithubWrite({ method: 'POST', pathname: `${s}/merge` }), true);
+  assert.equal(isGithubWrite({ method: 'POST', pathname: `${s}/conversations` }), true);
+  assert.equal(isGithubWrite({ method: 'GET', pathname: `${s}/conversations` }), false);
   assert.equal(isGithubWrite({ method: 'GET', pathname: `${s}/comments` }), false);
   assert.equal(isGithubWrite({ method: 'GET', pathname: `${s}/merge` }), false);
   assert.equal(isGithubWrite({ method: 'POST', pathname: `${s}/chat` }), false);
