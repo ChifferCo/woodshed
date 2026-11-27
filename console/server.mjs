@@ -3261,7 +3261,10 @@ export function createHandler({
       // Signed in again before each send: someone taken off People, or signed out, gets nothing more on a stream they
       // opened before (signedIn, the check every request gets).
       const headers = req.headers;
-      const stillAllowed = signInOn() ? async () => (await consoleUser(headers))?.login === user.login : () => true;
+      // Asked afresh each time: a console that starts requiring sign-in (its first GitHub sign-in) ends a stream opened
+      // before, with no sign-in, as it refuses that request now. In hosted mode the identity the stream opened with is
+      // checked again, expiry included, so the stream ends at the latest when that identity does.
+      const stillAllowed = async () => (signInOn() ? (await consoleUser(headers))?.login === user.login : user.login === soloLogin);
       return liveSessions.handle(req, res, user.login, { stillAllowed });
     }
     if (pathname === '/api/my') {

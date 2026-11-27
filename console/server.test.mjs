@@ -11,6 +11,7 @@ import { createProjectColors } from './projectColors.mjs';
 import { createTunnel } from './dbTunnel.mjs';
 import { createCliSignIn } from './cliSignIn.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
+import { createTrustedIdentity, IDENTITY_HEADER, signIdentity } from './trustedIdentity.mjs';
 import { createClaudeSettings } from './claudeSettings.mjs';
 import agentsRegistry from '../shared/agents.cjs';
 import { createSlack } from './slack.mjs';
@@ -3277,4 +3278,83 @@ test('someone taken off People with the live list open gets no more of their pri
   assert.ok(!body.includes('event: patch'), 'no change reached the stream');
   assert.ok(!body.includes('something private'));
   assert.equal((await getWith(port, '/api/sessions/live', { cookie: 'woodshed_session=good' })).status, 401);
+});
+
+// A live list stream on a test console: its events as they come, and a way to wait for one or for its end.
+async function openLiveStream(port, headers = {}) {
+  const res = await new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/api/sessions/live', headers: { host: `localhost:${port}`, ...headers } }, resolve);
+    req.on('error', reject);
+    req.end();
+  });
+  let body = '';
+  let ended = false;
+  res.setEncoding('utf8');
+  res.on('data', (chunk) => { body += chunk; });
+  res.on('end', () => { ended = true; });
+  const until = async (check, ms = 2000) => {
+    const at = Date.now();
+    while (!check() && Date.now() - at < ms) await new Promise((resolve) => setTimeout(resolve, 10));
+    return check();
+  };
+  return { res, body: () => body, ended: () => ended, until };
+}
+
+test('a live list opened before the console required sign-in ends once it does, with nothing more sent', async (t) => {
+  const shared = { id: '0a1b2c3d', status: 'running', state: 'done', title: 'Shared' };
+  const listeners = [];
+  const fleet = { sessions: () => [shared], find: (id) => (id === shared.id ? shared : null), onChange: (fn) => listeners.push(fn) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  let on = false;
+  const auth = { enabled: () => on, available: () => true, sessionFor: async () => null };
+  const handle = createHandler({ config, fleet, auth });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => { handle.liveSessions.closeAll(); server.close(); });
+
+  const stream = await openLiveStream(port);
+  assert.equal(stream.res.statusCode, 200, 'no sign-in yet: anyone on loopback');
+  assert.ok(await stream.until(() => stream.body().includes('event: full')));
+  shared.state = 'working';
+  for (const fn of listeners) fn(shared.id);
+  assert.ok(await stream.until(() => stream.body().includes('event: patch')), 'changes come while sign-in is off');
+
+  on = true;
+  shared.state = 'done';
+  shared.title = 'Renamed after sign-in';
+  for (const fn of listeners) fn(shared.id);
+  const ended = await stream.until(() => stream.ended());
+  stream.res.destroy();
+  assert.equal(ended, true, 'the stream ends');
+  assert.ok(!stream.body().includes('Renamed after sign-in'), 'nothing after sign-in was required');
+  assert.equal((await getWith(port, '/api/sessions/live')).status, 401);
+});
+
+test('a hosted live list ends when the identity it opened with expires, as any request with it would be refused', async (t) => {
+  const mine = { id: '0a1b2c3d', status: 'running', state: 'done', title: 'Mine', owner: 'octo' };
+  const listeners = [];
+  const fleet = { sessions: () => [mine], find: (id) => (id === mine.id ? mine : null), onChange: (fn) => listeners.push(fn) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  let clock = Date.now();
+  const secret = 'test-secret-for-the-hosting-proxy';
+  const trusted = createTrustedIdentity({ secret, now: () => clock });
+  const handle = createHandler({ config, fleet, trusted });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => { handle.liveSessions.closeAll(); server.close(); });
+
+  const identity = signIdentity({ secret, login: 'octo', role: 'member', exp: clock + 60_000 });
+  const stream = await openLiveStream(port, { [IDENTITY_HEADER]: identity });
+  assert.equal(stream.res.statusCode, 200);
+  assert.ok(await stream.until(() => stream.body().includes('event: full')));
+
+  clock += 60_001;
+  mine.state = 'working';
+  mine.lastMessage = 'after the identity expired';
+  for (const fn of listeners) fn(mine.id);
+  const ended = await stream.until(() => stream.ended());
+  stream.res.destroy();
+  assert.equal(ended, true, 'the stream ends');
+  assert.ok(!stream.body().includes('after the identity expired'));
+  assert.equal((await getWith(port, '/api/sessions/live', { [IDENTITY_HEADER]: identity })).status, 401, 'as a new request with it is');
 });
