@@ -858,11 +858,11 @@ export function draftInBox(colored, agent) {
     const dot = metaCells.findIndex((c) => c.ch === '·');
     const model = metaCells.slice(dot + 1).find((c) => c.ch.trim());
     if (!model) return null;
-    // The box's lines above it, inside the same border, to the box's top.
+    // The box's lines above it share the model's background. The sidebar beside them can use the same text color.
     for (let j = meta - 1; j >= 0 && /^\s*┃/.test(plain[j]); j--) {
       const cells = cellsOf(lines[j]);
       const border = cells.findIndex((c) => c.ch === '┃');
-      if (cells.slice(border + 1).some((c) => c.ch.trim() && c.fg === model.fg)) return true;
+      if (cells.slice(border + 1).some((c) => c.ch.trim() && c.fg === model.fg && c.bg === model.bg)) return true;
     }
     return false;
   }
