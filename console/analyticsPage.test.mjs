@@ -160,3 +160,17 @@ test('Refresh posts to the console, shows Refreshing… while the read runs, and
   assert.ok(first.startsWith('Pull requests as of') && asOf() !== first, 'with the page showing the data as of the new read');
   assert.equal(queue.length, 0, 'and it stops asking');
 });
+
+test('the Sessions group draws the agents as a bar with a tag and count for each, and the people table a bar before each count', async () => {
+  const data = report();
+  data.sessions.agents = { claude: 50, codex: 20 };
+  data.sessions.work = 70;
+  const page = await loadPage(data);
+  const bar = page.walk().find((e) => /^Sessions by agent/.test(e.attrs['aria-label'] ?? ''));
+  assert.ok(bar, 'an agent bar');
+  assert.equal(bar.attrs['aria-label'], 'Sessions by agent: Claude 50, Codex 20');
+  assert.equal(bar.children.length, 2, 'a segment for each agent');
+  const tags = page.walk().filter((e) => /agent-tag/.test(e.className) && /\d$/.test(textOf(e))).map((e) => textOf(e));
+  assert.deepEqual(tags, ['Claude 50', 'Codex 20']);
+  assert.ok(page.walk().some((e) => e.className === 'cell-bar-fill'), 'a bar in the people table');
+});

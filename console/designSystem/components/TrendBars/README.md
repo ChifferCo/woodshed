@@ -21,6 +21,11 @@ Also on Analytics, in the same box as the bars:
 - **Risk bar**: a 12px stacked bar, one for each kind of pull request, split into Low (`add`), Medium (`amber`), High (`del`) and
   Not reviewed (`idle-dot`) with 2px between, and under or beside it a pill with the count for each level, in words. The
   count is in the pill and the bar's `aria-label`, never the colour alone.
+- **Agent bar**: the risk bar's shape under the Sessions figures: one segment for each agent the sessions ran on, in its tag's
+  colour (Claude `amber`, Codex `proj-teal`, Grok Build `proj-violet`, OpenCode `proj-rose`, any other `idle-dot`), with the
+  agent's tag and count beside it. The count is in the tag and the bar's `aria-label`, never the colour alone.
+- **Sessions bar**: in the by-person table, a 6px `proj-violet` bar at 55% opacity before the session count, up to 70px for the
+  person with the most. The number is always beside it.
 - **Split bar**: an 8px bar in the by-repo table, `proj-violet` through Woodshed and `proj-teal` without, widths against the largest repo.
 - **Agent tag** (Claude amber, Codex teal, Grok violet, OpenCode rose) and **Woodshed / models pills**: a pill on the tint of the
   colour, the agent's name in it.

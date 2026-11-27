@@ -202,9 +202,22 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
         { label: 'Sessions started', icon: 'sessions', tone: 'violet', value: n(total), sub: `${n(privateCount)} My Woodshed · ${n(total - privateCount)} shared` },
         picked ? null : { label: 'People using it', icon: 'people', tone: 'teal', value: s.members ? `${n(s.activeMembers)} / ${n(s.members)}` : n(s.people), sub: s.members ? `members started a session${s.people > s.activeMembers ? `, and ${n(s.people - s.activeMembers)} not on People` : ''}` : 'started a session' },
         picked ? null : { label: 'Reviews run', icon: 'review', tone: 'green', value: n(s.review), sub: `${n(s.qa)} QA runs · ${n(s.ask)} questions from Slack` },
-        { label: 'Most used agent', icon: 'agent', tone: 'amber', value: agents.length ? `${AGENT_NAMES[agents[0][0]] ?? agents[0][0]} ${pct(agents[0][1] / total)}` : '—', sub: agents.length > 1 ? agents.slice(1).map(([id, c]) => `${AGENT_NAMES[id] ?? id} ${n(c)}`).join(' · ') : 'of sessions' },
+        { label: 'Most used agent', icon: 'agent', tone: 'amber', value: agents.length ? `${AGENT_NAMES[agents[0][0]] ?? agents[0][0]} ${pct(agents[0][1] / total)}` : '—', sub: 'of sessions, split below' },
       ]),
+      agentMix(agents, total),
       trendBars({ label: 'Sessions started', ico: 'sessions', buckets, series: [{ key: 'a', cls: 'is-violet', word: 'sessions', label: 'Sessions' }] }));
+  }
+
+  // A stacked bar of the agents sessions ran on, each in the colour of its tag, with a tag and count for each.
+  function agentMix(agents, total) {
+    if (!total || !agents.length) return null;
+    const words = agents.map(([id, c]) => `${AGENT_NAMES[id] ?? id} ${n(c)}`).join(', ');
+    return h('div', { class: 'risk agent-mix' },
+      h('div', { class: 'risk-row' },
+        h('div', { class: 'risk-name' }, icon('agent', 'amber'), 'Agents', h('span', { class: 'quiet' }, ` · ${n(total)} sessions`)),
+        h('div', { class: 'risk-bar', role: 'img', 'aria-label': `Sessions by agent: ${words}` },
+          agents.map(([id, c]) => h('span', { class: `risk-seg is-agent-${AGENT_NAMES[id] ? id : 'other'}`, style: `flex: ${c} 1 0`, title: `${AGENT_NAMES[id] ?? id}: ${n(c)}` }))),
+        h('div', { class: 'risk-counts' }, agents.map(([id, c]) => h('span', { class: `agent-tag is-${AGENT_NAMES[id] ? id : 'other'}` }, `${AGENT_NAMES[id] ?? id} ${n(c)}`)))));
   }
 
   // A stacked bar of how many pull requests had each merge risk, and the count for each level.
@@ -295,6 +308,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
   // Each person beside the others: what they started, and how their pull requests went, through Woodshed and not.
   function peopleGroup() {
     const picked = who();
+    const mostSessions = Math.max(1, ...data.people.map((p) => p.sessions));
     const rows = data.people.map((p) => {
       const opened = p.woodshed.opened + p.other.opened;
       const risky = p.woodshed.tiers.High + p.other.tiers.High;
@@ -305,7 +319,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
           type: 'button', class: 'link-btn', 'aria-pressed': String(pickedHere), title: pickedHere ? 'Show everyone' : 'Show only their sessions and pull requests',
           onclick: () => pick('person', pickedHere ? null : p.login, null),
         }, icon('human', 'slate'), W.person(p.login))),
-        h('td', { class: 'num is-violet-ink' }, p.sessions ? n(p.sessions) : h('span', { class: 'quiet' }, 'none')),
+        h('td', { class: 'num is-violet-ink' }, p.sessions ? h('div', { class: 'cell-bar' }, h('span', { class: 'cell-bar-fill', style: `width: ${Math.max(4, Math.round((p.sessions / mostSessions) * 70))}px` }), h('span', null, n(p.sessions))) : h('span', { class: 'quiet' }, 'none')),
         h('td', { class: 'num' }, n(p.activeDays)),
         h('td', { class: 'mono quiet' }, p.lastAt ? day(p.lastAt) : '—'),
         h('td', { class: 'num' }, `${n(p.woodshed.opened)}`, h('span', { class: 'quiet' }, ` / ${n(p.woodshed.merged)}`)),

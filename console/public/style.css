@@ -1752,6 +1752,10 @@ h1.title .pill { vertical-align: middle; font-family: "Red Hat Display", system-
 .risk-name { font-size: 13px; font-weight: 600; } .risk-name .quiet { font-weight: 400; }
 .risk-bar { display: flex; gap: 2px; height: 12px; border-radius: 6px; overflow: hidden; background: var(--stopped); }
 .risk-seg.is-low { background: var(--add); } .risk-seg.is-medium { background: var(--amber); } .risk-seg.is-high { background: var(--del); } .risk-seg.is-none { background: var(--idle-dot); }
+.risk-seg.is-agent-claude { background: var(--amber); } .risk-seg.is-agent-codex { background: var(--proj-teal); } .risk-seg.is-agent-grok { background: var(--proj-violet); } .risk-seg.is-agent-opencode { background: var(--proj-rose); } .risk-seg.is-agent-other { background: var(--idle-dot); }
+.agent-mix .risk-name .a-ico { margin-right: 6px; }
+.cell-bar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.cell-bar-fill { display: block; height: 6px; border-radius: 3px; background: var(--proj-violet); opacity: .55; }
 .risk-counts { display: flex; flex-wrap: wrap; gap: 6px; }
 @media (max-width: 700px) { .risk-row { grid-template-columns: 1fr; } }
 .share-bar { display: flex; height: 8px; min-width: 120px; border-radius: 4px; overflow: hidden; background: var(--stopped); }
