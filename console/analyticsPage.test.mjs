@@ -66,7 +66,7 @@ async function loadPage(data) {
     getJson: async () => data,
   };
   const window = { Woodshed: W, location, history: { replaceState: (_a, _b, url) => { location.search = url.includes('?') ? url.slice(url.indexOf('?')) : ''; } } };
-  const context = vm.createContext({ window, document: { createElementNS: (_ns, tag) => element(tag) }, URLSearchParams });
+  const context = vm.createContext({ window, document: { createElementNS: (_ns, tag) => element(tag) }, URLSearchParams, setTimeout, clearTimeout });
   for (const f of ['settingsRows.js', 'analyticsDays.js', 'analytics.js']) vm.runInContext(read(f), context);
   for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
   const buttons = () => walk(app).filter((e) => e.tag === 'button');
