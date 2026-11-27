@@ -1,4 +1,4 @@
-<!-- @dsCard group="Cards" height=330 subtitle="A count over a window, under a group's figures: one series, or Woodshed's on the rest" -->
+<!-- @dsCard group="Cards" height=470 subtitle="A count over a window, under a group's figures: one series, or Woodshed's on the rest" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@300..900&family=Red+Hat+Mono:wght@300..700&display=swap">
 <style>
  body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font:15px/1.5 "Red Hat Display",system-ui,sans-serif}
@@ -16,6 +16,9 @@
  .risk i{display:block}.lo{background:var(--add)}.me{background:var(--amber)}.hi{background:var(--del)}.no{background:var(--idle-dot)}
  .pl{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:999px}.lo2{background:var(--add-tint);color:var(--green)}.me2{background:var(--amber-tint);color:var(--amber-ink)}.hi2{background:var(--del-tint);color:var(--bad)}.no2{background:var(--stopped);color:var(--meta)}
  .lines b{font-weight:600}.add{color:var(--add)}.del{color:var(--del)}
+ .ag1{background:var(--amber)}.ag2{background:var(--proj-teal)}.ag3{background:var(--proj-violet)}.ag4{background:var(--proj-rose)}
+ .at{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:999px}.at1{background:var(--amber-tint);color:var(--amber-ink)}.at2{background:var(--proj-teal-tint);color:var(--proj-teal)}.at3{background:var(--proj-violet-tint);color:var(--proj-violet)}.at4{background:var(--proj-rose-tint);color:var(--proj-rose)}
+ .sb{display:flex;align-items:center;justify-content:flex-end;gap:8px;max-width:160px;font:600 13px "Red Hat Mono",monospace;color:var(--proj-violet)}.sb i{display:block;height:6px;border-radius:3px;background:var(--proj-violet);opacity:.55}
  .axis{display:flex;justify-content:space-between;margin-top:4px}
 </style>
 <div class="box">
@@ -30,5 +33,10 @@
  <div class="head" style="margin-top:14px"><span class="l">Merge risk, every level</span></div>
  <div class="risk" role="img" aria-label="58 low, 54 medium, 16 high, 30 not reviewed"><i class="lo" style="flex:58"></i><i class="me" style="flex:54"></i><i class="hi" style="flex:16"></i><i class="no" style="flex:30"></i></div>
  <div class="cnt" style="display:flex;gap:6px;margin-top:8px"><span class="pl lo2">58 low</span><span class="pl me2">54 medium</span><span class="pl hi2">16 high</span><span class="pl no2">30 not reviewed</span></div>
+ <div class="head" style="margin-top:14px"><span class="l">Agents</span><span style="font-size:12.5px;color:var(--sub)">111 sessions</span></div>
+ <div class="risk" style="margin-top:0" role="img" aria-label="Sessions by agent: Claude 74, Codex 35, Grok Build 1, OpenCode 1"><i class="ag1" style="flex:74"></i><i class="ag2" style="flex:35"></i><i class="ag3" style="flex:1"></i><i class="ag4" style="flex:1"></i></div>
+ <div class="cnt" style="display:flex;gap:6px;margin-top:8px"><span class="at at1">Claude 74</span><span class="at at2">Codex 35</span><span class="at at3">Grok Build 1</span><span class="at at4">OpenCode 1</span></div>
+ <div class="head" style="margin-top:14px"><span class="l">Sessions by person</span></div>
+ <div class="sb"><i style="width:70px"></i>57</div><div class="sb"><i style="width:31px"></i>25</div><div class="sb"><i style="width:4px"></i>1</div>
  <p class="lines" style="font:12.5px 'Red Hat Mono',monospace"><b class="add">+26,254</b> <b class="del">−7,018</b></p>
 </div>
