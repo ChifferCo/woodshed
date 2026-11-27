@@ -755,7 +755,7 @@ async function grokBeside(proxy) {
 async function opencodeBeside({ effort, permissionMode }) {
   if (!OPENCODE) throw Object.assign(new Error('start an OpenCode session to use your saved OpenCode sign-in'), { status: 409 });
   const pane = await fs.mkdtemp(path.join(os.tmpdir(), 'woodshed-opencode-pane-'));
-  const cleanup = () => fs.rm(pane, { recursive: true, force: true });
+  const undo = () => fs.rm(pane, { recursive: true, force: true, maxRetries: 3 });
   try {
     const data = path.dirname(path.dirname(OWN_AUTH_FILES.opencode));
     const config = path.join(pane, 'config');
@@ -772,11 +772,12 @@ async function opencodeBeside({ effort, permissionMode }) {
     'opencode-setup', setup, REPO_DIR, path.join(config, 'opencode'), rules, effort, permissionMode]);
     return {
       env: { XDG_DATA_HOME: data, XDG_CONFIG_HOME: config, OPENCODE_DB: path.join(pane, 'opencode.db') },
-      cleanup,
-      undo: cleanup,
+      // The database and its SQLite sidecars stay after a normal Stop.
+      cleanup: () => fs.rm(config, { recursive: true, force: true, maxRetries: 3 }),
+      undo,
     };
   } catch (err) {
-    await cleanup();
+    await undo();
     if (err.status) throw err;
     throw Object.assign(new Error('could not set up OpenCode in this session'), { status: 409 });
   }
