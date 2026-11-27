@@ -824,7 +824,7 @@ export function composerText(colored, agent) {
  * Whether Grok Build's or OpenCode's input box holds a draft, from a capture with colours: a message is never typed onto
  * one. Neither draws its empty box dim, so each is read its own way (captured from grok 1.0.92 and opencode 1.19.6:
  * shared/__fixtures__/pane-{grok,opencode}-box-*.ansi). Grok's box is `│ ❯ ` in a frame, with nothing after its mark
- * when empty. OpenCode's shows its placeholder in the theme's muted colour, and a draft in its text colour, which the
+ * when empty, except for a dimmed suggestion. OpenCode's shows its placeholder in the theme's muted colour, and a draft in its text colour, which the
  * model's name on the line under the box has too.
  * @param {string} colored  `tmux capture-pane -e -p`
  * @param {'grok'|'opencode'} agent
@@ -838,8 +838,8 @@ export function draftInBox(colored, agent) {
     let at = -1;
     for (let i = 0; i < plain.length; i++) if (/^\s*│\s*❯(\s|$)/.test(plain[i])) at = i;
     if (at === -1) return null;
-    let text = plain[at].replace(/^\s*│\s*❯/, '');
-    for (let j = at + 1; j < plain.length && !/^\s*╰/.test(plain[j]); j++) text += plain[j].replace(/^\s*│/, '');
+    let text = undimmed(lines[at]).replace(/^\s*│\s*❯/, '');
+    for (let j = at + 1; j < plain.length && !/^\s*╰/.test(plain[j]); j++) text += undimmed(lines[j]).replace(/^\s*│/, '');
     return text.replace(/│\s*$/gm, '').trim() !== '';
   }
   if (agent === 'opencode') {

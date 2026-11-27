@@ -167,6 +167,9 @@ test('a draft left in Grok Build\'s or OpenCode\'s box is seen, so a Chat messag
   const plain = (name) => fixture(name).replace(/\x1b\[[0-9;]*m/g, '');
   assert.equal(draftInBox(plain('pane-opencode-box-draft.ansi'), 'opencode'), null, 'OpenCode\'s placeholder is told from a draft by colour alone');
   assert.equal(draftInBox(plain('pane-grok-box-draft.ansi'), 'grok'), true);
+  const suggestion = '  │ ❯ \x1b[2;3mDone.\x1b[0m │\n  ╰──── grok-build ─╯';
+  assert.equal(draftInBox(suggestion, 'grok'), false);
+  assert.equal(draftInBox(suggestion.replace('❯ ', '❯ a draft '), 'grok'), true);
   assert.equal(draftInBox('a shell prompt $ \n', 'grok'), null, 'no box, no reading');
   assert.equal(draftInBox(fixture('pane-opencode-approval-once-captured.ansi'), 'opencode'), null, 'a prompt in its place');
 });

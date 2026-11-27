@@ -291,7 +291,10 @@ test('extra Grok and OpenCode deliver Chat follow-ups into their own idle panes'
   for (const agent of ['grok', 'opencode']) {
     const { id } = await agents.start({ agent });
     const target = `=${id}:`;
-    const screen = fs.readFileSync(new URL(`../shared/__fixtures__/pane-${agent}-box-empty.ansi`, import.meta.url), 'utf8');
+    // Grok draws the suggested next message dim and italic inside its box after a turn.
+    const screen = agent === 'grok'
+      ? '  │ ❯ \x1b[2;3mDone.\x1b[0m │\n  ╰──── grok-build · always-approve ─╯\n  Tab/→:accept suggestion'
+      : fs.readFileSync(new URL('../shared/__fixtures__/pane-opencode-box-empty.ansi', import.meta.url), 'utf8');
     panes.set(target, { screen, plain: screen.replace(/\x1b\[[0-9;]*m/g, '') });
     const text = `Follow-up for ${agent}`;
     const messageId = `message-${agent}`;
