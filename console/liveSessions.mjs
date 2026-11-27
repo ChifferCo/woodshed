@@ -22,6 +22,9 @@ const RETRY_MS = 1_000;
 // A sign-in check (an embedding program's stillSignedIn among them) that has not answered in this long is a no: the
 // stream ends, and the browser opens it again, checked afresh.
 export const CHECK_TIMEOUT_MS = 2_000;
+// What may wait in a stream for a browser that stopped reading: past it, the stream ends, and the page polls or opens a
+// new one, rather than the console holding every change for it.
+export const MAX_BUFFERED_BYTES = 1024 * 1024;
 
 /**
  * What changed between two lists, as a patch, or null when nothing did. Each session is compared field by field, and
@@ -77,6 +80,10 @@ export function createLiveSessions({ bodyFor, onChange = null, later = setTimeou
 
   function write(stream, event, data) {
     stream.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    if ((stream.res.writableLength ?? 0) > MAX_BUFFERED_BYTES) {
+      console.warn('liveSessions: stream ended, its browser stopped reading', { login: stream.login, bytes: stream.res.writableLength });
+      end(stream);
+    }
   }
 
   let flushing = null;
@@ -184,6 +191,7 @@ export function createLiveSessions({ bodyFor, onChange = null, later = setTimeou
       try {
         body = bodyFor(login);
       } catch (err) {
+        console.error('liveSessions: list not read for a new stream', { login, message: String(err?.message ?? err).split('\n')[0] });
         res.writeHead(500, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         res.end(JSON.stringify({ error: 'the session list could not be read' }));
         return;

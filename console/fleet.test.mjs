@@ -4935,3 +4935,18 @@ test('a session is marked when its conversation is kept, and the mark goes with 
   assert.equal(shared.conversationSavedAt, null, 'deleted with its home');
   assert.ok(removed.includes(`_sessions/${shared.id}`));
 });
+
+test('a working session slow to answer delays only its own next live read', async () => {
+  const { fleet, sessions: [slow, quick], statuses, reads } = await runningSessions(2, 'working');
+  let answer;
+  statuses[slow.id] = new Promise((resolve) => { answer = resolve; });
+  const first = fleet.checkLive();
+  await settle();
+  const before = [reads(slow), reads(quick)];
+  statuses[quick.id] = { state: 'done' };
+  await fleet.checkLive();
+  assert.deepEqual([reads(slow), reads(quick)], [before[0], before[1] + 1], 'the quick one read again; the slow one not asked twice');
+  assert.equal(quick.state, 'done');
+  answer({ state: 'working' });
+  await first;
+});

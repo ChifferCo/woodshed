@@ -337,7 +337,6 @@ export function createFleet({
   const statusAskedAt = new Map();
   // Sessions read often until then (checkLive): the console sent them something.
   const liveUntil = new Map();
-  let checkingLive = false;
   // Sessions to read again as soon as the read in flight ends: it was asked for before what is to be seen happened.
   const readAgain = new Set();
   // Told of every change to a session, for the page's live list (liveSessions.mjs).
@@ -1366,22 +1365,22 @@ export function createFleet({
 
   // Every couple of seconds, the running sessions likely to change soon: those working, which turn to done or to
   // needing someone, and those just sent something, which turn to working. The rest wait for the tick.
+  // No guard of its own: a session still being read is skipped (readStatus), so one slow to answer delays only its own
+  // next read, never the others'.
   async function checkLive() {
-    if (checkingLive) return;
-    checkingLive = true;
-    try {
-      for (const [id, until] of liveUntil) if (until <= now()) liveUntil.delete(id);
-      const live = state.sessions.filter((s) => s.status === 'running' && s.endpoint && (s.state === 'working' || liveUntil.has(s.id)));
-      await Promise.all(live.map(async (session) => {
-        try {
-          await readStatus(session);
-        } catch (err) {
-          console.error('fleet: session check failed', { id: session.id, message: firstLine(err) });
-        }
-      }));
-    } finally {
-      checkingLive = false;
+    for (const [id, until] of liveUntil) if (until <= now()) liveUntil.delete(id);
+    for (const id of statusAskedAt.keys()) {
+      const session = find(id);
+      if (!session || !ACTIVE_STATUSES.has(session.status)) statusAskedAt.delete(id);
     }
+    const live = state.sessions.filter((s) => s.status === 'running' && s.endpoint && (s.state === 'working' || liveUntil.has(s.id)));
+    await Promise.all(live.map(async (session) => {
+      try {
+        await readStatus(session);
+      } catch (err) {
+        console.error('fleet: session check failed', { id: session.id, message: firstLine(err) });
+      }
+    }));
   }
 
   // While a start waits for room (waitsForRetry), its launcher may say how the wait is going, as steps: an embedding

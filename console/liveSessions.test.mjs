@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 
-import { CHECK_TIMEOUT_MS, createLiveSessions, DEBOUNCE_MS, diffList, MAX_AGE_MS, SWEEP_MS } from './liveSessions.mjs';
+import { CHECK_TIMEOUT_MS, createLiveSessions, DEBOUNCE_MS, diffList, MAX_AGE_MS, MAX_BUFFERED_BYTES, SWEEP_MS } from './liveSessions.mjs';
 
 const list = (sessions, extra = {}) => ({ login: 'joel', running: sessions.filter((s) => s.state === 'working').length, ...extra, sessions });
 
@@ -174,4 +174,17 @@ test('a sign-in check that does not answer ends its own stream, and holds up no 
   assert.equal(slow.ended, true, 'no answer in time is a no');
   assert.equal(slow.events().length, 1);
   assert.equal(other.ended, false);
+});
+
+test('a browser that stopped reading has its stream ended rather than every change kept for it', async () => {
+  const sessions = [{ id: 'aaaa1111', state: 'done' }];
+  const { live, open, timers, changed } = setup(sessions);
+  const res = await open();
+  res.writableLength = MAX_BUFFERED_BYTES + 1;
+  sessions[0].state = 'working';
+  changed();
+  timers.run(DEBOUNCE_MS);
+  await live.settled();
+  assert.equal(res.ended, true);
+  assert.equal(live.open(), 0);
 });

@@ -3173,7 +3173,16 @@
       const askMe = onMy || !me || (railMine() && !W.setupDone(me));
       const answer = await Promise.all([W.fetchSessions(), askMe ? W.getJson('/api/my') : Promise.resolve(me)]);
       // A read started on the previous page must not confirm a session absent from its older list.
-      if (version !== routeVersion || !sessionLookups.fresh(lookup)) return;
+      if (version !== routeVersion) return;
+      if (!sessionLookups.fresh(lookup)) {
+        // A change the console pushed came after this read started: its list is older, but its /api/my is still news.
+        if (askMe && answer[1] && !accountChanged(answer[1].login)) {
+          me = answer[1];
+          keepLast();
+          render();
+        }
+        return;
+      }
       if (accountChanged(answer[0]?.login, answer[1]?.login)) return;
       [data, me] = answer;
       routePending = false;
