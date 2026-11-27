@@ -91,8 +91,9 @@
       }
     });
     // A secret left shown is masked again as its form is sent: a browser may keep a text field's value in its form
-    // history, and offer the secret again later, but never a password field's. The form's own list of fields, not
-    // what it holds, so a field outside it that names it (`form=`) is masked too.
+    // history, and offer the secret again later, and does not do so for a password field. The form's own list of
+    // fields, not what it holds, so a field outside it that names it (`form=`) is masked too. `form.submit()` fires no
+    // submit event, so a program's script sends with `requestSubmit()` (components/SecretField).
     root.addEventListener('submit', (e) => {
       for (const field of e.target.elements ?? []) {
         const button = field.closest?.('.secret-field')?.querySelector('[data-reveal]');
