@@ -387,7 +387,11 @@ process.stdin.on('data', (chunk) => {
             : c === 'y' ? 0 : c === 'a' ? 1 : c === 'n' ? 2 : null;
       if (picked === reject) {
         stop({ next: false });
-      } else if (picked !== null) work('Run the migration');
+      } else if (picked !== null) {
+        // The approved tool runs, and claude's PostToolUse for it says it works again.
+        hook('PostToolUse');
+        work('Run the migration');
+      }
       continue;
     }
     if (screen === 'working' && c === '\r') {

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createStateAnnouncer } from './stateAnnounce.mjs';
+import { announcesState, createStateAnnouncer } from './stateAnnounce.mjs';
 
 // The hook's state file as a test holds it, and the console's answers to each call.
 function setup({ answer = () => ({ ok: true, status: 204 }) } = {}) {
@@ -67,4 +67,14 @@ test('a console that refuses or does not answer is not asked again for that chan
   assert.equal(await announcer.check(), 'told');
   assert.equal(calls.length, 4);
   assert.deepEqual(lines.map((l) => l[0]), ['warn', 'warn', 'log']);
+});
+
+test('only claude and Grok Build sessions announce, never a QA run, and only with the console\'s address and a token', () => {
+  const session = { consoleUrl: 'http://console.test:7691', token: 'tok', agent: 'claude', qa: false };
+  assert.equal(announcesState(session), true);
+  assert.equal(announcesState({ ...session, agent: 'grok' }), true);
+  for (const agent of ['codex', 'opencode']) assert.equal(announcesState({ ...session, agent }), false, `${agent} has no hooks`);
+  assert.equal(announcesState({ ...session, qa: true }), false, 'a QA run\'s state is its script\'s');
+  assert.equal(announcesState({ ...session, consoleUrl: '' }), false, 'no console to tell');
+  assert.equal(announcesState({ ...session, token: '' }), false, 'nothing to sign the call with');
 });

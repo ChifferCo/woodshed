@@ -13,6 +13,16 @@
 import fs from 'node:fs/promises';
 
 export const CHECK_EVERY_MS = 250;
+
+/**
+ * Whether a session's statusd tells the console of its agent's state changes: only an agent whose own hooks write the
+ * state file (claude, Grok Build), never a QA run (whose state is its script's, read from its pane), and only with the
+ * console's address and the session's token to call it with.
+ * @param {{consoleUrl: string, token: string, agent: string, qa: boolean}} session
+ */
+export function announcesState({ consoleUrl, token, agent, qa }) {
+  return Boolean(consoleUrl && token && (agent === 'claude' || agent === 'grok') && !qa);
+}
 const CALL_TIMEOUT_MS = 3_000;
 
 /**

@@ -77,7 +77,7 @@ import { promisify } from 'node:util';
 
 import { parseTranscriptTail } from '../shared/sessionState.mjs';
 import { STATE_FILE } from './hookState.mjs';
-import { CHECK_EVERY_MS as STATE_CHECK_EVERY_MS, createStateAnnouncer } from './stateAnnounce.mjs';
+import { CHECK_EVERY_MS as STATE_CHECK_EVERY_MS, announcesState, createStateAnnouncer } from './stateAnnounce.mjs';
 import { readOpened } from './openedPulls.mjs';
 import { STOP_TIMEOUT_MS, SYNC_EVERY_MS, exchange, readState, syncOnce, writeState } from './settingsSync.mjs';
 import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs';
@@ -2216,7 +2216,7 @@ function main() {
   }
   // The agents whose own hooks say what they do tell the console the moment it changes (stateAnnounce.mjs). A QA run's
   // state is its script's, read from its pane.
-  if (CONSOLE_URL && TOKEN && (CLAUDE || AGENT === 'grok') && !QA) {
+  if (announcesState({ consoleUrl: CONSOLE_URL, token: TOKEN, agent: AGENT, qa: QA })) {
     const announcer = createStateAnnouncer({ stateFile: STATE_FILE, consoleUrl: CONSOLE_URL, token: TOKEN });
     let checking = false;
     setInterval(() => {
