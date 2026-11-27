@@ -181,6 +181,27 @@ export function textField({ name, value = '', placeholder = null, required = fal
   });
 }
 
+/**
+ * A field for a secret someone pastes, such as a token (components/SecretField): masked as it is typed, never offered
+ * a saved password nor spell-checked, with **Show** beside it to check the paste before it is sent (hostRows.js). It
+ * takes no value: a secret the program keeps is never sent back to the page, so the field is always the person's own
+ * paste. `id` names the field for its label and for the button, which says what it controls. With `label`, the label's
+ * words are drawn over it (as `labelled` does) by `for`, not by wrapping: wrapped, the button's Show or Hide would be
+ * read as part of the field's name.
+ */
+export function secretField({ name, id, label = null, placeholder = null, required = false, maxlength = null }) {
+  if (!id) throw new Error('secretField needs an id, for its Show button');
+  const field = el('div', { class: 'secret-field' },
+    el('input', {
+      class: 'field is-text', type: 'password', id, name, placeholder, required, maxlength,
+      // `off` is ignored for a password field: `new-password` keeps a browser from filling in one it saved.
+      autocomplete: 'new-password', spellcheck: 'false', autocapitalize: 'off',
+    }),
+    el('button', { type: 'button', class: 'btn btn-plain', 'data-reveal': '', 'aria-controls': id, 'aria-pressed': 'false' }, 'Show'));
+  if (label === null) return field;
+  return el('div', { class: 'field-label' }, el('label', { for: id }, label), field);
+}
+
 /** A box of several lines, in mono for code. */
 export function textArea({ name, value = '', rows = 8, id = null, mono = true }) {
   // `.field` sets the font after `.mono` does, so code says its font itself.

@@ -31,13 +31,14 @@ still says its value.
 ## From a program's server
 
 A program embedding the console draws the same rows on its server (`console/settingsMarkup.mjs`: `group`, `row`,
-`line`, `howTo`, `pill`, `button`, `steps`, `valueBox`, `table`, `figures`, `eventLine`, `checklist`, `pageHead`, `dialog`), for
+`line`, `howTo`, `pill`, `button`, `steps`, `valueBox`, `secretField`, `table`, `figures`, `eventLine`, `checklist`, `pageHead`, `dialog`), for
 its pages in the settings frame, its groups on a repo's settings page (the `repoPage` hook) and its pages that stand
 alone (`standalonePage` in `server.mjs`). `settingsMarkup.test.mjs` holds its rows to `public/settingsRows.js`'s, so the
 two never drift. What is new there:
 
 - A closed row's form is in the page and hidden, so it opens with no round trip; `public/hostRows.js` opens and closes
-  rows, opens the one the address names (`#<id>`), copies a value box's value, and says a repo pick's pick.
+  rows, opens the one the address names (`#<id>`), copies a value box's value, shows a secret field's paste
+  (`components/SecretField`), and says a repo pick's pick.
 - Forms post to the program, which sends the page back where it was. In the settings frame the program's scripts run
   as the frame puts its part in; on a repo's page only the scripts it names with its groups are loaded, once.
 - A form's controls are spaced as a row's body is (`set-form`), and a program's groups in the settings frame as the
