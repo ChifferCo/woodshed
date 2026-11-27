@@ -1,4 +1,4 @@
-<!-- @dsCard group="Actions" height=300 subtitle="The agent switch over Chat and TUI, and its menu" -->
+<!-- @dsCard group="Actions" height=700 subtitle="The agent switch, its menu, and Start another agent with a Model text field" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@300..900&family=Red+Hat+Mono:wght@300..700&display=swap">
 <style>
  body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
@@ -17,6 +17,17 @@
  .item b{font-size:13.5px;font-weight:600}
  .item span{font-size:12px;color:var(--sub)}
  .item.bad b{color:var(--bad)}
+ .confirm{width:min(500px,100%);box-sizing:border-box;margin-top:16px;padding:20px;border:1px solid var(--line);border-radius:8px;background:var(--ground);color:var(--ink)}
+ .confirm h2{margin:0 0 12px;font-size:17px}
+ .confirm p{margin:0;color:var(--sub);font-size:14px;line-height:1.45}
+ .agent-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:12px}
+ .confirm label{display:grid;gap:6px;margin-top:12px;font-size:13px;font-weight:600}
+ .confirm :is(input,select,textarea){box-sizing:border-box;width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--ground);color:var(--ink);font:14px "Red Hat Display",system-ui,sans-serif}
+ .confirm :is(input,textarea)::placeholder{color:var(--meta)}
+ .confirm textarea{min-height:64px;resize:vertical}
+ .dialog-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:14px}
+ .dialog-actions button{min-height:30px;padding:0 12px;border:1px solid var(--line);border-radius:var(--radius-sm);background:transparent;color:var(--ink);font:600 13px "Red Hat Display",system-ui,sans-serif}
+ .dialog-actions .open{background:var(--action);color:var(--action-ink);border-color:var(--action)}
 </style>
 <div class="bar"><span class="sw">Codex ▾</span><span class="sw needs">Claude · opus <span class="count">3 agents</span> <span class="needs-word">1 needs you</span> ▾</span></div>
 <div class="bar phone"><span>‹</span><b>Several agents in one session</b><span class="sw">Codex ▾</span><span class="sw more">⋯</span></div>
@@ -24,7 +35,23 @@
  <div class="group">AGENTS</div>
  <div class="item"><b>Codex (the session's own)</b><span>Needs you</span></div>
  <div class="item"><b>✓ Claude · opus</b><span>Working · auto mode</span></div>
- <div class="item"><b>Codex · gpt-5.5</b><span>Done · plan mode · high effort</span></div>
+ <div class="item"><b>Grok · grok-build</b><span>Done · plan mode · high effort</span></div>
  <div class="group">START</div>
+ <div class="item"><b>+ Another agent</b><span>Works in this session’s checkout</span></div>
  <div class="item bad"><b>Stop Claude · opus</b><span>Ends this agent: its conversation stays in the session's home</span></div>
 </div>
+<section class="confirm" aria-labelledby="agent-title">
+ <h2 id="agent-title">Start another agent</h2>
+ <p>It works in this session's checkout, beside the agents already in it. Use the agent switch in Chat or TUI to choose which agent you see.</p>
+ <div class="agent-grid">
+  <label>Agent<select><option selected>Grok</option></select></label>
+  <label>Model<input type="text" placeholder="Default"></label>
+  <label>Effort<select><option>high</option></select></label>
+  <label>Permissions<select><option>Plan</option></select></label>
+ </div>
+ <label>First message<textarea rows="3" placeholder="Optional: what it should do first. Leave it empty to write to it on the Chat tab."></textarea></label>
+ <div class="dialog-actions">
+  <button type="button">Cancel</button>
+  <button type="button" class="open">Start agent</button>
+ </div>
+</section>
