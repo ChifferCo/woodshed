@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 import { stateForHook, runningShells } from './hookState.mjs';
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 
 const run = promisify(execFile);
 
@@ -102,4 +103,32 @@ test('Grok Build\'s camelCase hooks read the same: a turn, an approval, an inter
   assert.equal(grok('PreToolUse', { subagentType: 'explore' }), null);
   // claude's idle reminder still says nothing new.
   assert.equal(stateForHook({ hook_event_name: 'Notification', notification_type: 'idle_prompt' }), null);
+});
+
+test('the last prompt\'s time is kept through the hooks after it, for statusd to tell the console of each new prompt', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hook-state-'));
+  const stateFile = path.join(dir, 'state.json');
+  const script = fileURLToPath(new URL('./hookState.mjs', import.meta.url));
+  const fire = async (event) => {
+    const child = run('node', [script], { env: { ...isolatedEnv(), WOODSHED_CLAUDE_STATE_FILE: stateFile } });
+    child.child.stdin.end(JSON.stringify({ hook_event_name: event, tool_name: 'Bash' }));
+    await child;
+    return JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  };
+  try {
+    assert.equal((await fire('SessionStart')).promptAt, null, 'no prompt yet');
+    const prompt = await fire('UserPromptSubmit');
+    assert.equal(prompt.promptAt, prompt.at);
+    const tool = await fire('PreToolUse');
+    assert.equal(tool.event, 'PreToolUse');
+    assert.equal(tool.promptAt, prompt.at, 'a tool\'s record keeps it');
+    assert.equal((await fire('Stop')).promptAt, prompt.at);
+    const next = await fire('UserPromptSubmit');
+    assert.ok(next.promptAt > prompt.at);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

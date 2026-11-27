@@ -20,7 +20,13 @@ function setup({ answer = () => ({ ok: true, status: 204 }) } = {}) {
     },
     log: { log: (...a) => lines.push(['log', ...a]), warn: (...a) => lines.push(['warn', ...a]) },
   });
-  const write = (state, at, event = 'PostToolUse') => { file.mtimeMs = at; file.text = JSON.stringify({ state, event, at }); };
+  // As hookState.mjs writes it: `promptAt` is the last prompt's time, kept through the hooks after it.
+  let promptAt = null;
+  const write = (state, at, event = 'PostToolUse') => {
+    if (event === 'UserPromptSubmit') promptAt = at;
+    file.mtimeMs = at;
+    file.text = JSON.stringify({ state, event, at, promptAt });
+  };
   return { announcer, calls, lines, write, file };
 }
 
@@ -89,5 +95,16 @@ test('a new prompt is told even when the file already said working, as it does a
   write('working', 3, 'UserPromptSubmit');
   assert.equal(await announcer.check(), 'told', 'the session went back to its prompt and started again');
   assert.equal(await announcer.check(), 'unchanged');
+  assert.equal(calls.length, 2);
+});
+
+test('a new prompt whose tool\'s hook was written before the next look is still told', async () => {
+  const { announcer, calls, write } = setup();
+  write('working', 1, 'UserPromptSubmit');
+  assert.equal(await announcer.check(), 'told');
+  // An Esc (no hook), then a prompt and its first tool within one look: the file holds the tool's record alone.
+  write('working', 2, 'UserPromptSubmit');
+  write('working', 3, 'PreToolUse');
+  assert.equal(await announcer.check(), 'told');
   assert.equal(calls.length, 2);
 });

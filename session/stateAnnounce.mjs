@@ -49,10 +49,9 @@ export function createStateAnnouncer({ stateFile, consoleUrl, token, fetch = glo
       if (mtimeMs === seenAt) return 'unchanged';
       seenAt = mtimeMs;
       let state;
-      let event;
-      let at;
+      let promptAt;
       try {
-        ({ state = null, event = null, at = null } = JSON.parse(await readFile(stateFile)));
+        ({ state = null, promptAt = null } = JSON.parse(await readFile(stateFile)));
       } catch {
         // Caught mid-write: hookState.mjs renames a whole file into place, so the next look reads it.
         seenAt = null;
@@ -60,10 +59,12 @@ export function createStateAnnouncer({ stateFile, consoleUrl, token, fetch = glo
       }
       // Each new prompt is told even when the file already said working: an Esc fires no hook, so after one the file
       // still says working while the session is back at its prompt, and the next prompt would change nothing in it.
-      const newPrompt = event === 'UserPromptSubmit' && at !== toldPromptAt;
+      // hookState.mjs keeps the last prompt's time through the hooks after it, so a tool's hook written before this
+      // look does not hide it.
+      const newPrompt = promptAt !== null && promptAt !== toldPromptAt;
       if (state === told && !newPrompt) return 'unchanged';
       told = state;
-      if (newPrompt) toldPromptAt = at;
+      if (newPrompt) toldPromptAt = promptAt;
       try {
         const res = await fetch(`${consoleUrl}/state-changed`, {
           method: 'POST', headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(CALL_TIMEOUT_MS),

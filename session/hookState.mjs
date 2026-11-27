@@ -113,8 +113,22 @@ function main() {
   // The transcript the firing claude writes to: a second claude in the session (agents.mjs) reads its own conversation by
   // it, since a /clear starts another file.
   const transcript = typeof payload.transcript_path === 'string' ? payload.transcript_path.slice(0, 1000) : null;
-  fs.writeFileSync(tmp, JSON.stringify({ state, event: eventOf(payload), at: Date.now(), shells: runningShells(payload), transcript }));
+  const at = Date.now();
+  // When the last prompt was submitted, kept through the hooks after it: statusd tells the console of each new prompt
+  // (stateAnnounce.mjs), and a tool's hook can overwrite the prompt's own record before statusd looks.
+  const promptAt = eventOf(payload) === 'UserPromptSubmit' ? at : lastPromptAt();
+  fs.writeFileSync(tmp, JSON.stringify({ state, event: eventOf(payload), at, shells: runningShells(payload), transcript, promptAt }));
   fs.renameSync(tmp, STATE_FILE);
+}
+
+/** @returns {number|null}  the promptAt the state file holds now, or null with none to read */
+function lastPromptAt() {
+  try {
+    const promptAt = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')).promptAt;
+    return Number.isFinite(promptAt) ? promptAt : null;
+  } catch {
+    return null;
+  }
 }
 
 if (isMain(import.meta.url)) main();
