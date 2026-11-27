@@ -731,7 +731,7 @@ async function grokBeside(proxy) {
   const present = GROK ? { home: GROK_HOME, file: AGENT_GIVEN_FILE } : besideGrok;
   if (present) {
     await prepare(present.home, present.file, 'refuseRulesOutsideCheckout');
-    return { env: { GROK_HOME: present.home, WOODSHED_AGENT_AUTH_FILE: present.file, ...(!GROK && { XAI_API_KEY: TOKEN, GROK_MODELS_BASE_URL: `${CONSOLE_URL}/grok/v1` }) } };
+    return { env: { GROK_HOME: present.home, WOODSHED_AGENT_AUTH_FILE: present.file, ...(!GROK && { WOODSHED_GROK_PROXY_TOKEN_FILE: present.file, GROK_MODELS_BASE_URL: `${CONSOLE_URL}/grok/v1` }) } };
   }
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'woodshed-extra-grok-'));
   const home = path.join(dir, '.grok');
@@ -744,7 +744,7 @@ async function grokBeside(proxy) {
     await fs.writeFile(file, TOKEN, { mode: 0o600, flag: 'wx' });
     await prepare(home, file, 'configureGrok');
     besideGrok = { home, file };
-    return { env: { GROK_HOME: home, WOODSHED_AGENT_AUTH_FILE: file, XAI_API_KEY: TOKEN, GROK_MODELS_BASE_URL: `${CONSOLE_URL}/grok/v1` }, undo };
+    return { env: { GROK_HOME: home, WOODSHED_AGENT_AUTH_FILE: file, WOODSHED_GROK_PROXY_TOKEN_FILE: file, GROK_MODELS_BASE_URL: `${CONSOLE_URL}/grok/v1` }, undo };
   } catch (err) {
     await undo();
     throw err;
