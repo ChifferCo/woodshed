@@ -166,7 +166,7 @@ test('the Sessions group draws the agents as a bar with a tag and count for each
   data.sessions.agents = { claude: 50, codex: 20 };
   data.sessions.work = 70;
   const page = await loadPage(data);
-  const bar = page.walk().find((e) => /^Sessions by agent/.test(e.attrs['aria-label'] ?? ''));
+  const bar = page.walk().find((e) => String(e.attrs['aria-label'] ?? '').startsWith('Sessions by agent'));
   assert.ok(bar, 'an agent bar');
   assert.equal(bar.attrs['aria-label'], 'Sessions by agent: Claude 50, Codex 20');
   assert.equal(bar.children.length, 2, 'a segment for each agent');
