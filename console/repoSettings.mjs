@@ -36,6 +36,9 @@ const VARIABLE = /^[A-Za-z_][A-Za-z0-9_.]*$/;
 // The most names a source gives for one env file: far more than a real one sets.
 const MAX_SOURCE_KEYS = 1000;
 const MAX_SOURCE_LABEL = 40;
+// How long a program's `envSources.forSession` may take: under the 15 s a session waits for its repo settings
+// (session/entrypoint.sh), so one that hangs costs a start its source, never the start.
+export const ENV_SOURCES_TIMEOUT_MS = 10_000;
 const PROJECT = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 // A whole .env file, JSON-escaped, under the store's 64 KB.
 const MAX_BODY_BYTES = 160 * 1024;
@@ -62,17 +65,42 @@ export function checkEnvSources(hook) {
   if (hook != null && (typeof hook.view !== 'function' || typeof hook.forSession !== 'function')) throw new Error('envSources needs view and forSession');
 }
 
-// One env file's source as the program's `envSources.view` gave it, checked: what the pages are told of it. The
-// message of a refusal names the key and what is wrong, never what was given: a name could be a value by mistake.
+// An answer of a program's `envSources` that cannot be used: `why` is the console's own words for what kind of thing
+// was wrong, and `key`, where there is one, an env file key the console asked about. Neither is text the program gave.
+class BadAnswer extends Error {
+  constructor(why, key = null) {
+    super(why);
+    this.why = why;
+    this.key = key;
+  }
+}
+
+const notByKey = (given) => new BadAnswer(`answered ${Array.isArray(given) ? 'a list' : typeof given}, not an object by env file key`);
+
+// What the log says of a hook that failed. Nothing the program wrote: a message it threw, a name it gave its error, a
+// key or a value it answered could hold a credential (its secret manager's error quoting a token, a value under the
+// wrong name). Of an error of its own, which of JavaScript's error classes it is, and its code where that is one in
+// Node's shape (ECONNREFUSED, ERR_INVALID_URL): capitals from E, which a token is not.
+const ERROR_CLASSES = [TypeError, RangeError, SyntaxError, ReferenceError, URIError, EvalError, AggregateError, Error];
+const ERROR_CODE = /^E[A-Z]{1,20}(?:_[A-Z0-9]{1,20}){0,5}$/;
+function failureOf(err) {
+  if (err instanceof BadAnswer) return { why: err.why, ...(err.key && { key: err.key }) };
+  const kind = ERROR_CLASSES.find((c) => err instanceof c)?.name ?? null;
+  const code = typeof err?.code === 'string' && ERROR_CODE.test(err.code) ? err.code : null;
+  return { why: 'the hook threw', ...(kind && { error: kind }), ...(code && { code }) };
+}
+
+// One env file's source as the program's `envSources.view` gave it, checked: what the pages are told of it. `key` is
+// one the console asked about, from the project file.
 function checkedSource(key, given) {
-  if (!isRecord(given)) throw new Error(`${key}: not an object`);
+  if (!isRecord(given)) throw new BadAnswer('an env file\'s source is not an object', key);
   const label = typeof given.label === 'string' ? given.label.trim() : '';
-  if (!label || label.length > MAX_SOURCE_LABEL) throw new Error(`${key}: label must be 1 to ${MAX_SOURCE_LABEL} characters`);
+  if (!label || label.length > MAX_SOURCE_LABEL) throw new BadAnswer(`a label is not 1 to ${MAX_SOURCE_LABEL} characters`, key);
   const on = given.on === true;
   const names = given.keys ?? [];
-  if (!Array.isArray(names) || names.length > MAX_SOURCE_KEYS || names.some((k) => typeof k !== 'string' || !VARIABLE.test(k))) throw new Error(`${key}: keys must be variable names`);
+  if (!Array.isArray(names) || names.length > MAX_SOURCE_KEYS || names.some((k) => typeof k !== 'string' || !VARIABLE.test(k))) throw new BadAnswer('keys are not variable names', key);
   // Markup alone, made with settingsMarkup.mjs, which escaped every value: never a string built some other way.
-  if (given.markup != null && !(given.markup instanceof Markup)) throw new Error(`${key}: markup is ${typeof given.markup}, not markup from settingsMarkup.mjs`);
+  if (given.markup != null && !(given.markup instanceof Markup)) throw new BadAnswer(`markup is ${typeof given.markup}, not markup from settingsMarkup.mjs`, key);
   const scripts = (Array.isArray(given.scripts) ? given.scripts : []).filter(onConsole).slice(0, 8);
   // The names matter only while the source is on: off, sessions get the typed values.
   return { label, on, keys: on ? [...new Set(names)] : [], markup: given.markup ?? null, scripts };
@@ -136,14 +164,15 @@ const keyText = (keys) => (keys ?? []).map((k) => `${k}=`).join('\n');
  *          configured?: () => boolean}|null, config: object,
  *          readerOf: (project: string) => {repoLayer: () => Promise<{envFiles: object[], env: Record<string, string>,
  *            rules: string|null, setup: string|null}>}, now?: () => number,
- *          envSources?: {view: Function, forSession: Function}|null}} deps
+ *          envSources?: {view: Function, forSession: Function}|null, envSourcesTimeoutMs?: number}} deps
  *   `config` is the live one (its `projects`); `readerOf` reads a project's file from
  *   its default branch (projectFile.mjs). `envSources` is a program's own sources of env files' installation values
  *   (installation.mjs, README.md "Embedding the console"): `view({name, repo, keys, headers})` says, for the pages, which
  *   of a project's env files have one, its name, whether it is on and the variables it sets; `forSession({name, repo,
- *   session: {id, owner}})` answers the text of each file whose source is on, handed to the session in place of the typed one
+ *   session: {id, owner}})` answers the text of each file whose source is on, handed to the session in place of the typed one,
+ *   within `envSourcesTimeoutMs` (ENV_SOURCES_TIMEOUT_MS; a test's is shorter)
  */
-export function createRepoSettings({ store, secrets, config, readerOf, now = Date.now, envSources = null }) {
+export function createRepoSettings({ store, secrets, config, readerOf, now = Date.now, envSources = null, envSourcesTimeoutMs = ENV_SOURCES_TIMEOUT_MS }) {
   checkEnvSources(envSources);
   const available = () => Boolean(secrets) && secrets.configured?.() !== false;
 
@@ -303,10 +332,10 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     try {
       const given = await envSources.view({ name: project.name, repo: project.repo ?? null, keys, headers });
       if (given === null || given === undefined) return {};
-      if (!isRecord(given)) throw new Error(`answered ${Array.isArray(given) ? 'a list' : typeof given}, not an object by env file key`);
+      if (!isRecord(given)) throw notByKey(given);
       return Object.fromEntries(keys.filter((key) => Object.hasOwn(given, key) && given[key] != null).map((key) => [key, checkedSource(key, given[key])]));
     } catch (err) {
-      console.warn('repoSettings: the program\'s env sources not given', { project: project.name, error: firstLine(err) });
+      console.warn('repoSettings: the program\'s env sources not given', { project: project.name, ...failureOf(err) });
       return {};
     }
   }
@@ -530,46 +559,74 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       Promise.all([read(null, null), personalFor ? read(personalFor, null) : null]),
     ]);
     const envFiles = Object.fromEntries(envValues);
-    const set = (layer) => Object.keys(envFiles).filter((k) => envFiles[k][layer] !== null);
+    // A key only the program gave is handed on and counted, never named: it is the program's text until the console
+    // knows it as an env file's.
+    const known = await knownKeys(project, keys.filter((key) => sourced.has(key)));
+    const set = (layer) => Object.keys(envFiles).filter((k) => envFiles[k][layer] !== null && known.has(k));
+    const unnamed = [...sourced.keys()].filter((key) => !known.has(key)).length;
     console.log('repoSettings: handed out', {
       sessionId: session.id, project, installation: set('installation'), personal: set('personal'),
-      ...(envSources && { fromSource: [...sourced.keys()] }),
+      ...(envSources && { fromSource: [...sourced.keys()].filter((key) => known.has(key)), ...(unnamed && { fromSourceUnnamed: unnamed }) }),
       instructions: { installation: instructions[0] !== null, personal: instructions[1] !== null }, personalFor,
     });
     return { project, envFiles, instructions: { installation: instructions[0], personal: instructions[1] ?? null }, personalFor };
   }
 
+  // The keys of a project the log may name: those the console keeps a record for, and, where a source answered others,
+  // those of the project file's env files. That read is made only then, and one that fails names fewer.
+  async function knownKeys(project, sourcedKeys) {
+    const known = new Set(Object.keys(rootFor(null)?.[project]?.env ?? {}));
+    for (const person of Object.values(store.state.people ?? {})) for (const key of Object.keys(person?.repos?.[project]?.env ?? {})) known.add(key);
+    if (sourcedKeys.every((key) => known.has(key))) return known;
+    const layer = await readerOf(project).repoLayer().catch(() => null);
+    for (const file of layer?.envFiles ?? []) known.add(file.key);
+    return known;
+  }
+
   // The text of each env file whose source is on, by key, as the program's `envSources.forSession` answers it: null
   // for one whose text cannot be used (not text, or over what a typed save may hold), so its installation layer is
   // none. The typed values are not handed out in its place: the page says they are not used while the source is on.
-  // A hook that throws, or answers no object, says nothing of which sources are on, so the typed values are handed out.
+  // A hook that throws, answers no object or does not answer in time says nothing of which sources are on, so the
+  // typed values are handed out. The log names no key here: a key is the program's text, so a refused one is counted,
+  // by what was wrong with it.
   async function sourcedFor(session, project) {
     const sourced = new Map();
     if (!envSources) return sourced;
     let given;
+    let timer;
     try {
-      given = await envSources.forSession({ name: project, repo: projectNamed(config, project)?.repo ?? null, session: { id: session.id, owner: session.owner ?? null } });
-      if (given !== null && given !== undefined && !isRecord(given)) throw new Error(`answered ${Array.isArray(given) ? 'a list' : typeof given}, not an object by env file key`);
+      const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new BadAnswer(`no answer in ${envSourcesTimeoutMs} ms`)), envSourcesTimeoutMs); });
+      const asked = Promise.resolve().then(() => envSources.forSession({ name: project, repo: projectNamed(config, project)?.repo ?? null, session: { id: session.id, owner: session.owner ?? null } }));
+      // Should it fail after the wait is over, that is no one's to catch.
+      asked.catch(() => {});
+      given = await Promise.race([asked, late]);
+      if (given !== null && given !== undefined && !isRecord(given)) throw notByKey(given);
     } catch (err) {
-      console.warn('repoSettings: env sources not read, the typed values handed out', { sessionId: session.id, project, error: firstLine(err) });
+      console.warn('repoSettings: env sources not read, the typed values handed out', { sessionId: session.id, project, ...failureOf(err) });
       return sourced;
+    } finally {
+      clearTimeout(timer);
     }
+    const refused = { notAKey: 0, notText: 0, tooLarge: 0 };
     for (const [key, text] of Object.entries(given ?? {})) {
-      let why = null;
-      if (!KEY.test(key)) why = 'not an env file\'s key';
-      else if (typeof text !== 'string') why = 'not text';
+      if (!KEY.test(key)) {
+        refused.notAKey += 1;
+        continue;
+      }
+      let value = null;
+      if (typeof text !== 'string') refused.notText += 1;
       else {
         try {
           // As a typed save: Unix line endings, and blank text is no values at all.
-          sourced.set(key, checkFile(text) || null);
-          continue;
+          value = checkFile(text) || null;
         } catch {
-          why = 'over the 64 KB a value can hold';
+          refused.tooLarge += 1;
         }
       }
-      console.warn('repoSettings: env source text refused, the installation layer handed out as none', { sessionId: session.id, project, key: String(key).slice(0, 100), why });
-      if (KEY.test(key)) sourced.set(key, null);
+      sourced.set(key, value);
     }
+    const count = refused.notAKey + refused.notText + refused.tooLarge;
+    if (count) console.warn('repoSettings: env source text refused, the installation layer handed out as none', { sessionId: session.id, project, refused: count, ...refused });
     return sourced;
   }
 

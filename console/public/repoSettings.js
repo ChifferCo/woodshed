@@ -228,11 +228,12 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
   }
 
   // The typed values while a source is on: kept, and handed to no session, the keys the source leaves out included.
+  // Those may still be set by the repo's defaults or a person's own values: only this installation's are gone.
   function unusedNote(f) {
     const { label, keys } = f.source;
     const left = (f.installation?.keys ?? []).filter((k) => !keys.includes(k));
     return h('p', { class: 'cap-note' }, `The values typed here are kept, but no session gets them while ${label} is on.`,
-      left.length > 0 && [` ${label} does not set `, L.keyList(left), `, so ${left.length === 1 ? 'it is' : 'they are'} not set in sessions.`]);
+      left.length > 0 && [` ${label} does not set `, L.keyList(left), `, so this installation sets no value for ${left.length === 1 ? 'it' : 'them'} while ${label} is on.`]);
   }
 
   // The installation's layer. Where a program has a source for the file, a switch shows the typed values or the

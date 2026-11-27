@@ -757,7 +757,7 @@ test('picking Typed here shows the typed values, kept and not used, with the key
   assert.equal(page.calls.length, before, 'a pick calls nothing: turning a source on or off is the program\'s own form');
   assert.match(textOf(row), /In use: Vault · 2 keys/, 'still said, whichever side is shown');
   const unused = walk(row).find((e) => e.className === 'cap-note');
-  assert.equal(textOf(unused), 'The values typed here are kept, but no session gets them while Vault is on. Vault does not set API_TOKEN, so it is not set in sessions.');
+  assert.equal(textOf(unused), 'The values typed here are kept, but no session gets them while Vault is on. Vault does not set API_TOKEN, so this installation sets no value for it while Vault is on.');
   assert.match(textOf(row), /Saved at \S+ · by @mia-dev · 40 bytes · 2 keys/, 'the typed record, as ever');
   assert.equal(walk(row).some((e) => e.className === 'host-groups'), false);
   button(row, 'Show and edit').listeners.click();

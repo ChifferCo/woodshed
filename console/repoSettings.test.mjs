@@ -6,7 +6,7 @@ import { inspect } from 'node:util';
 import { createMembers } from './members.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
 import {
-  createRepoSettings, installationEnvName, installationInstructionsName, personalEnvName, personalInstructionsName, repoSettingsRoute,
+  ENV_SOURCES_TIMEOUT_MS, createRepoSettings, installationEnvName, installationInstructionsName, personalEnvName, personalInstructionsName, repoSettingsRoute,
 } from './repoSettings.mjs';
 import { createUserSettings } from './userSettings.mjs';
 import { createHandler } from './server.mjs';
@@ -45,7 +45,7 @@ function memorySecrets(initial = {}) {
   };
 }
 
-function setup({ state = {}, secrets = memorySecrets(), files = FILES, envSources = null } = {}) {
+function setup({ state = {}, secrets = memorySecrets(), files = FILES, envSources = null, envSourcesTimeoutMs = undefined } = {}) {
   const store = { state: { sessions: [], ...state }, save() {} };
   const config = { projects: PROJECTS, repo: 'acme/app' };
   const readerOf = (name) => ({
@@ -56,7 +56,7 @@ function setup({ state = {}, secrets = memorySecrets(), files = FILES, envSource
     },
   });
   let clock = Date.parse('2026-11-12T10:00:00Z');
-  const repoSettings = createRepoSettings({ store, secrets, config, readerOf, now: () => (clock += 1000), envSources });
+  const repoSettings = createRepoSettings({ store, secrets, config, readerOf, now: () => (clock += 1000), envSources, envSourcesTimeoutMs });
   return { store, secrets, config, repoSettings };
 }
 
@@ -580,22 +580,96 @@ test('a source that is off, or names no file, leaves the typed values; text that
   assert.deepEqual(answer.envFiles, {
     'api-env': { installation: null, personal: null }, 'web-env-local': { installation: null, personal: null }, tools: { installation: null, personal: null },
   }, 'none, never the typed text: the page says it is not used while the source is on');
-  assert.equal(warned.filter((l) => l.includes('repoSettings: env source text refused, the installation layer handed out as none')).length, 3);
-  assert.match(warned.join('\n'), /key: 'api-env',\s+why: 'not text'/);
-  assert.match(warned.join('\n'), /key: 'web-env-local',\s+why: 'over the 64 KB a value can hold'/);
-  assert.match(warned.join('\n'), /why: "not an env file's key"/);
-  assert.match(warned.at(-1), /fromSource: \[ 'api-env', 'web-env-local', 'tools' \]/);
+  const refusals = warned.filter((l) => l.includes('repoSettings: env source text refused, the installation layer handed out as none'));
+  assert.equal(refusals.length, 1, 'one line, counting them');
+  assert.match(refusals[0], /refused: 3,\s+notAKey: 1,\s+notText: 1,\s+tooLarge: 1/);
+  assert.ok(!refusals[0].includes('api-env') && !refusals[0].includes('Not A Key'), 'and naming none: a key is the program\'s text');
+  assert.match(warned.at(-1), /fromSource: \[ 'api-env', 'web-env-local' \],\s+fromSourceUnnamed: 1/, 'the project file\'s env files by name; one it does not name is handed on and counted');
 
   // A hook that throws, or answers no object, says nothing of which sources are on.
-  for (const fail of [() => { throw new Error(`the vault is away\n${SECRET_MARK}`); }, () => 'api-env']) {
-    given = null;
+  const thrown = Object.assign(new TypeError(`the vault is away\n${SECRET_MARK}`), { code: 'ECONNREFUSED' });
+  for (const [fail, said] of [[() => { throw thrown; }, /why: 'the hook threw',\s+error: 'TypeError',\s+code: 'ECONNREFUSED'/], [() => 'api-env', /why: 'answered string, not an object by env file key'/]]) {
     const failing = setup({ envSources: { view: async () => null, forSession: async () => fail() } });
     await failing.repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
-    const said = await captureLog(async () => { answer = await failing.repoSettings.forSession({ id: 'c3', project: 'app', owner: null }); });
+    const lines = await captureLog(async () => { answer = await failing.repoSettings.forSession({ id: 'c3', project: 'app', owner: null }); });
     assert.deepEqual(answer.envFiles, { 'api-env': { installation: INSTALLATION_ENV, personal: null } });
-    assert.match(said[0], /repoSettings: env sources not read, the typed values handed out/);
-    assert.ok(!said.join('\n').includes(SECRET_MARK));
+    assert.match(lines[0], /repoSettings: env sources not read, the typed values handed out/);
+    assert.match(lines[0], said);
+    assert.ok(!lines.join('\n').includes(SECRET_MARK));
   }
+});
+
+// What a program's hook may hold by mistake: its secret manager's error quoting a token, a value under the wrong name.
+const LEAK = `sk-live-${SECRET_MARK}`;
+
+test('nothing a program\'s source wrote reaches the log: not a thrown message, an error\'s name or code, a key or an entry', async () => {
+  const typed = async (repoSettings) => repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: 'API_URL=http://typed.test\n', by: 'mia-dev' });
+  const leaky = Object.assign(new Error(`401 from the vault: token ${LEAK} was refused`), { name: `Vault ${LEAK}`, code: LEAK });
+  const forSession = [
+    () => { throw leaky; },
+    () => { throw LEAK; },
+    () => LEAK,
+    () => [LEAK],
+    // As keys: one in an env file key's shape, one not. As entries: text too large, and what is no text.
+    () => ({ [`token-${SECRET_MARK}`]: 7, [LEAK]: 'A=1', [`TOKEN=${LEAK}`]: `A=${LEAK}`, 'api-env': { token: LEAK }, 'web-env-local': `A=${LEAK}${'x'.repeat(70_000)}` }),
+  ];
+  for (const answer of forSession) {
+    const { repoSettings } = setup({ envSources: { view: async () => null, forSession: async () => answer() } });
+    const lines = await captureLog(async () => {
+      await typed(repoSettings);
+      await repoSettings.forSession({ id: 'a1', project: 'app', owner: null });
+    });
+    assert.ok(lines.some((l) => /repoSettings: env source(s not read| text refused)/.test(l)), 'the failure is logged');
+    assert.ok(!lines.join('\n').includes(SECRET_MARK), `forSession ${String(answer).slice(0, 40)}: ${lines.filter((l) => l.includes(SECRET_MARK)).join(' | ').replaceAll(SECRET_MARK, '<the secret>')}`);
+  }
+  const view = [
+    () => { throw leaky; },
+    () => LEAK,
+    () => ({ 'api-env': LEAK }),
+    () => ({ 'api-env': { label: LEAK.repeat(3), on: true } }),
+    () => ({ 'api-env': { label: 'Vault', on: true, keys: [`API_TOKEN=${LEAK}`] } }),
+    () => ({ 'api-env': { label: 'Vault', on: true, markup: `<p>${LEAK}</p>` } }),
+    () => ({ [LEAK]: { label: 'Vault', on: true }, 'api-env': { label: 'Vault', on: 'yes', keys: 7 } }),
+  ];
+  for (const answer of view) {
+    const { repoSettings } = setup({ envSources: { view: async () => answer(), forSession: async () => null } });
+    const lines = await captureLog(async () => { await repoSettings.view('app'); });
+    assert.equal(lines.filter((l) => l.includes('repoSettings: the program\'s env sources not given')).length, 1, 'the failure is logged');
+    assert.ok(!lines.join('\n').includes(SECRET_MARK), `view ${String(answer).slice(0, 40)}: ${lines.filter((l) => l.includes(SECRET_MARK)).join(' | ').replaceAll(SECRET_MARK, '<the secret>')}`);
+  }
+  // What the lines do say: the kind of thing that was wrong, in the console's words, and an error's class where it is a name.
+  const said = setup({ envSources: { view: async () => ({ 'api-env': { label: '', on: true } }), forSession: async () => { throw Object.assign(new RangeError(LEAK), { code: 'ERR_VAULT_AWAY' }); } } });
+  const lines = await captureLog(async () => {
+    await said.repoSettings.view('app');
+    await said.repoSettings.forSession({ id: 'a1', project: 'app', owner: null });
+  });
+  assert.match(lines[0], /the program's env sources not given \{\s+project: 'app',\s+why: 'a label is not 1 to 40 characters',\s+key: 'api-env'\s+\}/);
+  assert.match(lines[1], /env sources not read, the typed values handed out \{\s+sessionId: 'a1',\s+project: 'app',\s+why: 'the hook threw',\s+error: 'RangeError',\s+code: 'ERR_VAULT_AWAY'\s+\}/);
+});
+
+test('a source that does not answer in time costs the session its source, not its start: the typed values are handed out', async () => {
+  let asked = 0;
+  const hung = { view: async () => null, forSession: () => { asked += 1; return new Promise(() => {}); } };
+  const { repoSettings } = setup({ envSources: hung, envSourcesTimeoutMs: 20 });
+  await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
+  let answer;
+  const started = Date.now();
+  const lines = await captureLog(async () => { answer = await repoSettings.forSession({ id: 'a1', project: 'app', owner: null }); });
+  assert.ok(Date.now() - started < 5000, 'answered, not hung');
+  assert.equal(asked, 1);
+  assert.deepEqual(answer.envFiles, { 'api-env': { installation: INSTALLATION_ENV, personal: null } });
+  assert.match(lines[0], /repoSettings: env sources not read, the typed values handed out/);
+  assert.match(lines[0], /why: 'no answer in 20 ms'/);
+  assert.match(lines.at(-1), /fromSource: \[\]/);
+  assert.ok(ENV_SOURCES_TIMEOUT_MS < 15_000, 'under the 15 s a session waits for its repo settings (session/entrypoint.sh)');
+  // One that answers late and then fails is no unhandled rejection, and one in time is used.
+  const slow = setup({ envSources: { view: async () => null, forSession: () => new Promise((_, reject) => { setTimeout(() => reject(new Error('late')), 40); }) }, envSourcesTimeoutMs: 10 });
+  await captureLog(async () => { await slow.repoSettings.forSession({ id: 'b2', project: 'app', owner: null }); });
+  await new Promise((r) => { setTimeout(r, 60); });
+  const quick = setup({ envSources: { view: async () => null, forSession: async () => ({ 'api-env': VAULT_ENV }) }, envSourcesTimeoutMs: 1000 });
+  let handed;
+  await captureLog(async () => { handed = await quick.repoSettings.forSession({ id: 'c3', project: 'app', owner: null }); });
+  assert.equal(handed.envFiles['api-env'].installation, VAULT_ENV);
 });
 
 test('the views say which env files have a source, and the table\'s installation layer is the source\'s keys while it is on', async (t) => {

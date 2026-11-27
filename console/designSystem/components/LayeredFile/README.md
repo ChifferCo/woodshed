@@ -22,7 +22,7 @@ later layer wins.
   in use; picking the other shows it and changes nothing. The source's side is the program's own controls, made with
   `settingsMarkup.mjs` (a note of its state, its form). Typed here is the editable layer as ever; while the source is on
   a `cap-note` goes before it: "The values typed here are kept, but no session gets them while Vault is on.", then any
-  typed keys the source does not set, which are not set in sessions. In the table the source's keys are the
+  typed keys the source does not set, for which this installation sets no value while it is on. In the table the source's keys are the
   Installation column's, and where that layer wins the tag is the source's name. Closed, the row says "From Vault · 3
   keys" with the pill `From Vault` (`is-ok`). On My settings the layer is read only: "From Vault · 3 keys" in `meta`
   mono and "Vault sets `API_URL`, `API_TOKEN`.", with no typed values and none of the program's controls.
