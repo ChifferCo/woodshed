@@ -1230,7 +1230,7 @@ test('a session\'s conversation is kept beside its own home, never a tainted one
   assert.equal(marked.length, 2, 'only what was kept is marked');
 });
 
-test('only an authorized extra agent can save its rotated login', async (t) => {
+test('a different primary agent cannot save a rotated login even after launching an extra agent', async (t) => {
   const session = { id: 'aaaaaaaa', status: 'running', token: 'beside', owner: 'joel', options: { agent: 'claude' } };
   const saved = [];
   const before = {
@@ -1259,10 +1259,10 @@ test('only an authorized extra agent can save its rotated login', async (t) => {
     session.extraAgents = [];
     assert.equal((await rotate()).status, 404);
     session.extraAgents = [id];
-    assert.equal((await rotate()).status, 200);
+    assert.equal((await rotate()).status, 404);
     session.taintedAt = '2026-11-23T10:00:00Z';
     assert.equal((await rotate()).status, 404);
     delete session.taintedAt;
   }
-  assert.deepEqual(saved, [['joel', 'grok', after.grok], ['joel', 'opencode', after.opencode]]);
+  assert.deepEqual(saved, []);
 });

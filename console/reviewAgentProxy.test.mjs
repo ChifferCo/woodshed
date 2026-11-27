@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 
-import { MAX_BODY_BYTES, createReviewAgentProxy, reviewAgentRoute, reviewAgentTokenOf } from './reviewAgentProxy.mjs';
+import { MAX_BODY_BYTES, beginInteractiveGrok, createReviewAgentProxy, reviewAgentRoute, reviewAgentTokenOf } from './reviewAgentProxy.mjs';
 import { createSessionApi, sessionTokenOf } from './sessionApi.mjs';
 
 const NOW = Date.parse('2026-11-18T10:00:00Z');
@@ -474,4 +474,28 @@ test('a Responses body that leaves store out is refused, since left out it is st
   const [token, path, body] = MEASURED.grokTurn;
   assert.equal('store' in body, false);
   assert.equal((await call(token, path, { body })).status, 200);
+});
+
+test('interactive Grok grants model access only and reads the current API key at the console', async (t) => {
+  const session = { id: '55555555', status: 'running', token: 'interactive-grok', owner: 'gil' };
+  SESSIONS.push(session);
+  t.after(() => SESSIONS.splice(SESSIONS.indexOf(session), 1));
+  const signIns = { ...SIGN_INS, grok: { ...SIGN_INS.grok } };
+  const { call, seen } = await setup(t, { on: {}, signIns });
+  assert.equal((await call(session.token)).status, 403);
+  beginInteractiveGrok(session)(409);
+  assert.equal((await call(session.token)).status, 403);
+  beginInteractiveGrok(session)(200);
+  assert.equal((await call(session.token)).status, 200);
+  assert.equal(seen.at(-1).headers.authorization, `Bearer ${SIGN_INS.grok.gil}`);
+  assert.equal((await call(session.token, '/grok/v1/files', { method: 'GET' })).status, 404);
+  assert.equal((await call(session.token, '/grok/v1/responses', { body: { model: 'grok-build', store: true } })).status, 403);
+  signIns.grok.gil = SIGN_INS.grok.lou;
+  assert.equal((await call(session.token)).status, 403, 'interactive use requires an API key');
+  signIns.grok.gil = 'xai-made-up-replacement-key';
+  assert.equal((await call(session.token)).status, 200);
+  assert.equal(seen.at(-1).headers.authorization, 'Bearer xai-made-up-replacement-key');
+  session.taintedAt = 'now';
+  assert.equal((await call(session.token)).status, 403);
+  assert.equal(seen.length, 2);
 });

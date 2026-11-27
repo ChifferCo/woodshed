@@ -162,6 +162,20 @@ function refuse(res, code, message) {
  * @returns {{isProxyPath: (pathname: string) => boolean,
  *            handle: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, session: object|null) => Promise<void>}}
  */
+// Console-local state. A session can use model calls after its owner starts an extra Grok pane.
+const interactiveGrok = new WeakMap();
+
+export function beginInteractiveGrok(session) {
+  const existing = interactiveGrok.get(session);
+  const grant = existing && existing.token === session.token ? existing : { token: session.token, pending: 0, started: false };
+  interactiveGrok.set(session, grant);
+  grant.pending++;
+  return (status) => {
+    grant.pending--;
+    if (status === 200) grant.started = true;
+  };
+}
+
 export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}, opencodeUpstreams = {}, now = Date.now } = {}) {
   const routed = new Set();
 
@@ -254,7 +268,7 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
     return Buffer.from(JSON.stringify(parsed));
   }
 
-  async function handle(req, res, session) {
+  async function handle(req, res, session, isLocked = () => false) {
     const route = reviewAgentRoute(req.url, req.method);
     const product = agents.agent(route?.agent).product;
     if (!session) {
@@ -262,13 +276,16 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
       console.warn('reviewAgentProxy: refused, no active session has that token', { from: req.socket.remoteAddress });
       return refuse(res, 401, 'not an active Woodshed session');
     }
-    if (!isReview(session)) {
+    const grant = interactiveGrok.get(session);
+    const interactive = route?.agent === 'grok' && session.owner && session.status === 'running'
+      && grant && grant.token === session.token && (grant.started || grant.pending > 0);
+    if (!interactive && !isReview(session)) {
       req.resume();
       console.warn('reviewAgentProxy: refused, not a review session', { sessionId: session.id, agent: route?.agent ?? null });
       return refuse(res, 403, `only a review of its author's pull request runs ${product} through the console`);
     }
     // A review is never tainted (production access is a private session's alone): one that is, is refused all the same.
-    if (session.taintedAt) {
+    if (session.taintedAt || isLocked(session)) {
       req.resume();
       console.warn('reviewAgentProxy: refused, a tainted session', { sessionId: session.id });
       return refuse(res, 403, 'this session has seen production data');
@@ -279,7 +296,8 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
       console.warn('reviewAgentProxy: refused a call a review\'s agent does not need', { sessionId: session.id, agent: route?.agent ?? null, method: String(req.method).slice(0, 16), path: req.url.split('?')[0].slice(0, 120) });
       return refuse(res, route?.status ?? 404, route?.refused ?? 'not something a review needs');
     }
-    const own = session.review.agents?.includes(route.agent) ? session.review.ownSignIns?.[route.agent] ?? null : null;
+    const own = interactive ? { login: session.owner }
+      : session.review.agents?.includes(route.agent) ? session.review.ownSignIns?.[route.agent] ?? null : null;
     if (!own?.login) {
       req.resume();
       console.warn('reviewAgentProxy: refused, the review does not run it', { sessionId: session.id, agent: route.agent });
@@ -295,12 +313,22 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
     if (body === null) return undefined;
     let cred;
     try {
-      cred = await authorCredential(own.login, route.agent, route.provider);
+      if (interactive) {
+        const key = await userSettings.agentAuth(own.login, 'grok');
+        const saved = ownReviewCredential('grok', key, now());
+        cred = saved.via === 'key'
+          ? { target: new URL(grokUpstreams.key ?? saved.base), headers: { authorization: saved.authorization }, via: 'key' }
+          : { refused: 'save an xAI API key on My settings to run Grok alongside another agent' };
+      } else {
+        cred = await authorCredential(own.login, route.agent, route.provider);
+      }
     } catch (err) {
       req.resume();
       console.warn('reviewAgentProxy: credential not read', { sessionId: session.id, agent: route.agent, message: err?.name ?? 'Error' });
       return refuse(res, 502, 'the console could not read the credential for this call');
     }
+    if (session.taintedAt || isLocked(session)) return refuse(res, 403, 'this session has seen production data');
+    if (interactive && (session.status !== 'running' || session.token !== grant.token)) return refuse(res, 403, 'the session is no longer running');
     if (cred.refused) {
       req.resume();
       console.warn('reviewAgentProxy: refused, the author\'s sign-in not usable', { sessionId: session.id, agent: route.agent, author: own.login, why: cred.refused });
@@ -308,7 +336,7 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
     }
     if (!routed.has(`${session.id}/${route.agent}`)) {
       routed.add(`${session.id}/${route.agent}`);
-      console.log(`reviewAgentProxy: first call on the author's ${product} sign-in`, { sessionId: session.id, agent: route.agent, author: own.login, via: cred.via });
+      console.log(interactive ? 'reviewAgentProxy: first interactive Grok call' : `reviewAgentProxy: first call on the author's ${product} sign-in`, { sessionId: session.id, agent: route.agent, author: own.login, via: cred.via });
     }
     return forward(req, res, { target: cred.target, path: route.path, headers: cred.headers, product, body, sessionId: session.id });
   }

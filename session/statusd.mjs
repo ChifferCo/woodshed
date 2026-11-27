@@ -47,6 +47,7 @@
 //   POST /agents      {"agent": "claude"|"codex", "model", "effort", "permissionMode", "prompt"} starts another, in a tmux
 //                     session of its own in the same checkout; 409 once the session is tainted, or with three running
 //   POST /agents/with-claude-token   starts Claude beside Grok Build or OpenCode with the owner's claudeToken
+//   POST /agents/with-grok-proxy     starts Grok beside another agent using the console model proxy
 //   ANY  /agents/<id>/transcript|send|interrupt|prompt|answer|stop   as the routes of the same names, for that agent:
 //                     its own record of its conversation, a message typed into its pane (held while it works, and typed
 //                     once it is back at its prompt), Esc, what it asks and the answer; stop ends it
@@ -707,7 +708,7 @@ async function codexBeside(given) {
 
 // Keep one Grok home for all the extra terminals so they share the currently refreshed login.
 let besideGrok;
-async function grokBeside(given) {
+async function grokBeside(proxy) {
   const setup = path.join(import.meta.dirname, 'grokSetup.sh');
   const rules = process.env.WOODSHED_AGENT_RULES_FILE || '/tmp/woodshed-rules.md';
   const prepare = async (home, file, action) => {
@@ -724,16 +725,13 @@ async function grokBeside(given) {
       throw Object.assign(new Error(err.stderr?.trim() || 'could not set up Grok Build in this session'), { status: 409 });
     }
   };
+  if (!GROK && (!proxy || !CONSOLE_URL)) {
+    throw Object.assign(new Error('start Grok from a console with model proxy support'), { status: 409 });
+  }
   const present = GROK ? { home: GROK_HOME, file: AGENT_GIVEN_FILE } : besideGrok;
   if (present) {
     await prepare(present.home, present.file, 'refuseRulesOutsideCheckout');
-    return { env: { GROK_HOME: present.home, WOODSHED_AGENT_AUTH_FILE: present.file } };
-  }
-  let auth;
-  try {
-    auth = AGENTS.checkSignIn('grok', given);
-  } catch {
-    throw Object.assign(new Error('save your Grok Build sign-in on My settings first'), { status: 409 });
+    return { env: { GROK_HOME: present.home, WOODSHED_AGENT_AUTH_FILE: present.file, ...(!GROK && { XAI_API_KEY: TOKEN, GROK_MODELS_BASE_URL: `${CONSOLE_URL}/grok/v1` }) } };
   }
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'woodshed-extra-grok-'));
   const home = path.join(dir, '.grok');
@@ -743,67 +741,42 @@ async function grokBeside(given) {
     await fs.rm(dir, { recursive: true, force: true });
   };
   try {
-    await fs.writeFile(file, auth, { mode: 0o600, flag: 'wx' });
+    await fs.writeFile(file, TOKEN, { mode: 0o600, flag: 'wx' });
     await prepare(home, file, 'configureGrok');
     besideGrok = { home, file };
-    return { env: { GROK_HOME: home, WOODSHED_AGENT_AUTH_FILE: file }, undo };
+    return { env: { GROK_HOME: home, WOODSHED_AGENT_AUTH_FILE: file, XAI_API_KEY: TOKEN, GROK_MODELS_BASE_URL: `${CONSOLE_URL}/grok/v1` }, undo };
   } catch (err) {
     await undo();
     throw err;
   }
 }
 
-// Share provider auth with the primary OpenCode process or other extra panes. Scope the config and SQLite database
-// to this pane so its permission mode, effort and conversation are independent.
-let besideOpencode;
-async function opencodeBeside(given, { effort, permissionMode }) {
+// Share auth with the primary OpenCode process, with a separate config and transcript per pane.
+async function opencodeBeside({ effort, permissionMode }) {
+  if (!OPENCODE) throw Object.assign(new Error('start an OpenCode session to use your saved OpenCode sign-in'), { status: 409 });
   const pane = await fs.mkdtemp(path.join(os.tmpdir(), 'woodshed-opencode-pane-'));
   const cleanup = () => fs.rm(pane, { recursive: true, force: true });
-  let authDir;
   try {
-    const primaryData = path.dirname(path.dirname(OWN_AUTH_FILES.opencode));
-    const shared = OPENCODE ? { data: primaryData } : besideOpencode;
-    if (!shared) {
-      let signIn;
-      try {
-        signIn = AGENTS.checkSignIn('opencode', given);
-      } catch {
-        throw Object.assign(new Error('save your OpenCode sign-in on My settings first'), { status: 409 });
-      }
-      authDir = await fs.mkdtemp(path.join(os.tmpdir(), 'woodshed-opencode-auth-'));
-      await fs.writeFile(path.join(authDir, 'given'), signIn, { mode: 0o600, flag: 'wx' });
-    }
-    const data = shared?.data ?? path.join(authDir, 'data');
+    const data = path.dirname(path.dirname(OWN_AUTH_FILES.opencode));
     const config = path.join(pane, 'config');
     const setup = path.join(import.meta.dirname, 'opencodeSetup.sh');
     const rules = process.env.WOODSHED_AGENT_RULES_FILE || '/tmp/woodshed-rules.md';
     await run('bash', ['-c', `set -euo pipefail
       die() { printf '%s\n' "$*" >&2; exit 1; }
       log() { :; }
-      ownAgentAuthIsKey() { ! head -c 1 "$OWN_AGENT_AUTH_FILE" | grep -q '{'; }
       agentDir() { [ ! -L "$1" ] && mkdir -p "$1" && chmod 700 "$1"; }
       . "$1"
-      REPO_DIR=$2 OPENCODE_DATA_DIR=$3 OPENCODE_CONFIG_DIR=$4 WOODSHED_RULES_FILE=$5
-      EFFORT=$6 PERMISSION_MODE=$7 OWN_AGENT_AUTH_FILE=$8
-      configureOpencodePane
-      if [ -n "$OWN_AGENT_AUTH_FILE" ]; then installOpencodeAuth; fi`,
-    'opencode-setup', setup, REPO_DIR, path.join(data, 'opencode'), path.join(config, 'opencode'), rules,
-    effort, permissionMode, authDir ? path.join(authDir, 'given') : '']);
-    if (authDir) besideOpencode = { data, file: path.join(authDir, 'given') };
+      REPO_DIR=$2 OPENCODE_CONFIG_DIR=$3 WOODSHED_RULES_FILE=$4
+      EFFORT=$5 PERMISSION_MODE=$6
+      configureOpencodePane`,
+    'opencode-setup', setup, REPO_DIR, path.join(config, 'opencode'), rules, effort, permissionMode]);
     return {
       env: { XDG_DATA_HOME: data, XDG_CONFIG_HOME: config, OPENCODE_DB: path.join(pane, 'opencode.db') },
       cleanup,
-      undo: async () => {
-        await cleanup();
-        if (authDir) {
-          besideOpencode = undefined;
-          await fs.rm(authDir, { recursive: true, force: true });
-        }
-      },
+      undo: cleanup,
     };
   } catch (err) {
     await cleanup();
-    if (authDir) await fs.rm(authDir, { recursive: true, force: true });
     if (err.status) throw err;
     throw Object.assign(new Error('could not set up OpenCode in this session'), { status: 409 });
   }
@@ -1109,7 +1082,10 @@ async function keepCodexAuth() {
 // The header naming the sign-in the session was given (shared/agents.cjs, signInDigest), as sessionApi.mjs reads it.
 export const GIVEN_SIGN_IN_HEADER = 'x-woodshed-given-sign-in';
 
-async function keepAgentAuth(agent = AGENT, file = OWN_AUTH_FILES[agent], givenFile = AGENT_GIVEN_FILE) {
+async function keepAgentAuth() {
+  const agent = AGENT;
+  const file = OWN_AUTH_FILES[agent];
+  const givenFile = AGENT_GIVEN_FILE;
   if (!file || !CONSOLE_URL || tainted() || process.env.SESSION_KIND !== 'private') return;
   const name = AGENTS.agent(agent).product;
   try {
@@ -1120,7 +1096,7 @@ async function keepAgentAuth(agent = AGENT, file = OWN_AUTH_FILES[agent], givenF
     }
     // Which sign-in it was given: the console keeps the refresh only while that is still the one it holds.
     const headers = { authorization: `Bearer ${TOKEN}`, [GIVEN_SIGN_IN_HEADER]: AGENTS.signInDigest(given) };
-    const res = await fetch(`${CONSOLE_URL}/agent-auth${agent === AGENT ? '' : `?agent=${agent}`}`, { method: 'POST', headers, body, signal: AbortSignal.timeout(10_000) });
+    const res = await fetch(`${CONSOLE_URL}/agent-auth`, { method: 'POST', headers, body, signal: AbortSignal.timeout(10_000) });
     console.log(`statusd: ${name} sign-in sent back`, { status: res.status });
   } catch (err) {
     console.warn(`statusd: ${name} sign-in not sent back`, { message: err?.message });
@@ -1734,8 +1710,6 @@ async function checkpoint({ keepRunningOnFailure = false } = {}) {
 async function checkpointNow() {
   await keepCodexAuth();
   await keepAgentAuth();
-  if (besideGrok) await keepAgentAuth('grok', path.join(besideGrok.home, 'auth.json'), besideGrok.file);
-  if (besideOpencode) await keepAgentAuth('opencode', path.join(besideOpencode.data, 'opencode', 'auth.json'), besideOpencode.file);
   await lastSettingsRound();
   // Before the push, which can fail: the home is worth keeping either way. The conversation first: it is small, and
   // it is what the stopped session's Chat shows.
@@ -2241,7 +2215,7 @@ async function agentsReply(req, res, route, pathname) {
   if (!agents) return reply(res, 404, { error: 'this session runs no other agents: only a private coding session does' });
   if (route === 'GET /agents') return reply(res, 200, { agents: await agents.list() });
   try {
-    if (route === 'POST /agents' || route === 'POST /agents/with-claude-token') {
+    if (route === 'POST /agents' || route === 'POST /agents/with-claude-token' || route === 'POST /agents/with-grok-proxy') {
       let body;
       try {
         body = JSON.parse((await readBody(req)) || '{}');
@@ -2254,7 +2228,7 @@ async function agentsReply(req, res, route, pathname) {
       if (route === 'POST /agents' && body?.agent === 'claude' && !AGENTS.agent(AGENT).teamCredential) {
         return reply(res, 409, { error: 'start Claude from a console that can pass your Claude token' });
       }
-      return reply(res, 200, { agent: await agents.start(body) });
+      return reply(res, 200, { agent: await agents.start({ ...body, grokProxy: route === 'POST /agents/with-grok-proxy' }) });
     }
     const [, , id, action] = pathname.split('/');
     if (!AGENT_ID_RE.test(id ?? '') || pathname.split('/').length !== 4) return reply(res, 404, { error: 'not found' });

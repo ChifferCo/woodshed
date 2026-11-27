@@ -220,7 +220,7 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
-    if (reviewAgentProxy?.isProxyPath(pathname)) return reviewAgentProxy.handle(req, res, sessionForToken(reviewAgentTokenOf(req.headers), fleet.sessions()));
+    if (reviewAgentProxy?.isProxyPath(pathname)) return reviewAgentProxy.handle(req, res, sessionForToken(reviewAgentTokenOf(req.headers), fleet.sessions()), (session) => fleet.isLocked?.(session));
     if (isMcpPath(pathname)) {
       if (!mcpRelay) {
         req.resume();
@@ -500,8 +500,7 @@ const GIVEN_SIGN_IN_HEADER = 'x-woodshed-given-sign-in';
 
 async function agentAuthReply(req, res, session, userSettings, fleet) {
   const requested = new URL(req.url, 'http://console').searchParams.get('agent');
-  const id = requested === null ? session.options?.agent
-    : agents.OWN_SIGN_IN_AGENTS.includes(requested) && session.extraAgents?.includes(requested) ? requested : null;
+  const id = requested === null ? session.options?.agent : null;
   const agent = agents.isAgent(id) ? agents.agent(id) : null;
   if (!userSettings || !session.owner || !agent?.signIn?.rotates || session.taintedAt || fleet.isLocked?.(session)) {
     req.resume();

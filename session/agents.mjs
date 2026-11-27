@@ -82,7 +82,7 @@ export function startOptions(body) {
  * @param {{agent: string, model: string, effort: string, permissionMode: string}} options
  * @param {{bin: string, claudeFlags: string, conversation: string|null, uploadsDir: string, promptFile: string|null}} where
  */
-export function commandLine({ agent, model, effort, permissionMode }, { bin, claudeFlags = '', conversation = null, uploadsDir, promptFile = null }) {
+export function commandLine({ agent, model, effort, permissionMode }, { bin, claudeFlags = '', conversation = null, uploadsDir, promptFile = null, proxiedGrok = false }) {
   const parts = [path.join(bin, agent)];
   if (agent === 'claude') {
     // The session's own flags (claudeFlags in entrypoint.sh, written with no model, effort or mode): its hooks, rules,
@@ -94,6 +94,7 @@ export function commandLine({ agent, model, effort, permissionMode }, { bin, cla
     if (effort) parts.push('--effort', effort);
   } else if (agent === 'grok') {
     parts.push('--no-alt-screen', '--no-auto-update', '--session-id', conversation);
+    if (proxiedGrok) parts.push('--no-memory', '--disable-web-search', '--disallowed-tools', 'x_search');
     if (permissionMode === 'auto') parts.push('--always-approve');
     if (permissionMode === 'acceptEdits' || permissionMode === 'plan') parts.push('--permission-mode', permissionMode);
     if (model) parts.push('--model', model);
@@ -423,7 +424,7 @@ export function createAgents({
     await fs.rm(stateFile, { force: true });
     if (promptFile) await fs.writeFile(promptFile, `${options.prompt}\n`, { mode: 0o600 });
     const conversation = ['claude', 'grok'].includes(options.agent) ? randomUUID() : null;
-    const line = commandLine(options, { bin, claudeFlags, conversation, uploadsDir, promptFile });
+    const line = commandLine(options, { bin, claudeFlags, conversation, uploadsDir, promptFile, proxiedGrok: Boolean(env.GROK_MODELS_BASE_URL) });
     // Its own terminal, its hooks pointed at its own state file. A tmux one is kept after the agent exits, as the
     // session's is.
     const agentEnv = { WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_AGENT_ID: id, ...env };
@@ -463,10 +464,10 @@ export function createAgents({
       ({ env, undo = null, cleanup = null } = await claudeEnv(typeof body?.claudeToken === 'string' ? body.claudeToken.trim() : ''));
     } else if (options.agent === 'grok') {
       if (!grokEnv) throw Object.assign(new Error('grok is not set up in this session'), { status: 409 });
-      ({ env, undo = null } = await grokEnv(body?.grokAuth));
+      ({ env, undo = null } = await grokEnv(body?.grokProxy));
     } else if (options.agent === 'opencode') {
       if (!opencodeEnv) throw Object.assign(new Error('OpenCode is not set up in this session'), { status: 409 });
-      ({ env, undo, cleanup } = await opencodeEnv(body?.opencodeAuth, options));
+      ({ env, undo, cleanup } = await opencodeEnv(options));
     } else if (!(await codexReady())) {
       throw Object.assign(new Error('codex is not set up in this session: start a new session for it'), { status: 409 });
     } else {
