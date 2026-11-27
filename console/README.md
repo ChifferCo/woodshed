@@ -404,8 +404,9 @@ message from the page, and Done or Needs you within about 2 s of the agent sayin
 A session whose agent has hooks (claude, Grok Build) also tells the console the moment its state changes: its statusd
 looks at the hooks' state file every 250 ms and, when the state there changed, calls the session API's
 `POST /state-changed` with its own token (`session/stateAnnounce.mjs`). The console reads that session at once, at most
-every 300 ms (`fleet.stateChanged`), and from then on leaves its working to it: the live check reads it every 2 s only
-while a message waits for it or was just sent. Its card then changes within half a second of the agent, a message typed
+every 300 ms (`fleet.stateChanged`), and from then on leaves most of its working to it: while it works the live check
+reads it every 6 s rather than 2, for what no hook tells of (an Esc typed in its TUI tab, Herdr's own word, a background
+agent ending), and every 2 s only while a message waits for it or was just sent. Its card then changes within half a second of the agent, a message typed
 in the TUI tab included. The call says only that something changed, so the card still shows only what the console
 read. The console logs `fleet: session tells of its own state changes` once for each session, and statusd `statusd:
 the console is told of each state change`, or `state change not told to the console` with why (once per reason; a

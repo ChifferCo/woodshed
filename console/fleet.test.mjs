@@ -4978,11 +4978,16 @@ test('a session that tells of its own state changes is read at once, at most eve
   assert.equal(reads(told), before + 2);
   assert.equal(told.state, 'working');
 
-  // Working, it is left to say when it is done; one that never told is still read for it.
+  // Working, it is left to say when it is done, but for a read every 6 s for what no hook says (an Esc in its TUI tab);
+  // one that never told is read every pass.
   const was = [reads(told), reads(quiet)];
   fleet.checkLive();
   await settle();
   assert.deepEqual([reads(told), reads(quiet)], [was[0], was[1] + 1]);
+  advance(6_000);
+  fleet.checkLive();
+  await settle();
+  assert.deepEqual([reads(told), reads(quiet)], [was[0] + 1, was[1] + 2]);
 });
 
 test('a session that tells of its changes is still read often while a message waits for it, and after one is sent', async () => {

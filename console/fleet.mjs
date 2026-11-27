@@ -50,6 +50,9 @@ const FIRST_LIVE_READ_MS = 400;
 // A session that tells the console of its own state changes (session/stateAnnounce.mjs) is read for them at most this
 // often: one that told again sooner is read once more when it is up, so its last change is never missed.
 const ANNOUNCED_READ_EVERY_MS = 300;
+// While it works, such a session is still read this often: an Esc typed in its TUI tab, Herdr's own word, or a
+// background agent ending changes its state with no hook to tell of it.
+const ANNOUNCING_WORKING_READ_MS = 6_000;
 // How long statusd may take to type a private session's review feedback after getting it (it reads GitHub first).
 const GUARDED_SEND_WITHIN_MS = 20_000;
 // The quick look at a starting session: statusd answers at once on the same network, or is not up yet.
@@ -1383,10 +1386,12 @@ export function createFleet({
         if (!session || !ACTIVE_STATUSES.has(session.status)) map.delete(id);
       }
     }
-    // A session that tells of its own changes is not read for them while it works; one just sent something, or holding
-    // a message back for it, still is, since only a read sends what is held.
+    // A session that tells of its own changes is read for them only every ANNOUNCING_WORKING_READ_MS while it works, for
+    // the changes no hook tells of; one just sent something, or holding a message back for it, every pass, since only a
+    // read sends what is held.
+    const workingDue = (s) => !announcing.has(s.id) || now() - (statusAskedAt.get(s.id) ?? -Infinity) >= ANNOUNCING_WORKING_READ_MS;
     const live = state.sessions.filter((s) => s.status === 'running' && s.endpoint
-      && ((s.state === 'working' && !announcing.has(s.id)) || liveUntil.has(s.id) || s.pendingMessages?.length));
+      && ((s.state === 'working' && workingDue(s)) || liveUntil.has(s.id) || s.pendingMessages?.length));
     for (const session of live) {
       readStatus(session).catch((err) => console.error('fleet: session check failed', { id: session.id, message: firstLine(err) }));
     }
