@@ -677,7 +677,8 @@
     const key = `${s.id}@${s.stoppedAt ?? ''}`;
     const slot = h('div');
     const fill = (kept) => {
-      const offer = window.WoodshedKeptMachine.offer(s, kept);
+      // A page whose keptMachine.cjs did not load (a deploy mid-load) offers what it did before #410: Resume alone.
+      const offer = window.WoodshedKeptMachine?.offer(s, kept);
       if (!offer) return;
       const leads = offer.lead === 'latest';
       const button = h('button', {
