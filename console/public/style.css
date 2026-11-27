@@ -449,6 +449,8 @@ table.events { width: 100%; min-width: 760px; border-collapse: collapse; font-si
 .secret-form-title { margin: 4px 0 -4px; font-size: 13px; font-weight: 600; }
 .secret-name { font-family: var(--mono); font-size: 13.5px; font-weight: 600; }
 .msg-plain { font-size: 13px; color: var(--sub); }
+.secret-field { display: flex; align-items: stretch; gap: 6px; }
+.secret-field > .field { flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-weight: 400; }
 .field-block { display: flex; flex-direction: column; gap: 4px; }
 .value-row { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; }
 .value-box { flex: 1 1 320px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--stopped); font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow-y: auto; }

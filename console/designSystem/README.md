@@ -78,6 +78,8 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - A server or anything the console calls on a person's behalf is tested before it is saved: the button says
   `Testing…`, a failure is a `form-error` with a quiet **Add anyway** beside it, and the form keeps what was typed.
   A saved one's row has a quiet **Test**, whose answer is a line under the row.
+- A secret a person pastes (a token, a key, a signing secret) goes in a secret field (`components/SecretField`):
+  masked as it is typed, with **Show** beside it, and always empty when drawn. Never a plain text field.
 - An HTTP header's name is shown in Title-Case (`Authorization`, `X-Api-Key`), whatever case it is kept in.
 - Each settings page has a quiet `Only you` or `Everyone` tag beside its title, and the settings rail has a search at its top (`components/SettingsSearch`).
   Name a card by whose it is when the same thing exists on both sides: "My repo settings", "My session timeouts".

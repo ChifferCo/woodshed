@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 
-import { actions, button, checkbox, checklist, dialog, figures, dialogActions, form, textField, escapeHtml, group, howTo, html, line, linkButton, Markup, note, pageHead, pill, row, steps, table, trusted, valueBox } from './settingsMarkup.mjs';
+import { actions, button, checkbox, checklist, dialog, figures, dialogActions, form, textField, escapeHtml, group, howTo, html, line, linkButton, Markup, note, pageHead, pill, row, secretField, steps, table, trusted, valueBox } from './settingsMarkup.mjs';
 import { standalonePage } from './server.mjs';
 
 // The console's own rows (public/settingsRows.js), drawn with an h() that keeps a tree, then written out as HTML the way
@@ -133,6 +133,38 @@ test('a field is a void element, never closed, and a form carries its hidden val
     '<input class="field is-text" type="text" name="name" value="Acme" required="" autocomplete="off" style="width: 100%; box-sizing: border-box">');
   assert.equal(form({ action: '/orgs/acme/leave', hidden: { login: 'ada' } }, button('Leave')).text,
     '<form method="post" action="/orgs/acme/leave" class="set-form"><input type="hidden" name="login" value="ada"><button type="submit" class="btn btn-plain">Leave</button></form>');
+});
+
+test('a secret field is masked, offered no saved password, never spell-checked, and holds no value', () => {
+  assert.equal(secretField({ name: 'token', id: 'op-token', placeholder: 'tok_…', required: true, maxlength: '8000' }).text,
+    '<div class="secret-field"><input class="field is-text" type="password" id="op-token" name="token" placeholder="tok_…" required="" maxlength="8000" autocomplete="new-password" spellcheck="false" autocapitalize="off">'
+    + '<button type="button" class="btn btn-plain" data-reveal="" aria-controls="op-token" aria-pressed="false">Show</button></div>');
+  assert.doesNotMatch(secretField({ name: 'token', id: 't', value: 'tok_kept' }).text, /tok_kept|value=/, 'a kept secret is never put back in the page');
+  assert.throws(() => secretField({ name: 'token' }), /needs an id/);
+  assert.doesNotMatch(secretField({ name: 'x', id: 'x', placeholder: '"><img src=x>' }).text, /<img/);
+});
+
+test('Show shows a secret field\'s paste and Hide masks it again, on a program\'s markup (hostRows.js)', () => {
+  // Just enough of a page for hostRows.js: one secret field, and the click listener it puts on its root.
+  const field = { type: 'password' };
+  const show = {
+    textContent: 'Show', attrs: { 'aria-pressed': 'false' },
+    setAttribute(k, v) { this.attrs[k] = v; },
+    parentElement: { querySelector: (q) => (q === 'input' ? field : null) },
+  };
+  let click = null;
+  const root = {
+    dataset: {}, contains: () => true, querySelectorAll: () => [],
+    addEventListener: (type, fn) => { if (type === 'click') click = fn; },
+  };
+  const target = { closest: (q) => (q === '.secret-field > [data-reveal]' ? show : null) };
+  const window = { addEventListener() {} };
+  vm.runInContext(fs.readFileSync(new URL('./public/hostRows.js', import.meta.url), 'utf8'), vm.createContext({ window, document: {}, location: { hash: '' }, CSS: { escape: (x) => x } }));
+  window.WoodshedHostRows.wire(root);
+  click({ target });
+  assert.deepEqual([field.type, show.textContent, show.attrs['aria-pressed']], ['text', 'Hide', 'true']);
+  click({ target });
+  assert.deepEqual([field.type, show.textContent, show.attrs['aria-pressed']], ['password', 'Show', 'false']);
 });
 
 test('a link is a path, an anchor or an http(s) address: any other scheme, which a value from elsewhere could carry, is no link', () => {
