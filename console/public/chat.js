@@ -190,7 +190,7 @@
     }
 
     function fit() {
-      W.fitField(field, 240);
+      W.fitField(field, 240, [scroller]);
     }
 
     // Enter sends and Shift+Enter makes a new line, on a keyboard; a phone's Return is a new line, and its Send sends.

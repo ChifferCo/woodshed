@@ -79,10 +79,12 @@
 
   // Grows a textarea to its text. Collapsing it to measure shrinks the layout for an instant, which clamps the scroll of
   // everything around it (the chat thread, the page) and leaves it at the bottom after every keystroke: so the scrolls
-  // are put back, and nothing is written when the height did not change.
-  function fitField(field, max) {
+  // are put back, and nothing is written when the height did not change. `also` are scrollers that are not the field's
+  // ancestors (the chat thread sits beside the composer, not around it).
+  function fitField(field, max, also = []) {
     const spots = [];
     for (let n = field.parentElement; n; n = n.parentElement) if (n.scrollTop) spots.push([n, n.scrollTop]);
+    for (const n of also) if (n && n.scrollTop) spots.push([n, n.scrollTop]);
     const page = [window.scrollX, window.scrollY];
     const before = field.style.height;
     field.style.height = 'auto';
