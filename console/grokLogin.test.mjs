@@ -196,9 +196,14 @@ test('a refreshed login that cannot be saved is tried once more, then reported w
   const lines = capture(t);
   const us = store(login());
   us.failSave = true;
-  const got = await make(us, xai()).fresh('lou');
+  const fetch = xai();
+  const grok = make(us, fetch);
+  const got = await grok.fresh('lou');
   assert.equal(got.state, 'expired');
-  assert.match(got.why, /could not save its refresh/);
+  assert.match(got.why, /could not save its refresh, which used up the saved login: save a new one/);
+  const posts = () => fetch.calls.filter((c) => c.method === 'POST').length;
+  await grok.fresh('lou');
+  assert.equal(posts(), 1, 'the spent token is not sent again');
   assert.ok(lines.some((l) => l.includes('could not be saved')));
   noTokensIn(lines);
 });
@@ -254,7 +259,7 @@ test('a token call that may have been sent and got no answer is never sent again
   assert.equal(first.state, 'expired');
   assert.match(first.why, /cannot tell whether xAI took its refresh: save a new one/);
   at += 10 * 60_000;
-  await grok.fresh('lou');
+  assert.equal((await grok.fresh('lou')).why, first.why, 'the same reason on later reads');
   assert.equal(timeout.calls.filter((c) => c.method === 'POST').length, 1, 'not even after a while');
   assert.ok(lines.some((l) => l.includes('"ambiguous":true')));
   noTokensIn(lines);
