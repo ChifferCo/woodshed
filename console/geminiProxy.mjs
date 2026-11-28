@@ -14,10 +14,14 @@
 // needs: the generate and count calls, and the model list. Not the Files API, cached contents, tuned models, batches or
 // anything else the team's key can do: they would hold, or read, what other people's sessions put there.
 //
-// A session that has seen production data (a tainted one) reaches Google only through here, and each call is read before it
-// goes: one that asks Google to reach out for it (grounding with Google Search, the URL context tool, a file given by URL)
-// is refused, and so is one the console cannot read as JSON, since those would take what the session saw past its
-// network's lockdown, as anthropicProxy.mjs does for Anthropic's.
+// Every call is read before it goes, as JSON, and one that names something stored under the team's key is refused: a file
+// (`fileData`, the Files API's or any address), a cached content (`cachedContent`) or a file search store. The proxy blocks
+// those APIs' own paths, but a model call that names one by its resource name would still read it under the team's project,
+// whoever put it there. A call the console cannot read as JSON does not go either.
+//
+// A session that has seen production data (a tainted one) reaches Google only through here, and its calls are also checked
+// for what asks Google to reach out for it (grounding with Google Search, the URL context tool), which would take what the
+// session saw past its network's lockdown, as anthropicProxy.mjs does for Anthropic's.
 
 import http from 'node:http';
 import https from 'node:https';
@@ -31,8 +35,8 @@ const TEAM_KEY_TTL_MS = 5 * 60_000;
 // to and whose quota it uses: only the team key's.
 const DROPPED_HEADERS = new Set(['host', 'connection', 'keep-alive', 'proxy-connection', 'authorization', 'x-api-key',
   'x-goog-api-key', 'x-goog-user-project', 'x-goog-request-params', 'cookie']);
-// The most of a tainted session's call that is read whole to check it: a long conversation with images fits.
-export const MAX_TAINTED_BODY_BYTES = 64 * 1024 * 1024;
+// The most of a call that is read whole to check it: a long conversation with images fits.
+export const MAX_BODY_BYTES = 64 * 1024 * 1024;
 
 // A path already in its plain form: no `.` or `..` segment, no empty one, no `%` escape and no backslash.
 const UNPLAIN_PATH_RE = /[%\\]|\/\/|(?:^|\/)\.{1,2}(?:\/|$)/;
@@ -64,7 +68,43 @@ export function geminiPathAllowed(rawPath, method) {
 
 // Tools Google runs on its own side, out on the internet.
 const SERVER_REACH_TOOLS = new Set(['googleSearch', 'google_search', 'googleSearchRetrieval', 'google_search_retrieval', 'urlContext', 'url_context',
-  'googleMaps', 'google_maps', 'fileSearch', 'file_search']);
+  'googleMaps', 'google_maps']);
+// Tools that read a store of files kept under the key.
+const STORE_TOOLS = new Set(['fileSearch', 'file_search']);
+
+/**
+ * What in a call names something stored under the team's key, which no session may use: a file or a cached content, anywhere
+ * in the call (a count's `generateContentRequest` wraps one, and a system instruction holds parts too), or a file search
+ * tool. Inline data (`inlineData`) is the session's own and passes.
+ * @param {unknown} body  a call's JSON
+ * @returns {string|null}
+ */
+export function storedResource(body) {
+  if (!body || typeof body !== 'object') return null;
+  for (const tool of Array.isArray(body.tools) ? body.tools : []) {
+    const name = Object.keys(tool ?? {}).find((k) => STORE_TOOLS.has(k));
+    if (name) return 'a file search store';
+  }
+  return storedIn(body);
+}
+
+function storedIn(value, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 64) return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = storedIn(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (value.cachedContent !== undefined || value.cached_content !== undefined) return 'cached content';
+  if (value.fileData !== undefined || value.file_data !== undefined) return 'a file given by its name or address';
+  for (const item of Object.values(value)) {
+    const found = storedIn(item, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
 
 /**
  * @param {unknown} body  a call's JSON
@@ -76,18 +116,7 @@ export function serverSideReach(body) {
     const name = Object.keys(tool ?? {}).find((k) => SERVER_REACH_TOOLS.has(k));
     if (name) return `the ${name} tool`;
   }
-  if (body.cachedContent !== undefined || body.cached_content !== undefined) return 'cached content';
-  if (fileByUrlIn(body)) return 'a file given by its address';
   return null;
-}
-
-// A part that names a file by address (`fileData.fileUri`: a URL, a YouTube link, a stored file), anywhere in the call.
-function fileByUrlIn(value, depth = 0) {
-  if (!value || typeof value !== 'object' || depth > 64) return false;
-  if (Array.isArray(value)) return value.some((item) => fileByUrlIn(item, depth + 1));
-  const file = value.fileData ?? value.file_data;
-  if (file && typeof file === 'object' && (file.fileUri ?? file.file_uri)) return true;
-  return Object.values(value).some((item) => fileByUrlIn(item, depth + 1));
 }
 
 /** @returns {boolean}  whether a session API path is this proxy's */
@@ -108,7 +137,7 @@ export function keyOf(headers) {
 
 /**
  * @param {{secrets?: {read: (name: string) => Promise<string|null>}|null,
- *          teamKey?: string|null,  the key itself, where there is no Secrets Manager (the docker launcher's env file)
+ *          teamKey?: string|null,  for a program that embeds the console and keeps the key itself; never a session's environment
  *          upstream?: string, now?: () => number}} opts
  * @returns {{isProxyPath: (pathname: string) => boolean,
  *            handle: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, session: object|null) => Promise<void>,
@@ -183,22 +212,25 @@ export function createGeminiProxy({ secrets = null, teamKey = null, upstream = '
     open.delete(sessionId);
   }
 
-  // A tainted session's call, read whole and checked before it goes: null when it was refused (and answered).
+  // A call, read whole and checked before it goes: null when it was refused (and answered), undefined for a call with no body.
+  // Every session's is, for what is stored under the team's key; a tainted session's also for what has Google reach out.
   async function checkedBody(req, res, session) {
-    if (!session.taintedAt || req.method === 'GET' || req.method === 'HEAD') return undefined;
+    if (req.method === 'GET' || req.method === 'HEAD') return undefined;
+    const tainted = Boolean(session.taintedAt);
+    // Read, or not sent: a call the console cannot check never goes.
     if (req.method !== 'POST' || !/json/i.test(String(req.headers['content-type'] ?? ''))) {
       req.resume();
-      console.warn('geminiProxy: refused, a tainted session\'s call the console cannot read', { sessionId: session.id, method: req.method });
-      refuse(res, 415, 'this session has seen production data, so only JSON calls the console can check go to Google');
+      console.warn('geminiProxy: refused, a call the console cannot read', { sessionId: session.id, method: req.method, tainted });
+      refuse(res, 415, 'only JSON calls the console can check go to Google');
       return null;
     }
     const chunks = [];
     let bytes = 0;
     for await (const chunk of req) {
       bytes += chunk.length;
-      if (bytes > MAX_TAINTED_BODY_BYTES) {
+      if (bytes > MAX_BODY_BYTES) {
         req.resume();
-        refuse(res, 413, 'this call is larger than the console reads for a session that has seen production data');
+        refuse(res, 413, 'this call is larger than the console reads');
         return null;
       }
       chunks.push(chunk);
@@ -208,10 +240,16 @@ export function createGeminiProxy({ secrets = null, teamKey = null, upstream = '
     try {
       parsed = JSON.parse(body.toString('utf8'));
     } catch {
-      refuse(res, 400, 'this session has seen production data, so a call the console cannot read as JSON does not go to Google');
+      refuse(res, 400, 'a call the console cannot read as JSON does not go to Google');
       return null;
     }
-    const reach = serverSideReach(parsed);
+    const stored = storedResource(parsed);
+    if (stored) {
+      console.warn('geminiProxy: refused, a call named something stored under the team key', { sessionId: session.id, what: stored });
+      refuse(res, 403, `${stored} is off: it would be read under the team's key, whoever stored it`);
+      return null;
+    }
+    const reach = tainted ? serverSideReach(parsed) : null;
     if (reach) {
       console.warn('geminiProxy: refused, a tainted session asked Google to reach out', { sessionId: session.id, what: reach });
       refuse(res, 403, `this session has seen production data, so ${reach} is off: Google would reach out for it`);

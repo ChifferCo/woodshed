@@ -145,6 +145,47 @@ test('a repo that ships hooks, MCP servers or plugins is a warning on the team\'
   assert.doesNotMatch(plain.configure('own').out, /ships/);
 });
 
+test('a repo that ships startup code stops a team-key start beside any agent whose personal credential is in the container', (t) => {
+  const shipped = { checkout: (repo) => { fs.mkdirSync(path.join(repo, '.agents')); fs.writeFileSync(path.join(repo, '.agents/hooks.json'), '{}'); } };
+  // Each place such a credential sits, as the entrypoint and the agents write them: a harmless dummy in each, never a real one.
+  const held = [
+    ['.config/woodshed/claude-token', 'a private claude session\'s owner\'s token', "the owner's Claude token"],
+    ['.claude/.credentials.json', 'a claude login', "the owner's Claude login"],
+    ['.config/woodshed/codex-auth', 'a codex session\'s sign-in as given', "the owner's Codex sign-in"],
+    ['.codex/auth.json', 'a codex sign-in in its home', "the owner's Codex sign-in"],
+    ['.config/woodshed/agent-auth', 'a Grok Build or OpenCode sign-in as given', "the owner's Grok Build or OpenCode sign-in"],
+    ['.grok/auth.json', 'a Grok Build login', "the owner's Grok Build sign-in"],
+    ['.local/share/opencode/auth.json', 'an OpenCode login', "the owner's OpenCode sign-in"],
+  ];
+  for (const [file, what, named] of held) {
+    const s = session(t, shipped);
+    fs.mkdirSync(path.dirname(path.join(s.home, file)), { recursive: true });
+    fs.writeFileSync(path.join(s.home, file), '{"dummy":"not-a-real-credential"}\n', { mode: 0o600 });
+    // As a claude or codex agent's session is started: AGENT names the primary, the team-key Antigravity is the one beside it.
+    for (const AGENT of ['claude', 'codex']) {
+      const r = s.configure('key', { AGENT });
+      assert.ok(r.failed, `${what} (${AGENT}) stops the start`);
+      assert.match(r.out, new RegExp(`where it can read a saved sign-in \\(${named.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`), what);
+      assert.equal(s.read('.gemini/config/hooks.json'), null, `${what}: nothing written`);
+    }
+  }
+  // No personal credential, and a team key with the session's token alone: a warning, as before.
+  const bare = session(t, shipped);
+  const warned = bare.configure('key', { AGENT: 'claude' });
+  assert.ok(!warned.failed, warned.out);
+  assert.match(warned.out, /WARNING: the repo ships hooks, MCP servers or plugins/);
+  // An empty file is no credential.
+  const empty = session(t, shipped);
+  fs.mkdirSync(path.join(empty.home, '.config/woodshed'), { recursive: true });
+  fs.writeFileSync(path.join(empty.home, '.config/woodshed/claude-token'), '');
+  assert.ok(!empty.configure('key', { AGENT: 'claude' }).failed);
+  // A checkout with no startup code is never held back by a credential.
+  const quiet = session(t);
+  fs.mkdirSync(path.join(quiet.home, '.config/woodshed'), { recursive: true });
+  fs.writeFileSync(path.join(quiet.home, '.config/woodshed/claude-token'), 'dummy');
+  assert.ok(!quiet.configure('key', { AGENT: 'claude' }).failed);
+});
+
 test('the owner\'s own Google login is written as agy\'s login file, 0600, never through a link, and never logged', (t) => {
   const login = '{"token":{"access_token":"made-up-access","token_type":"Bearer","refresh_token":"made-up-refresh","expiry":"2030-01-01T00:00:00Z"},"auth_method":"consumer"}';
   const withLogin = (s) => { fs.mkdirSync(path.join(s.home, '.config/woodshed'), { recursive: true }); fs.writeFileSync(path.join(s.home, '.config/woodshed/agent-auth'), login); };

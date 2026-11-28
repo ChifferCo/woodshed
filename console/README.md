@@ -961,16 +961,18 @@ console's MCP servers yet, and Grok Build runs none of a repo's own either (`ses
 **Antigravity CLI** (`agy`, Google's terminal agent) runs in a private session on either of two credentials, so its Agent
 card is offered with one of them (`/api/my`'s `agents.antigravity`):
 
-- **The team's `gemini-api-key`** (Secrets page, group session), through the console's Gemini proxy
+- **The team's `gemini-api-key`** (Secrets page, group session; read from the secret store alone, never from the session env file the fleet copies into every launch), through the console's Gemini proxy
   (`geminiProxy.mjs`, `/gemini/…` on the session API), as Codex runs on `openai-api-key`. The session holds only its
   `SESSION_TOKEN`, as the API key `agy` sends in `x-goog-api-key`, and `GOOGLE_GEMINI_BASE_URL` points it at the console;
   the proxy swaps in the team key. Only an Antigravity session may use it (one started on it, or a private one whose
   owner started an Antigravity agent beside its own: `fleet.allowAgent`, as Codex's), and only what a model turn needs
   passes, each path with its one method (`POST /v1beta/models/<model>:streamGenerateContent`, `generateContent` and
   `countTokens`, and the model list): never the Files API, cached contents, tuned models or batches, or a key in the
-  query. A session that has seen production data reaches Google only through it, and each call is read first: one that
-  asks Google to reach out (grounding with Google Search, the URL context tool, a file or cached content given by
-  address) is refused, as the Anthropic proxy refuses Anthropic's. A lockdown cuts the calls on their way
+  query. Every call is read first, as JSON, and one that names something stored under the team's key (a `fileData` part,
+  a `cachedContent`, a file search store) is refused, since a model call that names one by its resource name would read it
+  under the team's project whoever stored it. A session that has seen production data reaches Google only through it, and
+  its calls are also refused when they ask Google to reach out (grounding with Google Search, the URL context tool), as
+  the Anthropic proxy refuses Anthropic's. A lockdown cuts the calls on their way
   (`geminiProxy: calls cut at the lockdown`).
 - **The owner's own Google login**, their Antigravity plan (Free, Pro or Ultra), saved on My settings as
   `users/<login>/antigravity-auth` and handed to their private sessions in `/settings`'s `agentAuth` when they saved one.
@@ -988,7 +990,8 @@ An extra Antigravity agent (**+ Another agent**) is started with the owner's log
 has seen production data. Antigravity does not review pull requests yet (`reviews: false`), and gets none of the console's
 MCP servers. Its **Model** is a name its own `--model` takes (`agy models` lists them); **Effort** is its `--effort`.
 The console logs `geminiProxy: team key read`, `first call on the team key`, `refused, not an Antigravity session`,
-`refused a path Antigravity does not need`, `no team key saved` (503 to the session) and, for a tainted session,
+`refused a path Antigravity does not need`, `refused, a call named something stored under the team key`,
+`refused, a call the console cannot read`, `no team key saved` (503 to the session) and, for a tainted session,
 `refused, a tainted session asked Google to reach out`.
 
 Grok Build's **Model** is a menu when the console could read its models on your own Grok sign-in (`grokModels.mjs`,

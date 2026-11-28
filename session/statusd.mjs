@@ -237,6 +237,8 @@ const AGENT_GIVEN_FILE = path.join(os.homedir(), '.config/woodshed/agent-auth');
 // (agy's login file does not rotate its refresh token, so OWN_AUTH_FILES has no entry for it and nothing is sent back at stop.)
 const ANTIGRAVITY_GIVEN_FILE = path.join(os.homedir(), '.config/woodshed/antigravity-auth');
 const REAL_AGY = process.env.WOODSHED_REAL_AGY || '/usr/local/bin/agy';
+// agy's own copy of the login, which the setup writes from the one it was given: taken back with it when a start fails.
+const ANTIGRAVITY_LOGIN_FILE = path.join(os.homedir(), '.gemini/antigravity-cli/antigravity-oauth-token');
 // What a Claude home keeps across sessions: logins (MCP OAuth in .credentials.json), memory, settings, transcripts,
 // and the installed plugins' files, which are a few MB and much slower to fetch from GitHub again. Caches and
 // per-machine state are rebuilt in a moment, and only make the archive bigger.
@@ -798,6 +800,12 @@ async function antigravityBeside(given) {
   if (!existsSync(REAL_AGY)) throw Object.assign(new Error('Antigravity CLI is not in this session\'s image: start a new session'), { status: 409 });
   if (ANTIGRAVITY) return { env: { WOODSHED_AGY_AUTH: process.env.WOODSHED_AGY_AUTH === 'own' ? 'own' : 'key' } };
   const own = typeof given === 'string' && given.trim() !== '';
+  // A login there before this start is not this start's to take back.
+  const hadLogin = existsSync(ANTIGRAVITY_LOGIN_FILE);
+  const takeBackLogin = async () => {
+    await fs.rm(ANTIGRAVITY_GIVEN_FILE, { force: true });
+    if (!hadLogin) await fs.rm(ANTIGRAVITY_LOGIN_FILE, { force: true });
+  };
   const setup = path.join(import.meta.dirname, 'antigravitySetup.sh');
   const rules = process.env.WOODSHED_AGENT_RULES_FILE || '/tmp/woodshed-rules.md';
   try {
@@ -813,14 +821,14 @@ async function antigravityBeside(given) {
       REPO_DIR=$2 SESSION_DIR=$3 WOODSHED_RULES_FILE=$4 OWN_AGENT_AUTH_FILE=$5
       configureAntigravity "$6"`, 'antigravity-setup', setup, REPO_DIR, import.meta.dirname, rules, ANTIGRAVITY_GIVEN_FILE, own ? 'own' : 'key']);
   } catch (err) {
-    if (own) await fs.rm(ANTIGRAVITY_GIVEN_FILE, { force: true });
+    if (own) await takeBackLogin();
     throw Object.assign(new Error(err.stderr?.trim() || 'could not set up Antigravity CLI in this session'), { status: 409 });
   }
   console.log('statusd: Antigravity CLI agent beside another set up', { own });
   return {
     env: { WOODSHED_AGY_AUTH: own ? 'own' : 'key' },
     undo: async () => {
-      if (own) await fs.rm(ANTIGRAVITY_GIVEN_FILE, { force: true });
+      if (own) await takeBackLogin();
       console.log('statusd: Antigravity CLI sign-in taken back, the agent did not start');
     },
   };

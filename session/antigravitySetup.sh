@@ -25,6 +25,30 @@ repoRunsCode() {
   printf '%s\n' "${found[@]}"
 }
 
+# A personal credential already in this container, in a file that code run as the session's user could read: the owner's
+# own Claude token or login, their Codex or Grok Build or OpenCode sign-in, whichever agent holds it, as the session's own
+# or beside it. Names the first one found, by what it is. A session on the team's key and the session's own token alone has
+# none: that token is every agent's in the session.
+personalCredentialPresent() {
+  local woodshed=$HOME/.config/woodshed entry file what
+  for entry in \
+    "${OWN_CLAUDE_TOKEN_FILE:-$woodshed/claude-token}|the owner's Claude token" \
+    "$HOME/.claude/.credentials.json|the owner's Claude login" \
+    "${OWN_CODEX_AUTH_FILE:-$woodshed/codex-auth}|the owner's Codex sign-in" \
+    "$HOME/.codex/auth.json|the owner's Codex sign-in" \
+    "$woodshed/agent-auth|the owner's Grok Build or OpenCode sign-in" \
+    "$HOME/.grok/auth.json|the owner's Grok Build sign-in" \
+    "$HOME/.local/share/opencode/auth.json|the owner's OpenCode sign-in"; do
+    file=${entry%%|*}
+    what=${entry#*|}
+    if [ -s "$file" ]; then
+      printf '%s' "$what"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Text agy reads into its prompt by itself, which a symlink out of the checkout would point at a sign-in: refused as
 # Grok Build's rules files are (grokSetup.sh).
 refuseAntigravityRulesOutsideCheckout() {
@@ -45,10 +69,12 @@ refuseAntigravityRulesOutsideCheckout() {
 
 # $1: `key` (the team's Gemini key, through the console) or `own` (the owner's Google login). Run again for each extra
 # agent started beside another (statusd), where it only adds what is not there.
-# With a sign-in or a primary agent's login at risk, a repo that ships hooks, MCP servers or plugins stops the start; with
-# only the team key (the session's own token, which every agent in the session holds) it is a warning.
+# With a sign-in at risk (the owner's own Google login, or any personal credential in the container: a Claude token or
+# login, a Codex, Grok Build or OpenCode sign-in, as the session's own agent or beside it), a repo that ships hooks, MCP
+# servers or plugins stops the start; with only the team key (the session's own token, which every agent in the session
+# holds) it is a warning.
 configureAntigravity() {
-  local auth=${1:-key} file found atRisk=0
+  local auth=${1:-key} file found atRisk=0 held=
   agentDir "$ANTIGRAVITY_DIR" antigravity
   refuseAntigravityRulesOutsideCheckout
   mkdir -p "$ANTIGRAVITY_DIR/antigravity-cli/cache" "$ANTIGRAVITY_DIR/config"
@@ -59,8 +85,9 @@ configureAntigravity() {
   if [ -n "$found" ]; then
     [ "$auth" != own ] || atRisk=1
     case "${AGENT:-claude}" in grok | opencode) atRisk=1 ;; esac
+    held=$(personalCredentialPresent) && atRisk=1
     if [ "$atRisk" = 1 ]; then
-      die "the repo ships $(tr '\n' ' ' <<< "$found")which Antigravity CLI would run as it opens, where it can read a saved sign-in: it is not started on this branch"
+      die "the repo ships $(tr '\n' ' ' <<< "$found")which Antigravity CLI would run as it opens, where it can read a saved sign-in${held:+ ($held)}: it is not started on this branch"
     fi
     log "WARNING: the repo ships hooks, MCP servers or plugins that Antigravity CLI runs by itself" "(files: $(tr '\n' ' ' <<< "$found"))"
   fi

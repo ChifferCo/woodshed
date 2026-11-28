@@ -416,7 +416,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const slackPeople = createSlackPeople({ store, slack });
   // In AWS the team key is the console's alone; the docker launcher's sessions keep the one in its env file.
   const openai = createOpenAiProxy({ secrets, teamKey: config.sessionEnv.OPENAI_API_KEY ?? null, userSettings });
-  const gemini = createGeminiProxy({ secrets, teamKey: config.sessionEnv.GEMINI_API_KEY ?? null });
+  // The team's Gemini key is read from the secret store alone, never from `config.sessionEnv`: that map is what the fleet
+  // copies into every session's environment (the docker launcher passes it as it is), so a key there is every session's.
+  const gemini = createGeminiProxy({ secrets });
   const codexModels = createCodexModels({ userSettings, teamCredential: openai.teamCredential });
   // A review's Grok Build and OpenCode, on its author's own sign-in alone: there is no team key for them.
   const reviewAgentProxy = createReviewAgentProxy({ userSettings });
