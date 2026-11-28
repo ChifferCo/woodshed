@@ -114,6 +114,8 @@ test('config set changes a choice through the page\'s route, and says when it re
   const bare = await c.run(['config', 'set', 'review-models', 'codex']);
   assert.equal(bare.code, EXIT.refused);
   assert.deepEqual(c.userSettings.reviewModels('mia-dev'), { claude: 'sonnet', codex: 'gpt-5.5' }, 'a typo clears nothing');
+  assert.equal((await c.run(['config', 'set', 'review-models', ' , '])).code, EXIT.refused, 'separators alone are no pick');
+  assert.deepEqual(c.userSettings.reviewModels('mia-dev'), { claude: 'sonnet', codex: 'gpt-5.5' });
   assert.equal((await c.run(['config', 'set', 'review-models', 'default', '--json'])).lines[0].value, 'default');
   assert.deepEqual(c.userSettings.reviewModels('mia-dev'), {});
 

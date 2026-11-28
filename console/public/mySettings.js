@@ -812,7 +812,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     }
     const input = h('input', {
       class: 'field mono onoff-model', type: 'text', value: picks[id] ?? '', placeholder: A.agent(id).modelHint || 'its default', 'aria-label': aria,
-      maxlength: '100', autocomplete: 'off', spellcheck: 'false', disabled: busy.has('reviews'),
+      maxlength: '200', autocomplete: 'off', spellcheck: 'false', disabled: busy.has('reviews'),
       onchange: () => { if (input.value.trim() !== (picks[id] ?? '')) change(input.value); },
     });
     return input;

@@ -166,7 +166,8 @@
   function reviewModelOk(id, model) {
     if (!REVIEW_AGENT_IDS.includes(id) || typeof model !== 'string' || !model) return false;
     // A model name is never a credential: one pasted into the box by mistake is refused, never kept or logged.
-    if (/^(?:gh[pousr]_|github_pat_|sk-|xai-|AKIA|ASIA|xox[a-z]-)/i.test(model)) return false;
+    // Each part of `provider/model` is checked, as OpenCode's pick has the model after a slash.
+    if (model.split('/').some((part) => /^(?:gh[pousr]_|github_pat_|sk-|xai-|AKIA|ASIA|xox[a-z]-)/i.test(part))) return false;
     return id === 'claude' ? REVIEW_CLAUDE_MODELS.includes(model) : modelShapeOk(id, model);
   }
 

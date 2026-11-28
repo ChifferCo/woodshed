@@ -19,7 +19,8 @@ function reviewModelsBody(value) {
     if (at < 1 || at === word.length - 1) return null;
     models[word.slice(0, at)] = word.slice(at + 1);
   }
-  return models;
+  // Nothing but separators is no pick: only `default` clears every one.
+  return Object.keys(models).length ? models : null;
 }
 
 export const CONFIG_UNAVAILABLE = 'config-unavailable';
