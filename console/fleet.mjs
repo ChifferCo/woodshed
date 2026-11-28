@@ -466,6 +466,9 @@ export function createFleet({
       }
       // OpenCode reviews on one provider's API key, which the console adds (reviewAgentProxy.mjs): which provider its
       // config points at the console. Grok Build needs nothing more: it calls the console's /grok on a key either way.
+      // The author's model picks, `claude=sonnet codex=gpt-5`; a reviewer with none runs on its default (session/review.sh).
+      const reviewModels = agents.reviewModelsText(session.review.models);
+      if (reviewModels) env.REVIEW_MODELS = reviewModels;
       if (session.review.agents?.includes('opencode') && session.review.ownSignIns?.opencode?.provider) env.REVIEW_OPENCODE_PROVIDER = session.review.ownSignIns.opencode.provider;
     } else if (session.kind === 'pr') env.PR = String(session.number);
     else {
@@ -2965,7 +2968,7 @@ export function createFleet({
     // The author's choice and own sign-ins only for someone who passed the same checks as their Claude plan; never a
     // bot's. Anyone else's review runs the most the team keys can.
     const ownLogin = teamKeyWhy || login.endsWith('[bot]') ? null : login;
-    const { agents, choice = null, leftOut = [], codexLogin = null, codexVia = null, codexAccount = null, ownSignIns = null, why: agentsWhy, keysUnread = false, expanded = true } = reviewAgents
+    const { agents, choice = null, models = null, leftOut = [], codexLogin = null, codexVia = null, codexAccount = null, ownSignIns = null, why: agentsWhy, keysUnread = false, expanded = true } = reviewAgents
       ? await reviewAgents.forReview({ login: ownLogin }) : { agents: ['claude'], why: null };
     if (agentsWhy) console.warn('fleet: review runs other than the author chose', { number, login, choice, agents, why: agentsWhy, ...projectField(project) });
     if (!agents.length && choice !== 'none' && keysUnread) {
@@ -2991,6 +2994,7 @@ export function createFleet({
         // Whose sign-in a Grok Build or OpenCode reviewer runs on, and how: never the sign-in itself, which the console's
         // proxy reads at each call (reviewAgentProxy.mjs).
         ...(ownSignIns ? { ownSignIns } : {}),
+        ...(models ? { models } : {}),
         ...(teamKeyWhy ? { teamKey: true } : {}),
       },
     });

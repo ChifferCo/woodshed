@@ -173,7 +173,7 @@ export function createReviewAgents({ connected, userSettings = null, grokLogin =
    * sign-in, `codexVia` how the session's codex reaches its credential (`chatgpt` for a ChatGPT login, `key` for an API
    * key, the author's or the team's) with `codexAccount` for a ChatGPT login, `ownSignIns` for Grok Build and OpenCode
    * (only ever on their author's own sign-in: `{grok: {login, via: 'key'|'login'}, opencode: {login, provider}}`, for
-   * those that run), `choice` what they chose (null for none saved), `why` when what runs is not what they chose, or
+   * those that run), `models` the author's model picks for the reviewers that run (none for a default), `choice` what they chose (null for none saved), `why` when what runs is not what they chose, or
    * not on their own sign-in, and `keysUnread` when the team keys or the author's own sign-ins could not be read: then
    * what runs is a guess, and no review is not a choice anyone made.
    * @param {{login?: string|null}} [args]  the pull request's author, or null when nobody's own sign-in may be used
@@ -224,8 +224,11 @@ export function createReviewAgents({ connected, userSettings = null, grokLogin =
     // An own sign-in that could not be read counts as unread too, whether or not its agent was left out for it.
     const unread = [codexOwn, ...Object.values(others)].filter((o) => o.unread);
     for (const o of unread) if (!why.some((w) => w.endsWith(o.why))) why.push(o.why);
+    // The author's own model picks, for the reviewers that run: the rest run on their defaults (agents.cjs).
+    const picked = login ? agentsRegistry.reviewModelsOf(userSettings?.reviewModels?.(login)) : {};
+    const models = Object.fromEntries(Object.entries(picked).filter(([id]) => agents.includes(id)));
     return {
-      agents, choice, leftOut, ...codex, ...(Object.keys(ownSignIns).length ? { ownSignIns } : {}),
+      agents, choice, leftOut, ...(Object.keys(models).length ? { models } : {}), ...codex, ...(Object.keys(ownSignIns).length ? { ownSignIns } : {}),
       why: why.length ? why.join('; ') : null, keysUnread: Boolean(team.why || unread.length), expanded,
     };
   }

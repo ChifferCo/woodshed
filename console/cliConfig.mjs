@@ -15,6 +15,8 @@
 // Each write runs as the page's does, by the same code; what the command line gets back is this view alone, never the
 // page's whole answer (myView, which says more of the person than the command line asks for).
 
+import agents from '../shared/agents.cjs';
+
 export const CLI_CONFIG_PATH = '/api/cli/config';
 
 export const CONFIG_ROUTES = Object.freeze([
@@ -39,6 +41,7 @@ export async function configView({ userSettings, projectsView }, login) {
   return {
     terminal: userSettings ? userSettings.terminal(login) : 'tmux',
     reviews: userSettings?.reviewAgents(login) ?? 'default',
+    'review-models': userSettings?.reviewModels ? (agents.reviewModelsText(userSettings.reviewModels(login)) || 'default') : 'default',
     'codex-reviews': userSettings?.usesOwnCodexForReviews(login) ? 'on' : 'off',
     'grok-reviews': userSettings?.usesOwnAgentForReviews?.(login, 'grok') ? 'on' : 'off',
     'opencode-reviews': userSettings?.usesOwnAgentForReviews?.(login, 'opencode') ? 'on' : 'off',

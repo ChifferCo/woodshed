@@ -55,8 +55,22 @@ repoOfCheckout() {
   printf '%s\n' "${url#*github.com[:/]}"
 }
 
+# The model the author picked for a reviewer (REVIEW_MODELS, `claude=sonnet codex=gpt-5.5`, from My settings), or nothing
+# for its default. Only a plain model name is taken: it goes on a command line.
+modelFor() {
+  local word
+  for word in ${REVIEW_MODELS:-}; do
+    [ "${word%%=*}" = "$1" ] || continue
+    # The console's own shapes (shared/agents.cjs, MODEL_NAME and PROVIDER_MODEL), `:` and the longest included.
+    if [[ "${word#*=}" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]{0,192}$ ]]; then printf '%s' "${word#*=}"; return; fi
+    say "The model picked for $1 is not a model name, so it runs on its default" >&2
+  done
+}
+
 runClaude() {
-  "$SESSION_DIR/bin/claude" --model opus -p "$(cat "$DIR/review-prompt.md")" --max-turns 60 \
+  local model
+  model=$(modelFor claude)
+  "$SESSION_DIR/bin/claude" --model "${model:-opus}" -p "$(cat "$DIR/review-prompt.md")" --max-turns 60 \
     --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(ls:*),Bash(wc:*),Read,Grep,Glob,Write,Edit" \
     --output-format stream-json --verbose 2>&1 | tee "$DIR/logs/review.jsonl" \
     | jq -rR --unbuffered 'fromjson? | select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text'
@@ -140,10 +154,13 @@ runGrok() {
   mkdir -p "$GROK_REVIEW_HOME" && chmod 700 "$GROK_REVIEW_HOME"
   printf '[cli]\nauto_update = false\n\n[features]\ntelemetry = false\nfeedback = false\n\n[compat.claude]\nmcps = false\nhooks = false\n\n[compat.cursor]\nmcps = false\n\n[auth]\npreferred_method = "api_key"\n' \
     > "$GROK_REVIEW_HOME/config.toml"
+  local model flags=()
+  model=$(modelFor grok)
+  [ -n "$model" ] && flags=(--model "$model") && say "Grok Build reviews on the model the author picked"
   XAI_API_KEY=$SESSION_TOKEN GROK_HOME=$GROK_REVIEW_HOME GROK_MODELS_BASE_URL=$WOODSHED_CONSOLE_URL/grok/v1 \
     WOODSHED_CLAUDE_STATE_FILE=$GROK_REVIEW_HOME/state.json \
     timeout --kill-after=30 "$AGENT_MINUTES"m "$SESSION_DIR/bin/grok" -p "$(agentPrompt "Grok Build" "$GROK_DIR")" \
-    --always-approve --no-auto-update --no-memory --disable-web-search --disallowed-tools x_search \
+    "${flags[@]}" --always-approve --no-auto-update --no-memory --disable-web-search --disallowed-tools x_search \
     --output-format streaming-json \
     > "$DIR/logs/grok.jsonl" 2>&1 < /dev/null
   code=$?
@@ -173,8 +190,13 @@ runOpencode() {
   jq -n --arg p "$provider" --arg url "$WOODSHED_CONSOLE_URL/opencode/$provider/v1" \
     '{"$schema": "https://opencode.ai/config.json", autoupdate: false, share: "disabled", enabled_providers: [$p],
       provider: {($p): {options: {baseURL: $url}}}, mcp: {}}' > "$home/config/opencode/opencode.json"
+  # Only the provider that is on can serve a model: the pick must be that provider's (`openai/gpt-5.5`).
+  local model flags=()
+  model=$(modelFor opencode)
+  if [ -n "$model" ] && [ "${model%%/*}" = "$provider" ]; then flags=(--model "$model"); say "OpenCode reviews on the model the author picked"
+  elif [ -n "$model" ]; then say "OpenCode's picked model is not on $provider, which this review runs on, so it uses the default"; fi
   XDG_DATA_HOME=$home/data XDG_CONFIG_HOME=$home/config OPENCODE_DISABLE_AUTOUPDATE=1 \
-    timeout --kill-after=30 "$AGENT_MINUTES"m "$SESSION_DIR/bin/opencode" run --pure --auto --format json \
+    timeout --kill-after=30 "$AGENT_MINUTES"m "$SESSION_DIR/bin/opencode" run --pure --auto "${flags[@]}" --format json \
     "$(agentPrompt OpenCode "$OPENCODE_DIR")" > "$DIR/logs/opencode.jsonl" 2>&1 < /dev/null
   code=$?
   [ "$code" = 124 ] && say "OpenCode took longer than $AGENT_MINUTES minutes and was stopped"
@@ -226,7 +248,11 @@ startRelay() {
 }
 
 runCodex() {
-  local code via=${REVIEW_CODEX_AUTH:-key}
+  local code via=${REVIEW_CODEX_AUTH:-key} model
+  # codex's own default model unless the author picked one.
+  CODEX_MODEL=()
+  model=$(modelFor codex)
+  [ -n "$model" ] && CODEX_MODEL=(--model "$model") && say "Codex reviews on the model the author picked"
   prepareAgentDir "$CODEX_DIR" Codex "$1" || { say "Could not write Codex's review prompt"; return 0; }
   # The container is the sandbox, as for a Codex session; the review's GitHub token is read-only, and no sign-in is here.
   if [ "$via" = chatgpt ]; then
@@ -240,13 +266,13 @@ runCodex() {
       timeout --kill-after=30 "$CODEX_MINUTES"m "$SESSION_DIR/bin/codex" \
       -c "chatgpt_base_url=\"https://127.0.0.1:$RELAY_PORT/backend-api\"" \
       -c "openai_base_url=\"https://127.0.0.1:$RELAY_PORT/backend-api/codex\"" \
-      exec --skip-git-repo-check --sandbox danger-full-access --json "$(codexPrompt)" > "$DIR/logs/codex.jsonl" 2>&1 < /dev/null
+      exec "${CODEX_MODEL[@]}" --skip-git-repo-check --sandbox danger-full-access --json "$(codexPrompt)" > "$DIR/logs/codex.jsonl" 2>&1 < /dev/null
     code=$?
     kill "$RELAY_PID" 2>/dev/null
   else
     say "Codex reviews on a key the console adds to its calls (the author's or the team's)"
     WOODSHED_CODEX_AUTH=key timeout --kill-after=30 "$CODEX_MINUTES"m "$SESSION_DIR/bin/codex" \
-      exec --skip-git-repo-check --sandbox danger-full-access --json "$(codexPrompt)" > "$DIR/logs/codex.jsonl" 2>&1 < /dev/null
+      exec "${CODEX_MODEL[@]}" --skip-git-repo-check --sandbox danger-full-access --json "$(codexPrompt)" > "$DIR/logs/codex.jsonl" 2>&1 < /dev/null
     code=$?
   fi
   [ "$code" = 124 ] && say "Codex took longer than $CODEX_MINUTES minutes and was stopped"

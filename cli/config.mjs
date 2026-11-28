@@ -8,6 +8,21 @@
 
 import { printable } from './sessions.mjs';
 
+// `default` is every reviewer's own; else `claude=sonnet,codex=gpt-5.5`, sent as the console's models object. A word that
+// is not reviewer=model is sent as it is, for the console to refuse as it does the page's (it never echoes a value back).
+function reviewModelsBody(value) {
+  if (value === 'default') return {};
+  const models = {};
+  for (const word of String(value).split(/[\s,]+/).filter(Boolean)) {
+    const at = word.indexOf('=');
+    // A word with no model (`codex`) is a typo, not a reset: the console replaces every pick with what it is sent.
+    if (at < 1 || at === word.length - 1) return null;
+    models[word.slice(0, at)] = word.slice(at + 1);
+  }
+  // Nothing but separators is no pick: only `default` clears every one.
+  return Object.keys(models).length ? models : null;
+}
+
 export const CONFIG_UNAVAILABLE = 'config-unavailable';
 
 // Each key, the route that sets it, what it sends, and what it says after a change that does not reach a running
@@ -25,6 +40,14 @@ export const CONFIG_KEYS = Object.freeze({
     about: 'who reviews your pull requests; default is every reviewer that can run here, Grok Build and OpenCode included when their sign-in is on for reviews, and reviewers joined with + (claude+grok) are your own choice. A sign-in saved before that default, or found in the secret store without a save on My settings since, stays out until this is set to default',
     path: '/api/my/reviews',
     body: (value) => ({ choice: value === 'default' ? null : value }),
+    after: 'It applies to the next review.',
+  },
+  'review-models': {
+    values: null,
+    hint: 'default, or reviewer=model words such as claude=sonnet,codex=gpt-5.5',
+    about: 'the model each reviewer runs on in reviews of your pull requests; a reviewer you name no model for runs on its default (Claude Code on opus, the others on their own). Claude Code takes opus, sonnet, haiku or fable; the others a model name their sign-in has, OpenCode as provider/model',
+    path: '/api/my/reviews',
+    body: (value) => ({ models: reviewModelsBody(value) }),
     after: 'It applies to the next review.',
   },
   'codex-reviews': {
@@ -133,6 +156,9 @@ export async function configCommand({ origin, rest }, ctx) {
   if (words.length > shape) throw fail(`too many words for config ${sub}: put a value with spaces in quotes`);
   if (key !== undefined && !Object.hasOwn(CONFIG_KEYS, key)) throw refused(`not a config key. Keys: ${Object.keys(CONFIG_KEYS).join(', ')}`);
   const spec = key ? CONFIG_KEYS[key] : null;
+  if (sub === 'set' && key === 'review-models' && reviewModelsBody(value) === null) {
+    throw refused(`review-models takes default, or reviewer=model words such as claude=sonnet,codex=gpt-5.5`);
+  }
   // A switch's on or off is turned into true or false here, so it is checked here; every other value the console checks,
   // as it does the page's.
   if (sub === 'set' && spec.values?.includes('on') && !spec.values.includes(value)) {
@@ -162,6 +188,10 @@ export async function configCommand({ origin, rest }, ctx) {
 
   const read = await ask('/api/cli/config');
   if (read.refusal) throw fail(read.refusal.error);
+  // A console from before model picks would take the models-only body as `choice: null` and reset who reviews.
+  if (sub === 'set' && key === 'review-models' && !Object.hasOwn(read.body, 'review-models')) {
+    throw fail(`${origin} is a console from before review models: it would reset who reviews. Update it first`);
+  }
   const current = view(read.body);
   // What is sent back (the other half of the git identity) is the console's own text, never the printable copy: that
   // would save a mark printable() took out as a space.

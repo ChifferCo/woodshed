@@ -96,3 +96,32 @@ test('each agent places every mode it offers on one scale, and a started session
   assert.equal(agents.modeForStartedSession('codex', 'default', 'opencode'), 'acceptEdits');
   assert.equal(agents.modeForStartedSession('opencode', 'toString', 'claude'), 'plan', 'a name off the object is no mode');
 });
+
+test('review models: Claude Code takes its named models, the others a model name, and nothing else is kept', () => {
+  assert.equal(agents.reviewModelOk('claude', 'sonnet'), true);
+  assert.equal(agents.reviewModelOk('claude', 'gpt-5'), false);
+  assert.equal(agents.reviewModelOk('codex', 'gpt-5.5'), true);
+  assert.equal(agents.reviewModelOk('opencode', 'openai/gpt-5'), true);
+  assert.equal(agents.reviewModelOk('codex', 'gpt 5; rm -rf'), false, 'never a space or a shell character');
+  assert.equal(agents.reviewModelOk('opencode', `anthropic/sk-ant-api03-${'a'.repeat(40)}`), false, 'a key in the model position of provider/model');
+  assert.equal(agents.reviewModelOk('opencode', `openai/ghp_${'a'.repeat(36)}`), false);
+  assert.equal(agents.reviewModelOk('opencode', 'openai/gpt-5'), true);
+  assert.equal(agents.reviewModelOk('opencode', `openai/glpat-${'a1'.repeat(10)}`), false, 'a GitLab token');
+  assert.equal(agents.reviewModelOk('grok', `AIza${'aB1'.repeat(11)}`), false, 'a Google API key');
+  assert.equal(agents.reviewModelOk('codex', 'aB1'.repeat(11)), false, 'a long mixed-case run is no model name');
+  assert.equal(agents.reviewModelOk('opencode', 'anthropic/claude-sonnet-4-5-20250929'), true);
+  assert.equal(agents.reviewModelOk('opencode', `openai/xapp-1-A0123BCDEF-1234567890123-${'ab12'.repeat(16)}`), false, 'a Slack app-level token');
+  assert.equal(agents.reviewModelOk('opencode', `openai/xoxe.xapp-1-A0123BCDEF-${'ab12'.repeat(8)}`), false);
+  assert.equal(agents.reviewModelOk('opencode', 'Anthropic/claude-haiku-4-5'), false, 'the provider is spelt as a review compares it');
+  assert.equal(agents.reviewModelOk('opencode', 'gpt-5'), false, 'OpenCode\'s pick names its provider');
+  assert.equal(agents.reviewModelOk('opencode', 'google/gemini-2.5-pro'), false, 'a provider a review does not run on');
+  assert.equal(agents.reviewModelOk('codex', ''), false, 'empty is no pick');
+  assert.equal(agents.reviewModelOk('nobody', 'x'), false);
+  assert.deepEqual(agents.reviewModelsOf({ codex: 'gpt-5.5', claude: 'opus', grok: 'bad model', other: 'x', __proto__: { opencode: 'a/b' } }), { claude: 'opus', codex: 'gpt-5.5' }, 'in the registry\'s order, the misshapen and unknown left out');
+  assert.deepEqual(agents.reviewModelsOf(['claude']), {});
+  assert.equal(agents.reviewModelsText({ codex: 'gpt-5.5', claude: 'sonnet' }), 'claude=sonnet codex=gpt-5.5');
+  assert.deepEqual(agents.parseReviewModels('claude=sonnet, codex=gpt-5.5'), { claude: 'sonnet', codex: 'gpt-5.5' });
+  assert.equal(agents.parseReviewModels('claude=sonnet,claude=opus'), null);
+  assert.equal(agents.parseReviewModels('claude'), null);
+  assert.deepEqual(agents.REVIEW_DEFAULT_MODELS, { claude: 'opus' });
+});
