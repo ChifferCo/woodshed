@@ -176,7 +176,10 @@
     // A model name is never a credential: one pasted into the box by mistake is refused, never kept or logged.
     // Each part of `provider/model` is checked, as OpenCode's pick has the model after a slash.
     if (model.split('/').some(looksLikeSecret)) return false;
-    return id === 'claude' ? REVIEW_CLAUDE_MODELS.includes(model) : modelShapeOk(id, model);
+    if (id === 'claude') return REVIEW_CLAUDE_MODELS.includes(model);
+    // A review runs OpenCode on one provider's key (OPENCODE_REVIEW_PROVIDERS), spelt as review.sh compares it.
+    if (id === 'opencode' && !OPENCODE_REVIEW_PROVIDERS.includes(model.split('/')[0])) return false;
+    return modelShapeOk(id, model);
   }
 
   /**

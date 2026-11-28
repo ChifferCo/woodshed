@@ -809,7 +809,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   const reviewCatalogs = { codex: null, grok: null };
   const loadReviewCatalogs = () => {
     for (const id of ['codex', 'grok']) {
-      W.getJson(`/api/my/${id}-models`).then((answer) => { reviewCatalogs[id] = answer?.models ?? []; if (me) render(); }, () => { reviewCatalogs[id] = []; });
+      W.getJson(`/api/my/${id}-models`).then((answer) => { reviewCatalogs[id] = answer?.models ?? []; if (me && !document.activeElement?.classList?.contains('onoff-model')) render(); }, () => { reviewCatalogs[id] = []; });
     }
   };
   function modelControl(id, label) {
