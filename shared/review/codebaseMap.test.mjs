@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { isolatedEnv } from '../../test/isolatedEnv.mjs';
 
 import { buildCodebaseMap, extractImports } from './codebaseMap.mjs';
 
@@ -11,14 +12,14 @@ const AUTHOR = ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', '-c
 
 function makeTempRepo(files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-cmap-test-'));
-  execFileSync('git', ['init', '-q', '-b', 'main', dir]);
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { env: isolatedEnv() });
   for (const [rel, body] of Object.entries(files)) {
     const full = path.join(dir, rel);
     fs.mkdirSync(path.dirname(full), { recursive: true });
     fs.writeFileSync(full, body, 'utf8');
   }
-  execFileSync('git', [...AUTHOR, '-C', dir, 'add', '-A']);
-  execFileSync('git', [...AUTHOR, '-C', dir, 'commit', '-q', '-m', 'init']);
+  execFileSync('git', [...AUTHOR, '-C', dir, 'add', '-A'], { env: isolatedEnv() });
+  execFileSync('git', [...AUTHOR, '-C', dir, 'commit', '-q', '-m', 'init'], { env: isolatedEnv() });
   return dir;
 }
 
@@ -137,8 +138,8 @@ test('buildCodebaseMap refuses symlinks and symlinked parent directories outside
   fs.symlinkSync(path.join(outside, 'secret.md'), path.join(dir, 'docs', 'README.md'));
   // Tracked symlinked parent directory pointing outside the checkout.
   fs.symlinkSync(outside, path.join(dir, 'linked'));
-  execFileSync('git', [...AUTHOR, '-C', dir, 'add', 'docs/README.md', 'linked']);
-  execFileSync('git', [...AUTHOR, '-C', dir, 'commit', '-q', '-m', 'add symlinks']);
+  execFileSync('git', [...AUTHOR, '-C', dir, 'add', 'docs/README.md', 'linked'], { env: isolatedEnv() });
+  execFileSync('git', [...AUTHOR, '-C', dir, 'commit', '-q', '-m', 'add symlinks'], { env: isolatedEnv() });
 
   const map = await buildCodebaseMap({
     rootDir: dir,

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { isolatedEnv } from '../../test/isolatedEnv.mjs';
 
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'review-map-route-'));
 process.env.WOODSHED_REVIEWS = path.join(DIR, 'reviews');
@@ -33,11 +34,11 @@ test('GET /reviews/<session>/map returns 404 without a review, 200 with a review
 
   const worktree = path.join(DIR, 'wt');
   fs.mkdirSync(path.join(worktree, 'src', 'app'), { recursive: true });
-  execFileSync('git', ['init', '-q', '-b', 'main', worktree]);
+  execFileSync('git', ['init', '-q', '-b', 'main', worktree], { env: isolatedEnv() });
   fs.writeFileSync(path.join(worktree, 'src', 'app', 'index.mjs'), 'export const v = 1;\n', 'utf8');
-  execFileSync('git', [...AUTHOR, '-C', worktree, 'add', '-A']);
-  execFileSync('git', [...AUTHOR, '-C', worktree, 'commit', '-q', '-m', 'init']);
-  const headSha = execFileSync('git', ['-C', worktree, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  execFileSync('git', [...AUTHOR, '-C', worktree, 'add', '-A'], { env: isolatedEnv() });
+  execFileSync('git', [...AUTHOR, '-C', worktree, 'commit', '-q', '-m', 'init'], { env: isolatedEnv() });
+  const headSha = execFileSync('git', ['-C', worktree, 'rev-parse', 'HEAD'], { env: isolatedEnv(), encoding: 'utf8' }).trim();
 
   const session = 'claude-aabbccdd';
   writeSessionReview({
