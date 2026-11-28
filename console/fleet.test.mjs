@@ -5065,3 +5065,17 @@ test('a launcher that never answers does not hold the cleanup', async () => {
   assert.equal(result, 'done');
   assert.equal(ctx.store.state.forgetPending.length, 1, 'kept for a retry');
 });
+
+test('a launcher without forget leaves queued entries dormant, and a stop still in flight is not forgotten yet', async () => {
+  const ctx = setup();
+  ctx.store.state.forgetPending = [{ id: 'gone0001', why: 'x' }];
+  await ctx.fleet.tick();
+  ctx.advance(11 * 60_000);
+  await ctx.fleet.tick();
+  assert.equal(ctx.store.state.forgetPending.length, 1, 'kept for a launcher that can be told');
+  const told = [];
+  ctx.launcher.forget = async (id) => { told.push(id); };
+  ctx.advance(11 * 60_000);
+  await ctx.fleet.tick();
+  assert.deepEqual(told, ['gone0001']);
+});

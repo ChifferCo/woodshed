@@ -600,19 +600,24 @@ export function createFleet({
   // machine kept for a Resume). A launcher without `forget` is unaffected. The call never fails the caller: one that
   // throws or does not answer in time is queued in `state.forgetPending` and tried again on a later tick, so the
   // launcher may be asked more than once for the same session and must take that.
-  async function tellLauncherForgotten(session, why) {
+  // Queued first, in the state change that makes the session non-resumable, so a restart in between loses none.
+  function queueForget(session, why) {
     if (typeof launcher.forget !== 'function') return;
-    const id = session.id;
-    if (!(state.forgetPending ??= []).some((item) => item.id === id)) {
-      state.forgetPending.push({ id, why });
-      store.save();
-    }
-    await attemptForget(id);
+    if ((state.forgetPending ??= []).some((item) => item.id === session.id)) return;
+    state.forgetPending.push({ id: session.id, why });
+    store.save();
+  }
+
+  async function tellLauncherForgotten(session, why) {
+    queueForget(session, why);
+    await attemptForget(session.id);
   }
 
   async function attemptForget(id) {
     const item = (state.forgetPending ?? []).find((i) => i.id === id);
-    if (!item) return;
+    if (!item || typeof launcher.forget !== 'function') return;
+    // A stop still pushing its work is waited for: the launcher may free the machine inside forget.
+    if (stopsInFlight.has(id)) return;
     // A session still on the list that can be resumed (kept, running, or a private one) is never forgotten.
     const listed = find(id);
     if (listed && (listed.kept || listed.owner || ACTIVE_STATUSES.has(listed.status) || listed.status === 'stopping')) {
@@ -1577,6 +1582,7 @@ export function createFleet({
   // tried again on a later tick.
   async function cleanUp(session, why) {
     update(session, { kept: false, cleanedAt: nowIso(), deletesAt: null, homeDeletePending: Boolean(homes), conversationSavedAt: null });
+    queueForget(session, why);
     prCheckedAt.delete(session.id);
     console.log('fleet: kept session cleaned up', { id: session.id, why });
     await deleteHome(session);
@@ -2395,10 +2401,11 @@ export function createFleet({
     // unless it saw production data: nothing of a tainted session's outlives it.
     if (!session.taintedAt) keepUsage(state, [usageRecord(session, projectFor(config, session))], now());
     state.sessions = state.sessions.filter((s) => s !== session);
+    queueForget(session, 'removed from the console');
     store.save();
     console.log('fleet: private session removed', { id, owner });
     await forgetPrivateData(session);
-    await tellLauncherForgotten(session, 'removed from the console');
+    await attemptForget(session.id);
   }
 
   // The files attached at its start were kept for each Resume.
@@ -2439,9 +2446,10 @@ export function createFleet({
     state.sessions = state.sessions.filter((s) => s.owner !== owner);
     // Nor does the Analytics page keep any of them, those removed one by one before included.
     const forgotten = forgetUsage(state, owner);
+    for (const session of theirs) queueForget(session, 'My Woodshed removed');
     store.save();
     console.log('fleet: private sessions removed', { owner, stopped: live.length + interrupted.length, removed: theirs.length, usageForgotten: forgotten });
-    for (const session of theirs) await tellLauncherForgotten(session, 'My Woodshed removed');
+    await Promise.all(theirs.map((session) => attemptForget(session.id)));
     return { stopped: live.length + interrupted.length, removed: theirs.length };
   }
 
