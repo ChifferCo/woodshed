@@ -76,6 +76,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   const { open, row, line, group, howTo } = window.WoodshedSettingsRows.create({ render });
 
   function change(path, body, done, working) {
+    maskAgain(tokenInput);
     return act({
       card: 'token', note: status, working, done, call: async () => {
         me = await W.postJson(path, body);
@@ -92,6 +93,12 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   // with its line breaks still is: JSON reads the same without them.
   function pastedSecret(id, placeholder) {
     return h('input', { id, type: 'password', class: 'field mono', autocomplete: 'new-password', spellcheck: 'false', autocapitalize: 'off', placeholder });
+  }
+  // A field left on Show is masked again as its save is sent, as the secret field says (it is not a form, so the Save button
+  // does it): the paste is not on the screen while the request is made, or after the console refused it. Its Show button says Show.
+  function maskAgain(input) {
+    input.type = 'password';
+    for (const button of document.querySelectorAll(`button[aria-controls="${input.id}"]`)) button.replaceWith(revealButtonFor(input));
   }
   function revealButtonFor(input) {
     const shown = input.type === 'text';
@@ -119,6 +126,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   const codexStatus = h('p', { class: 'form-note', role: 'status' });
 
   function codexChange(path, body, done, working) {
+    maskAgain(codexInput);
     return act({ card: 'codex', note: codexStatus, working, done, call: async () => { me = await W.postJson(path, body); codexInput.value = ''; codexInput.type = 'password'; loadReviews(); } });
   }
 
@@ -166,6 +174,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   const agentStatus = Object.fromEntries(A.OWN_SIGN_IN_AGENTS.map((id) => [id, h('p', { class: 'form-note', role: 'status' })]));
 
   function agentChange(id, path, body, done, working) {
+    maskAgain(agentInputs[id]);
     return act({ card: id, note: agentStatus[id], working, done, call: async () => { me = await W.postJson(path, body); agentInputs[id].value = ''; agentInputs[id].type = 'password'; loadReviews(); } });
   }
 

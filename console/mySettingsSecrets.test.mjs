@@ -24,4 +24,14 @@ test('every sign-in pasted on My settings is a masked field with Show, never a p
   // And each is masked again, and emptied, once its save went through.
   assert.match(source, /codexInput\.value = ''; codexInput\.type = 'password'/);
   assert.match(source, /agentInputs\[id\]\.value = ''; agentInputs\[id\]\.type = 'password'/);
+
+  // A field left on Show is masked again as its save is sent, in the handler of every sign-in's Save (these are buttons, not a
+  // form with a submit event), so the paste is not on the screen during the request or after the console refused it.
+  const handler = (name) => source.match(new RegExp(`function ${name}\\([^)]*\\) \\{\\n([^\\n]*)\\n`))?.[1] ?? '';
+  assert.match(handler('codexChange'), /maskAgain\(codexInput\)/);
+  assert.match(handler('agentChange'), /maskAgain\(agentInputs\[id\]\)/);
+  assert.match(handler('change'), /maskAgain\(tokenInput\)/);
+  const mask = source.match(/function maskAgain\([^)]*\) \{[^}]*\}[^}]*\}/s)?.[0] ?? '';
+  assert.match(mask, /input\.type = 'password'/);
+  assert.match(mask, /revealButtonFor\(input\)/, 'and its Show button says Show again');
 });
