@@ -192,11 +192,18 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
     const expanded = expandedDefault(login);
     const fallback = agentsRegistry.reviewersOf(bestChoice(available, { expanded }));
     let agents = chosen ?? fallback;
+    // Each reviewer the author chose that the console left out, for the note on the review (reviewSessions.mjs
+    // leftOutNote). Only ids: the session record reaches other people, and why is the state of the author's sign-in.
+    const leftOut = [];
     if (chosen && agents.some((a) => !available[a])) {
       const left = agents.filter((a) => available[a]);
       why.push(`the author chose ${choice}, which this console cannot run now`);
       // Grok Build and OpenCode run on nothing but the author's own sign-in: why each was left out.
-      for (const id of agents.filter((a) => !available[a] && OWN_ONLY_REVIEWERS.includes(a))) why.push(`${agentsRegistry.agent(id).product} left out: ${others[id].why}`);
+      for (const id of agents.filter((a) => !available[a] && OWN_ONLY_REVIEWERS.includes(a))) {
+        why.push(`${agentsRegistry.agent(id).product} left out: ${others[id].why}`);
+        leftOut.push({ agent: id });
+      }
+      for (const id of agents.filter((a) => !available[a] && !OWN_ONLY_REVIEWERS.includes(a))) leftOut.push({ agent: id });
       agents = left.length ? left : fallback;
     }
     if (team.why) why.push(team.why);
@@ -215,7 +222,7 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
     const unread = [codexOwn, ...Object.values(others)].filter((o) => o.unread);
     for (const o of unread) if (!why.some((w) => w.endsWith(o.why))) why.push(o.why);
     return {
-      agents, choice, ...codex, ...(Object.keys(ownSignIns).length ? { ownSignIns } : {}),
+      agents, choice, leftOut, ...codex, ...(Object.keys(ownSignIns).length ? { ownSignIns } : {}),
       why: why.length ? why.join('; ') : null, keysUnread: Boolean(team.why || unread.length), expanded,
     };
   }

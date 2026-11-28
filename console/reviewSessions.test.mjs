@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchesReviewHeading, parseReviewReport, reviewEndedComment, reviewHeading, reviewRunningComment } from './reviewSessions.mjs';
+import { matchesReviewHeading, parseReviewReport, leftOutNote, reviewEndedComment, reviewHeading, reviewRunningComment } from './reviewSessions.mjs';
 
 const SHA = 'a'.repeat(40);
 const body = (over = {}) => JSON.stringify({
@@ -64,4 +64,14 @@ test('a review that did not finish quotes its reason as code, so nothing in it r
   assert.equal(body, `⚠️ **The review did not finish** ([session](https://console.example/s/1)): \`\`\` ${reason} \`\`\`. A new commit starts another.\n`);
   assert.equal(reviewEndedComment({ reason: 'idle\nfor 2 h', sessionUrl: null }),
     '⚠️ **The review did not finish**: ` idle for 2 h `. A new commit starts another.\n', 'one line, the fence one backtick');
+});
+
+test('leftOutNote names the reviewers left out and nothing of why', () => {
+  assert.equal(leftOutNote([{ agent: 'grok' }]), 'Grok Build was left out of this review. The author can see why on My settings.');
+  assert.equal(leftOutNote([{ agent: 'grok' }, { agent: 'opencode' }]),
+    'Grok Build was left out of this review. The author can see why on My settings. OpenCode was left out of this review. The author can see why on My settings.');
+  assert.equal(leftOutNote([{ agent: 'codex' }]), 'Codex was left out of this review.', 'a team key\'s reason is not on My settings');
+  assert.equal(leftOutNote([{ agent: 'evil [x](y)' }]), '', 'an unknown reviewer is dropped');
+  assert.equal(leftOutNote(null), '');
+  assert.match(reviewRunningComment({ sessionUrl: null, leftOut: [{ agent: 'grok' }] }), /Grok Build was left out of this review\./);
 });
