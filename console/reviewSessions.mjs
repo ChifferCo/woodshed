@@ -96,7 +96,7 @@ export function reviewDoneComment({ conclusion, tier, leftOut = null }) {
 // Which reviewers the author chose were left out, and nothing of why: the pull request may be public, and why is the
 // state of the author's own sign-in. The reason stays in the console's log and on the author's My settings.
 /**
- * @param {{agent: string, code: string}[]|null|undefined} leftOut  from the review session's record
+ * @param {{agent: string}[]|null|undefined} leftOut  from the review session's record
  * @returns {string}  a note for the review, a fixed sentence for each reviewer the author chose and the console left out, or ''
  */
 export function leftOutNote(leftOut) {

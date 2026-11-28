@@ -2987,7 +2987,7 @@ export function createFleet({
       kind: 'pr', number, title: `Review: ${pull.title}`, startedBy: login, trigger: 'review', branch: pull.head.ref, project,
       review: {
         base: pull.base.ref, sha: pull.head.sha, heading: review.heading, author: review.author ?? null, check: mergeRisk?.check ?? null, commentId,
-        agents, ...(leftOut.length ? { leftOut } : {}), ...(codexLogin ? { codexLogin } : {}), ...(codexVia ? { codexVia } : {}), ...(codexAccount ? { codexAccount } : {}),
+        agents, ...(leftOut.length ? { leftOut: leftOut.map(({ agent }) => ({ agent })) } : {}), ...(codexLogin ? { codexLogin } : {}), ...(codexVia ? { codexVia } : {}), ...(codexAccount ? { codexAccount } : {}),
         // Whose sign-in a Grok Build or OpenCode reviewer runs on, and how: never the sign-in itself, which the console's
         // proxy reads at each call (reviewAgentProxy.mjs).
         ...(ownSignIns ? { ownSignIns } : {}),

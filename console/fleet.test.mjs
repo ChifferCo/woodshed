@@ -4958,11 +4958,12 @@ test('a working session slow to answer delays only its own next live read, as th
 });
 
 test('a reviewer the author chose and the console left out is said so on the review, in the console\'s own words', async () => {
-  const leftOut = [{ agent: 'grok', code: 'expired' }];
-  const { fleet, calls } = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['claude'], choice: 'claude+grok', leftOut, why: 'Grok Build left out: SECRET-LOG-TEXT' }) } });
+  const leftOut = [{ agent: 'grok' }];
+  const { fleet, calls } = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['claude'], choice: 'claude+grok', leftOut: [{ agent: 'grok', code: 'expired' }], why: 'Grok Build left out: SECRET-LOG-TEXT' }) } });
   await fleet.reviewOnTag({ number: 7 });
   const [session] = fleet.sessions();
-  assert.deepEqual(session.review.leftOut, leftOut, 'kept on the review session');
+  assert.deepEqual(session.review.leftOut, leftOut, 'kept on the review session, the reviewer alone');
+  assert.doesNotMatch(JSON.stringify(fleet.sessions()), /expired/, 'nothing of why in the record other people can list');
   assert.match(calls.comments[0].body, /Grok Build was left out of this review\./, 'the running comment');
   await fleet.reviewFinished(session, { ...REVIEW_RESULT, summary: 'Looks good. Grok Build was left out: and so I say.' });
   assert.match(calls.reviews[0].body, /Looks good\.[\s\S]*\n\nGrok Build was left out of this review\. The author can see why on My settings\.$/);

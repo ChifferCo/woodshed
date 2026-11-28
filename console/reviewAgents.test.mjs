@@ -178,11 +178,11 @@ test('Grok Build reviews on the author\'s key or unexpired login, and is left ou
   const old = await agents.forReview({ login: 'old' });
   assert.deepEqual([old.agents, old.ownSignIns], [['claude'], undefined]);
   assert.match(old.why, /the author chose claude\+grok, which this console cannot run now; Grok Build left out: the author's saved Grok Build login has expired/);
-  assert.deepEqual(old.leftOut, [{ agent: 'grok', code: 'expired' }]);
+  assert.deepEqual(old.leftOut, [{ agent: 'grok' }]);
   assert.equal(old.keysUnread, false, 'an expired login is no failure to read');
   const off = await agents.forReview({ login: 'off' });
   assert.match(off.why, /Grok Build left out: the author has no Grok Build sign-in on for reviews/);
-  assert.deepEqual(off.leftOut, [{ agent: 'grok', code: 'off' }]);
+  assert.deepEqual(off.leftOut, [{ agent: 'grok' }]);
   const alone = await agents.forReview({ login: 'none' });
   assert.deepEqual(alone.agents, ['claude'], 'Grok Build alone cannot run: the most there is');
   assert.deepEqual((await agents.options('old')).ownWhy, { grok: 'the author\'s saved Grok Build login has expired', opencode: null });

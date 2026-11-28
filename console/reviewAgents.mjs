@@ -59,19 +59,19 @@ export function opencodeReviewCredential(saved) {
  * @returns {{via?: 'key'|'login', provider?: string, base?: string, authorization?: string, key?: string}|{why: string}}
  */
 export function ownReviewCredential(id, saved, now = Date.now()) {
-  if (!saved) return { code: 'none', why: `the author has no ${agentsRegistry.agent(id).product} sign-in saved` };
+  if (!saved) return { why: `the author has no ${agentsRegistry.agent(id).product} sign-in saved` };
   if (id === 'grok') {
     const cred = grokCredentialOf(saved, now);
-    if (!cred) return { code: 'no-token', why: 'the author\'s saved Grok Build sign-in has no token' };
-    if (cred.expired) return { code: 'expired', why: 'the author\'s saved Grok Build login has expired' };
+    if (!cred) return { why: 'the author\'s saved Grok Build sign-in has no token' };
+    if (cred.expired) return { why: 'the author\'s saved Grok Build login has expired' };
     // A login whose end is not known is not offered: the console never refreshes one, so a review could start on a login
     // that has already ended and spend its run on refusals.
-    if (cred.source === 'login' && cred.expiresAt === null) return { code: 'no-expiry', why: 'the author\'s saved Grok Build login does not say when it expires' };
-    if (!/^[\x21-\x7e]+ [\x21-\x7e]+$/.test(cred.authorization)) return { code: 'unsendable', why: 'the author\'s saved Grok Build sign-in has a token that cannot be sent' };
+    if (cred.source === 'login' && cred.expiresAt === null) return { why: 'the author\'s saved Grok Build login does not say when it expires' };
+    if (!/^[\x21-\x7e]+ [\x21-\x7e]+$/.test(cred.authorization)) return { why: 'the author\'s saved Grok Build sign-in has a token that cannot be sent' };
     return { via: cred.source, base: cred.base, authorization: cred.authorization };
   }
   const cred = opencodeReviewCredential(saved);
-  if (!cred) return { code: 'no-key', why: `the author's saved OpenCode sign-ins have no API key of ${agentsRegistry.OPENCODE_REVIEW_PROVIDERS.join(' or ')}, which a review runs on` };
+  if (!cred) return { why: `the author's saved OpenCode sign-ins have no API key of ${agentsRegistry.OPENCODE_REVIEW_PROVIDERS.join(' or ')}, which a review runs on` };
   return cred;
 }
 
@@ -133,13 +133,13 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
   // not turn it on for reviews, or saved none, which is no failure.
   async function ownAgent(login, id) {
     const product = agentsRegistry.agent(id).product;
-    if (!login || !userSettings?.usesOwnAgentForReviews?.(login, id)) return { use: null, off: true, code: 'off', why: `the author has no ${product} sign-in on for reviews` };
+    if (!login || !userSettings?.usesOwnAgentForReviews?.(login, id)) return { use: null, off: true, why: `the author has no ${product} sign-in on for reviews` };
     try {
       const cred = ownReviewCredential(id, await userSettings.agentAuth(login, id), now());
-      if (cred.why) return { use: null, code: cred.code, why: cred.why };
+      if (cred.why) return { use: null, why: cred.why };
       return { use: id === 'grok' ? { login, via: cred.via } : { login, provider: cred.provider }, why: null };
     } catch (err) {
-      return { use: null, unread: true, code: 'unread', why: `the author's ${product} sign-in could not be read: ${String(err?.message ?? err).split('\n')[0]}` };
+      return { use: null, unread: true, why: `the author's ${product} sign-in could not be read: ${String(err?.message ?? err).split('\n')[0]}` };
     }
   }
 
@@ -192,8 +192,8 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
     const expanded = expandedDefault(login);
     const fallback = agentsRegistry.reviewersOf(bestChoice(available, { expanded }));
     let agents = chosen ?? fallback;
-    // Each reviewer the author chose that the console left out, with a code for why (reviewSessions.mjs LEFT_OUT_WHY),
-    // for the note on the review. Only Grok Build and OpenCode have a reason of their own; the others are the team's.
+    // Each reviewer the author chose that the console left out, for the note on the review (reviewSessions.mjs
+    // leftOutNote). Only ids: the session record reaches other people, and why is the state of the author's sign-in.
     const leftOut = [];
     if (chosen && agents.some((a) => !available[a])) {
       const left = agents.filter((a) => available[a]);
@@ -201,9 +201,9 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
       // Grok Build and OpenCode run on nothing but the author's own sign-in: why each was left out.
       for (const id of agents.filter((a) => !available[a] && OWN_ONLY_REVIEWERS.includes(a))) {
         why.push(`${agentsRegistry.agent(id).product} left out: ${others[id].why}`);
-        leftOut.push({ agent: id, code: others[id].code ?? 'off' });
+        leftOut.push({ agent: id });
       }
-      for (const id of agents.filter((a) => !available[a] && !OWN_ONLY_REVIEWERS.includes(a))) leftOut.push({ agent: id, code: 'no-key' });
+      for (const id of agents.filter((a) => !available[a] && !OWN_ONLY_REVIEWERS.includes(a))) leftOut.push({ agent: id });
       agents = left.length ? left : fallback;
     }
     if (team.why) why.push(team.why);
