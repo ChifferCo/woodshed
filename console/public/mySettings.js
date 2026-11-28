@@ -789,7 +789,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     reviews = answer;
     if (me && answer && Object.hasOwn(answer, 'expanded')) me.expandedReviewDefault = answer.expanded !== false;
   }
-  const loadReviews = () => W.getJson('/api/my/reviews').then(rememberReviews, () => {}).finally(() => { reviewsLoaded = true; if (me) render(); });
+  const loadReviews = () => { loadReviewCatalogs(); return W.getJson('/api/my/reviews').then(rememberReviews, () => {}).finally(() => { reviewsLoaded = true; if (me) render(); }); };
 
   function saveReviews(choice, done) {
     return act({ card: 'reviews', note: reviewStatus, done, call: async () => { rememberReviews(await W.postJson('/api/my/reviews', { choice })); } });
@@ -800,18 +800,32 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   function saveReviewModels(models) {
     return act({ card: 'reviews', note: reviewStatus, done: 'Saved. It applies to the next review.', call: async () => { rememberReviews(await W.postJson('/api/my/reviews', { models })); } });
   }
+  // The models New session offers, as it reads them: Codex's from OpenAI's catalog and Grok Build's from the person's own
+  // sign-in (GET /api/my/codex-models, /api/my/grok-models). Claude Code's is a fixed list; OpenCode's is typed, as there.
+  const reviewCatalogs = { codex: null, grok: null };
+  const loadReviewCatalogs = () => {
+    for (const id of ['codex', 'grok']) {
+      W.getJson(`/api/my/${id}-models`).then((answer) => { reviewCatalogs[id] = answer?.models ?? []; if (me) render(); }, () => { reviewCatalogs[id] = []; });
+    }
+  };
   function modelControl(id, label) {
     const picks = reviews.models ?? {};
     const change = (value) => saveReviewModels({ ...picks, [id]: value.trim() });
     const aria = `${label} model`;
-    if (id === 'claude') {
-      const fallback = reviews.modelDefaults?.claude ?? 'opus';
+    const own = { claude: `Default (${reviews.modelDefaults?.claude ?? 'opus'})`, codex: 'Default (Codex\u2019s own)', grok: 'Default (Grok Build\u2019s own)', opencode: 'Default (OpenCode\u2019s own)' }[id];
+    const listed = id === 'claude' ? (reviews.claudeModels ?? []).map((m) => [m, m])
+      : (reviewCatalogs[id] ?? []).map((m) => [m.slug, m.slug, m.description || m.name]);
+    if (listed.length) {
+      // A pick the list no longer has stays on it, so the box never shows a model other than the one saved.
+      if (picks[id] && !listed.some(([value]) => value === picks[id])) listed.push([picks[id], picks[id]]);
       return h('select', { class: 'field onoff-model', 'aria-label': aria, disabled: busy.has('reviews'), onchange: (e) => change(e.target.value) },
-        h('option', { value: '', selected: !picks.claude }, `Default (${fallback})`),
-        ...(reviews.claudeModels ?? []).map((m) => h('option', { value: m, selected: picks.claude === m }, m)));
+        h('option', { value: '', selected: !picks[id] }, own),
+        ...listed.map(([value, text, title]) => h('option', { value, title: title || null, selected: picks[id] === value }, text)));
     }
+    // No list to pick from (OpenCode's models are the person's own providers', and Grok Build's needs their sign-in): typed,
+    // and empty is the default.
     const input = h('input', {
-      class: 'field mono onoff-model', type: 'text', value: picks[id] ?? '', placeholder: A.agent(id).modelHint || 'its default', 'aria-label': aria,
+      class: 'field mono onoff-model', type: 'text', value: picks[id] ?? '', placeholder: 'Default', title: `${own}: leave it empty${A.agent(id).modelHint ? `, or type a model such as ${A.agent(id).modelHint}` : ''}`, 'aria-label': aria,
       maxlength: '200', autocomplete: 'off', spellcheck: 'false', disabled: busy.has('reviews'),
       onchange: () => { if (input.value.trim() !== (picks[id] ?? '')) change(input.value); },
     });
