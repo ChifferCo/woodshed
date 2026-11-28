@@ -9,8 +9,13 @@
 //
 //   node woodshed/providers/aws/bin/agentInImage.mjs <image> <grok|opencode|antigravity> [entrypoint.sh]
 //
-// Antigravity CLI has two credentials: with IN_IMAGE_ANTIGRAVITY=team the answer carries no sign-in, so the session runs on
-// the team's Gemini key through the console's /gemini (which this stand-in console does not serve: its first call fails).
+// Antigravity CLI has two credentials. With IN_IMAGE_ANTIGRAVITY=team the answer carries no sign-in, so the session runs on
+// the team's Gemini key through the console's /gemini, which this stand-in console serves with the real proxy
+// (console/geminiProxy.mjs) in front of a recording stand-in for Google. A run that passes prints the stand-in's calls, each
+// with the team's key and no Authorization header, and finds the stand-in's answer in the agent's pane: an answer that is not
+// there, or a call without the team's key, is a failed run. Without it the answer carries a made-up Google login in the real
+// file shape, which Google refuses (`invalid_grant`): the check then passes when the agent is open in the pane, signed in as
+// that file's account, and was never asked to sign in; it sends no message, so no answer is expected.
 //
 // `entrypoint.sh` is copied over the image's, to try a start change before the image is built. Needs Docker. The
 // container runs the repo's code and an agent in auto mode, so it is handed no GitHub credential of yours (as
