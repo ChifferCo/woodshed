@@ -2,7 +2,7 @@
 // console's own session routes, signed in with the command line's token (console/cliSessions.mjs lists the routes it
 // reaches). A session started here is a private one, as My Woodshed's New session starts.
 //
-//   woodshed session new [--repo R] [--branch B] [--agent claude|codex|grok|opencode] [--model M] [--no-wait|--connect|--herdr [--parent[=T]]] ["prompt"]
+//   woodshed session new [--repo R] [--branch B] [--agent claude|codex|grok|opencode|antigravity] [--model M] [--no-wait|--connect|--herdr [--parent[=T]]] ["prompt"]
 //   woodshed session connect <id> [--shell]
 //   woodshed session herdr <id> [--parent[=T]]
 //   woodshed session list [--all]
@@ -11,7 +11,7 @@
 //   woodshed session app <id> share [--members on|off | --link [--hours 1|24|168] [--path /page] | --revoke <link id>]
 //   woodshed session stop <id>
 //   woodshed session resume <id> [--no-wait|--herdr]
-//   woodshed session handoff <id> --agent claude|codex|grok|opencode [--model M] [--note "..."] [--no-conversation] [--no-wait]
+//   woodshed session handoff <id> --agent claude|codex|grok|opencode|antigravity [--model M] [--note "..."] [--no-conversation] [--no-wait]
 //   woodshed session remove <id> [--yes]
 //   woodshed session prune
 //   woodshed session extend <id>
@@ -92,7 +92,7 @@ Commands:
   new [options] ["prompt"]   start a private session, and wait until it runs, fails or needs you
       --repo <owner/name>    the repo to work on (default: the one New session opens on for you)
       --branch <branch>      work on this branch, or a pull request or issue: 123, pr 123, or its URL
-      --agent <agent>        the agent it runs: claude, codex, grok, opencode (default claude). Grok Build and
+      --agent <agent>        the agent it runs: claude, codex, grok, opencode, antigravity (default claude). Grok Build and
                              OpenCode run on your own sign-in from My settings
       --model <model>        the agent's model (default the agent's own)
       --no-wait              print the session and return once the console has it
@@ -150,7 +150,7 @@ Commands:
   handoff <id> [options]     hand one of your running sessions' work to another agent: it stops, pushing its work,
                              and a new session starts on its branch with that agent, its conversation attached as a
                              file; then wait for the new one as new does
-      --agent <agent>        the agent the new session runs (required): claude, codex, grok or opencode
+      --agent <agent>        the agent the new session runs (required): claude, codex, grok, opencode or antigravity
       --model <model>        its model (default the agent's own)
       --note <text>          what to tell the new agent first, such as what is left to do
       --no-conversation      leave the conversation behind: the new session starts from the branch and the note

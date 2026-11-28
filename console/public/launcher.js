@@ -20,6 +20,7 @@
   const AGENT_WORDS = {
     claude: 'Claude Code, on your Claude plan', codex: 'OpenAI Codex, on your Codex sign-in or the team key',
     grok: 'Grok Build, on your own xAI sign-in', opencode: 'OpenCode, on the providers you signed in to',
+    antigravity: 'Antigravity CLI, on your Google plan or the team key',
   };
   const AGENTS = A.AGENT_IDS.map((id) => [id, A.agent(id).name, AGENT_WORDS[id] ?? A.agent(id).product]);
   // What each permission mode does, in an agent that is not Claude Code or Codex (the entrypoint's mapping onto its flags).
@@ -30,10 +31,10 @@
   const ownModes = (id) => A.agent(id).permissionModes.map((m) => [m, m, A.agent(id).modeWords?.[m] ?? OWN_MODE_WORDS[m]]);
   const ownEfforts = (id) => (A.agent(id).efforts ?? ['']).map((e) => [e, e || 'default']);
   // What a session of that agent runs on, for the line under Start.
-  const RUNS_ON = { claude: 'Claude plan', codex: 'Codex sign-in or the team key' };
+  const RUNS_ON = { claude: 'Claude plan', codex: 'Codex sign-in or the team key', antigravity: 'Antigravity sign-in or the team key' };
   const runsOn = (id) => RUNS_ON[id] ?? `own ${A.agent(id).product} sign-in`;
   // The same, short, for the agent's card on New session.
-  const CARD_LINES = { claude: 'Your Claude plan', codex: 'Your sign-in or the team key' };
+  const CARD_LINES = { claude: 'Your Claude plan', codex: 'Your sign-in or the team key', antigravity: 'Your Google plan or the team key' };
   const cardLine = (id) => CARD_LINES[id] ?? `Your ${A.agent(id).product} sign-in`;
   // Codex's models and efforts are OpenAI's catalog's, as the console reads it for you (GET /api/my/codex-models,
   // codexModels.mjs); its permission modes are CODEX_PERMISSION_MODES in sessions.mjs.
@@ -843,7 +844,7 @@
     const noToken = h('div', { class: 'launch-setup', hidden: true });
     const tokenHelp = h('p', { class: 'sub' }, 'For Claude, run ', h('code', null, 'claude setup-token'),
       ' on your laptop. For Codex, run ', h('code', null, 'codex login'), ' and copy ', h('code', null, '~/.codex/auth.json'),
-      ', or use an OpenAI API key. Save it on My settings: your sessions run on your own plan or sign-in. Grok Build and OpenCode run on your own sign-in too: ',
+      ', or use an OpenAI API key. Save it on My settings: your sessions run on your own plan or sign-in. Grok Build, OpenCode and Antigravity CLI run on your own sign-in too: ',
       ...A.OWN_SIGN_IN_AGENTS.flatMap((id, i) => [i ? ', ' : '', h('a', { href: `/settings#${id}` }, A.agent(id).product)]), '.');
     const el = h('section', { class: 'launch' },
       // On a phone New session is a screen of its own (/?new=1), and this is the way back to the list.

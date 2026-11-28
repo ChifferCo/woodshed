@@ -43,8 +43,9 @@
 //   POST /interrupt   Esc typed into the agent's pane (Ctrl+C into Grok Build's, which Esc never stops): every agent
 //                     stops its turn on it
 //   GET  /agents      the agents started beside the session's own (agents.mjs), each with its state: a private coding
-//                     session's on Claude Code or Codex alone, 404 anywhere else
-//   POST /agents      {"agent": "claude"|"codex", "model", "effort", "permissionMode", "prompt"} starts another, in a tmux
+//                     session's on any agent, 404 anywhere else
+//   POST /agents      {"agent": "claude"|"codex"|"grok"|"opencode"|"antigravity", "model", "effort", "permissionMode",
+//                     "prompt", "codexAuth"?, "antigravityAuth"?} starts another, in a tmux
 //                     session of its own in the same checkout; 409 once the session is tainted, or with three running
 //   POST /agents/with-claude-token   starts Claude beside Grok Build or OpenCode with the owner's claudeToken
 //   POST /agents/with-grok-proxy     starts Grok beside another agent using the console model proxy
@@ -93,7 +94,7 @@ import { Refusal, answerApproval, answerQuestions, composerEmpty, composerText, 
 import { createReviewHost } from './reviewShed/host.mjs';
 import { createCodeEditor } from './codeEditor.mjs';
 import { readSessionDiff } from './sessionDiff.mjs';
-import { ownClaudeTranscript, readSessionTranscript } from './sessionTranscript.mjs';
+import { antigravityRecord, ownClaudeTranscript, readSessionTranscript } from './sessionTranscript.mjs';
 import { fitConversation } from '../shared/savedConversation.mjs';
 import { ENGINE_NAMES, viewersOf } from '../shared/databases/index.mjs';
 import { expandPath, loadProject, usesVariable } from '../shared/project.mjs';
@@ -215,6 +216,7 @@ const CLAUDE = AGENT === 'claude';
 const CODEX = AGENT === 'codex';
 const GROK = AGENT === 'grok';
 const OPENCODE = AGENT === 'opencode';
+const ANTIGRAVITY = AGENT === 'antigravity';
 // The agents whose input box statusd reads from the screen (panePrompt.mjs, composerText): claude's and codex's. The
 // others' boxes are not read: a message to them is typed only between turns, with no prompt on screen, as for any.
 const READS_BOX = CLAUDE || CODEX;
@@ -231,6 +233,10 @@ const OWN_AUTH_FILES = {
   opencode: path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode', 'auth.json'),
 };
 const AGENT_GIVEN_FILE = path.join(os.homedir(), '.config/woodshed/agent-auth');
+// Antigravity CLI beside another agent: the owner's own Google login the console sent with the start, as it was given.
+// (agy's login file does not rotate its refresh token, so OWN_AUTH_FILES has no entry for it and nothing is sent back at stop.)
+const ANTIGRAVITY_GIVEN_FILE = path.join(os.homedir(), '.config/woodshed/antigravity-auth');
+const REAL_AGY = process.env.WOODSHED_REAL_AGY || '/usr/local/bin/agy';
 // What a Claude home keeps across sessions: logins (MCP OAuth in .credentials.json), memory, settings, transcripts,
 // and the installed plugins' files, which are a few MB and much slower to fetch from GitHub again. Caches and
 // per-machine state are rebuilt in a moment, and only make the archive bigger.
@@ -649,6 +655,7 @@ const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.
   codexEnv: codexBeside,
   grokEnv: grokBeside,
   opencodeEnv: opencodeBeside,
+  antigravityEnv: antigravityBeside,
   claudeEnv: AGENTS.agent(AGENT).teamCredential ? undefined : claudeBeside,
   uploadsDir: process.env.UPLOADS_DIR || '/tmp/uploads',
   stateDir: process.env.WOODSHED_AGENT_STATE_DIR || '/tmp',
@@ -783,6 +790,42 @@ async function opencodeBeside({ effort, permissionMode }) {
   }
 }
 
+// An extra Antigravity CLI: the owner's own Google login when the console sent one with the start (`antigravityAuth`,
+// never part of what it checks), and otherwise the team's Gemini key through the console (session/bin/agy). ~/.gemini is
+// shared by every agy in the session, so the first one's setup stands for the rest, and a session whose own agent is agy
+// has done it all at start. Returns the environment its terminal gets.
+async function antigravityBeside(given) {
+  if (!existsSync(REAL_AGY)) throw Object.assign(new Error('Antigravity CLI is not in this session\'s image: start a new session'), { status: 409 });
+  if (ANTIGRAVITY) return { env: { WOODSHED_AGY_AUTH: process.env.WOODSHED_AGY_AUTH === 'own' ? 'own' : 'key' } };
+  const own = typeof given === 'string' && given.trim() !== '';
+  const setup = path.join(import.meta.dirname, 'antigravitySetup.sh');
+  const rules = process.env.WOODSHED_AGENT_RULES_FILE || '/tmp/woodshed-rules.md';
+  try {
+    if (own) {
+      await fs.mkdir(path.dirname(ANTIGRAVITY_GIVEN_FILE), { recursive: true });
+      await fs.writeFile(ANTIGRAVITY_GIVEN_FILE, given, { mode: 0o600 });
+    }
+    await run('bash', ['-c', `set -euo pipefail
+      die() { printf '%s\n' "$*" >&2; exit 1; }
+      log() { :; }
+      agentDir() { [ ! -L "$1" ] && mkdir -p "$1" && chmod 700 "$1"; }
+      . "$1"
+      REPO_DIR=$2 SESSION_DIR=$3 WOODSHED_RULES_FILE=$4 OWN_AGENT_AUTH_FILE=$5
+      configureAntigravity "$6"`, 'antigravity-setup', setup, REPO_DIR, import.meta.dirname, rules, ANTIGRAVITY_GIVEN_FILE, own ? 'own' : 'key']);
+  } catch (err) {
+    if (own) await fs.rm(ANTIGRAVITY_GIVEN_FILE, { force: true });
+    throw Object.assign(new Error(err.stderr?.trim() || 'could not set up Antigravity CLI in this session'), { status: 409 });
+  }
+  console.log('statusd: Antigravity CLI agent beside another set up', { own });
+  return {
+    env: { WOODSHED_AGY_AUTH: own ? 'own' : 'key' },
+    undo: async () => {
+      if (own) await fs.rm(ANTIGRAVITY_GIVEN_FILE, { force: true });
+      console.log('statusd: Antigravity CLI sign-in taken back, the agent did not start');
+    },
+  };
+}
+
 // The rollout the session's own codex writes to: the one its process holds open, and with none open (it exited, or has
 // not opened one yet) the newest no agent beside it claimed.
 async function ownRollout() {
@@ -804,6 +847,8 @@ async function readOwnConversation({ limit, since } = {}) {
     codexHome: CODEX_HOME,
     skip: CODEX ? claimed?.codex : CLAUDE ? claimed?.claude : GROK ? claimed?.grok : undefined,
     ...(GROK && { grokHome: GROK_HOME }),
+    // agy's record is the one its own hooks named last: none before its first message.
+    ...(ANTIGRAVITY ? { file: antigravityRecord(await hookState()), planPrefix: process.env.PERMISSION_MODE === 'plan' } : {}),
     ...(CODEX ? { file: await ownRollout() } : {}),
     ...(limit ? { limit } : {}),
     ...(since !== undefined ? { since } : {}),
@@ -1141,8 +1186,8 @@ async function agentState({ strict = false } = {}) {
     console.warn('statusd: reading the transcript failed', { message: err?.message });
     return null;
   });
-  // Grok Build reports through the same hook file as claude (hookState.mjs).
-  const hook = CLAUDE || AGENT === 'grok' ? await hookState() : null;
+  // Grok Build and Antigravity CLI report through the same hook file as claude (hookState.mjs).
+  const hook = CLAUDE || AGENT === 'grok' || ANTIGRAVITY ? await hookState() : null;
   // For the agents read from their screens and their own words: whether their program runs at all, which a shell left
   // behind would otherwise not say. claude's and codex's readers read that from their screens.
   const agentOpen = CLAUDE || CODEX || QA ? null : await agentIo().agentRunning().catch(() => null);
@@ -1445,7 +1490,7 @@ async function boxEmpty() {
   if (readPrompt(colored.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, ''))) return true;
   // Grok Build's and OpenCode's: a draft seen there holds the message back; a box this cannot read is taken as empty, as
   // it was before it was read (draftInBox).
-  if (AGENT === 'grok' || AGENT === 'opencode') return draftInBox(colored, AGENT) !== true;
+  if (AGENT === 'grok' || AGENT === 'opencode' || ANTIGRAVITY) return draftInBox(colored, AGENT) !== true;
   // A box statusd does not read is taken as empty: the agent is at its prompt between turns, with no prompt on screen.
   if (!READS_BOX) return true;
   return composerEmpty(colored, AGENT) === true;

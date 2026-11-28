@@ -59,9 +59,11 @@
 #                         it, instead of the team key, on the owner's own databases;
 #                         the owner's own lines for the project's env files and ~/.tmux.conf, where they keep
 #                         some, go after the shared ones
-#   AGENT                codex, grok or opencode: a private session runs that agent in place of claude
+#   AGENT                codex, grok, opencode or antigravity: a private session runs that agent in place of claude
 #                        (default claude; shared/agents.cjs). Grok Build and OpenCode run only on their
-#                        owner's own sign-in, which the console hands this session alone (fetchOwnerSettings)
+#                        owner's own sign-in, which the console hands this session alone (fetchOwnerSettings).
+#                        Antigravity CLI runs on the owner's own Google login when they saved one, and otherwise
+#                        on the team's Gemini key through the console (session/bin/agy)
 #   MODEL, EFFORT, PERMISSION_MODE                                  optional: claude's flags, from New session
 #   RESUME_SESSION       Resume on a stopped private session: claude's conversation id, reopened with --resume
 #                        from the owner's Claude home, which a private session restores at start. When the home
@@ -340,12 +342,15 @@ checkoutBranch() {
 DEPS_STATUS=/tmp/woodshed-deps
 refreshDeps() {
   local manifest kind dir files output command start=$SECONDS product=
-  # A Grok Build or OpenCode session runs none of the branch's installs by itself: run by the start, before anyone asked,
+  # A Grok Build or OpenCode session (or an Antigravity CLI on its owner's own login) runs none of the branch's installs by itself: run by the start, before anyone asked,
   # its command would be code from the branch that can read the owner's own sign-in, in Plan mode too. It says which
   # changed, and the agent runs them when it needs what they install, as a command of its own.
   case "${AGENT:-claude}" in
     grok) product='Grok Build' ;;
     opencode) product=OpenCode ;;
+    # Only on the owner's own login: on the team's key the session holds nothing but its own token, which a branch's
+    # install could read from any session's environment anyway.
+    antigravity) [ "${WOODSHED_AGY_AUTH:-}" != own ] || product='Antigravity CLI' ;;
   esac
   local -a left=()
   # Each install's dir is relative to the checkout, and its record is keyed on it (deps.sh). This is its own shell.
@@ -408,7 +413,7 @@ configureEgress() {
 # The MCP servers the console hands this session (console/mcpServers.mjs), for claude: each at the console's relay,
 # with the session's own token, which no server ever sees (taint.mjs mcp-config). A production server is off in /mcp
 # until the person turns it on, since its first call of any kind locks the session down for good; a tainted session
-# gets its production servers alone, on. Only for claude: Codex, Grok Build and OpenCode get none yet.
+# gets its production servers alone, on. Only for claude: Codex, Grok Build, OpenCode and Antigravity CLI get none yet.
 MCP_CONFIG=/tmp/woodshed-mcp.json
 # taint.mjs's TAINTED_CLAUDE_FLAGS, which statusd adds when the session is tainted while it runs.
 TAINTED_CLAUDE_FLAGS=' --strict-mcp-config --disallowedTools WebSearch,WebFetch'
@@ -767,6 +772,8 @@ CODEX_HOME_DIR=${CODEX_HOME:-$HOME/.codex}
 # it (keepAgentAuth). Outside every home a session saves.
 OWN_AGENT_AUTH_FILE=$HOME/.config/woodshed/agent-auth
 GROK_HOME_DIR=${GROK_HOME:-$HOME/.grok}
+# Antigravity CLI keeps everything under ~/.gemini (session/antigravitySetup.sh).
+ANTIGRAVITY_DIR=$HOME/.gemini
 OPENCODE_DATA_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/opencode
 OPENCODE_CONFIG_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
 # Written once codex's home is made (configureCodex): statusd starts a Codex agent beside the session's only then.
@@ -810,6 +817,15 @@ fetchOwnerSettings() {
       [ -n "$token" ] || die "the console sent no sign-in for ${AGENT}: save yours on My settings"
       mkdir -p "$(dirname "$OWN_AGENT_AUTH_FILE")"
       (umask 077 && printf '%s' "$token" > "$OWN_AGENT_AUTH_FILE")
+      ;;
+    antigravity)
+      # The owner's own Google login when they saved one, kept as given for statusd to tell a refreshed login from it
+      # (keepAgentAuth); without one the session runs on the team's key, which it never holds (configureAntigravityPane).
+      token=$(jq -r '.agentAuth // empty' <<< "$answer")
+      if [ -n "$token" ]; then
+        mkdir -p "$(dirname "$OWN_AGENT_AUTH_FILE")"
+        (umask 077 && printf '%s' "$token" > "$OWN_AGENT_AUTH_FILE")
+      fi
       ;;
   esac
   # Their own whole files, for writeOwnFiles once the branch is checked out. Kept outside ~/.claude, which is saved.
@@ -993,7 +1009,15 @@ extraClaudeFlags() {
       MCP_CONFIG='' MODEL='' EFFORT='' PERMISSION_MODE=default claudeFlags
       printf ' --setting-sources user --strict-mcp-config --disable-slash-commands'
       ;;
-    *) MODEL='' EFFORT='' PERMISSION_MODE=default claudeFlags ;;
+    *)
+      if [ "${AGENT:-claude}" = antigravity ] && [ -s "$OWN_AGENT_AUTH_FILE" ]; then
+        # The same where Antigravity CLI runs on the owner's own login. On the team's key it holds nothing of the owner's.
+        MCP_CONFIG='' MODEL='' EFFORT='' PERMISSION_MODE=default claudeFlags
+        printf ' --setting-sources user --strict-mcp-config --disable-slash-commands'
+      else
+        MODEL='' EFFORT='' PERMISSION_MODE=default claudeFlags
+      fi
+      ;;
   esac
 }
 
@@ -1120,7 +1144,7 @@ configureCodex() {
   # Keep branch configuration out of a Codex helper beside Grok Build or OpenCode, where it could load MCP servers
   # or hooks with access to the primary agent's sign-in. This trust setting stays local to the session.
   local trust=trust
-  case "${AGENT:-claude}" in grok | opencode) trust=untrust ;; esac
+  case "${AGENT:-claude}" in grok | opencode) trust=untrust ;; antigravity) [ ! -s "$OWN_AGENT_AUTH_FILE" ] || trust=untrust ;; esac
   node "$SHARED_DIR/codexConfig.mjs" "$trust" "$CODEX_HOME_DIR/config.toml" "$REPO_DIR" || die "codex's config.toml could not be written"
   # The rules win. codex reads AGENTS.override.md in place of AGENTS.md: it holds the rules, then the owner's own
   # AGENTS.md, which stays theirs as it is synced.
@@ -1198,17 +1222,49 @@ opencodeFlags() {
   [ -z "${MODEL:-}" ] || printf ' --model %s' "$MODEL"
 }
 
+# Antigravity CLI (`agy`, shared/agents.cjs): the team's Gemini key through the console's proxy, or the owner's own Google
+# login (a private session whose owner saved one), chosen here and told to session/bin/agy in WOODSHED_AGY_AUTH, as
+# configureCodex's is. Its settings, hooks, rules and trusted folder are session/antigravitySetup.sh's.
+. "$SESSION_DIR/antigravitySetup.sh"
+
+configureAntigravityPane() {
+  local auth=key
+  if [ "${SESSION_KIND:-}" = private ] && [ -s "$OWN_AGENT_AUTH_FILE" ]; then auth=own; fi
+  WOODSHED_AGY_AUTH=$auth
+  export WOODSHED_AGY_AUTH
+  configureAntigravity "$auth"
+  writeAntigravityRunSettings "$auth"
+}
+
+# agy's flags for what New session picked. Its modes are made by the settings file this run is given
+# (antigravitySettings.mjs: plan refuses edits in the checkout, default asks for each, as agy's own never do), and these
+# flags: auto skips every ask (the container is the sandbox, as for codex), acceptEdits and plan are its own modes of those
+# names, and default leaves its own policy, which asks before a command. The uploads are a workspace folder, as claude's
+# and codex's are.
+antigravityFlags() {
+  printf ' --settings %s --add-dir %s' "$ANTIGRAVITY_RUN_SETTINGS" "${UPLOADS_DIR:-/tmp/uploads}"
+  case "${PERMISSION_MODE:-auto}" in
+    auto) printf ' --dangerously-skip-permissions' ;;
+    acceptEdits) printf ' --mode accept-edits' ;;
+    plan) printf ' --mode plan' ;;
+  esac
+  [ -z "${MODEL:-}" ] || printf ' --model %s' "$MODEL"
+  [ -z "${EFFORT:-}" ] || printf ' --effort %s' "$EFFORT"
+}
+
 # The agent's command, as session/bin has it, with its flags; and how it takes its first message.
 agentCommand() {
   case "${AGENT:-claude}" in
     codex) printf '%s/bin/codex%s' "$SESSION_DIR" "$(codexFlags)" ;;
     grok) printf '%s/bin/grok%s' "$SESSION_DIR" "$(grokFlags)" ;;
     opencode) printf '%s/bin/opencode%s' "$SESSION_DIR" "$(opencodeFlags)" ;;
+    antigravity) printf '%s/bin/agy%s' "$SESSION_DIR" "$(antigravityFlags)" ;;
   esac
 }
 promptFlag() {
   case "${AGENT:-claude}" in
     opencode) printf ' --prompt' ;;
+    antigravity) printf ' -i' ;;
   esac
 }
 
@@ -1343,6 +1399,7 @@ startClaude() {
     codex) codexFlags > /tmp/woodshed-codex-flags ;;
     grok) grokFlags > /tmp/woodshed-grok-flags ;;
     opencode) opencodeFlags > /tmp/woodshed-opencode-flags ;;
+    antigravity) antigravityFlags > /tmp/woodshed-antigravity-flags ;;
     *) claudeFlags > /tmp/woodshed-claude-flags ;;
   esac
   # The agents a person starts beside this one (session/agents.mjs, statusd's /agents) take the session's own flags for
@@ -1508,6 +1565,7 @@ runSession() {
       ;;
     grok) configureGrok ;;
     opencode) configureOpencode ;;
+    antigravity) configureAntigravityPane ;;
     *)
       restorePlugins
       installDefaultPlugins

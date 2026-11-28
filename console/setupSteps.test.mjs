@@ -40,6 +40,14 @@ test('a Codex sign-in alone finishes the token step, for someone who only uses C
   assert.match(setupSteps(m)[0].hint, /Claude.*Codex/, 'the step names both agents');
 });
 
+test('an agent the console can run on a team key finishes the token step, with nothing saved', () => {
+  const m = (agents) => ({ login: 'mia-dev', claudeToken: { set: false }, codexAuth: { set: false }, agentAuth: {}, agents, databases: { available: true, status: 'ready' } });
+  assert.equal(setupDone(m({ claude: false, codex: false, grok: false, opencode: false, antigravity: false })), false, 'none can run');
+  assert.deepEqual(rows(m({ claude: false, codex: false, antigravity: true })), ['token:done', 'databases:done'], 'the team\'s Gemini key runs Antigravity');
+  assert.equal(setupDone(m({ claude: false, codex: false, antigravity: true })), true);
+  assert.match(setupSteps(m({}))[0].hint, /Antigravity/, 'the step names it');
+});
+
 test('a console with no repo puts adding one first, and is not done until it has', () => {
   assert.deepEqual(rows({ ...me({ token: true }), repoNeeded: true }), ['repo:waiting', 'token:done']);
   assert.equal(setupDone({ ...me({ token: true }), repoNeeded: true }), false);

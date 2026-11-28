@@ -1774,3 +1774,80 @@ test('the TUI tab attaches to the agent the page names, and to the session\'s ow
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+// Antigravity CLI (`agy`): its flags for each mode, its command and first message, the credential the entrypoint chooses, and
+// what the other agents beside it are given. Its files are session/antigravitySetup.test.mjs's.
+test('agy\'s flags are its own mode, the run\'s settings file and the uploads folder, then the model and effort', () => {
+  const flags = (env) => execFileSync('bash', ['-c', [fn('antigravityFlags'), 'ANTIGRAVITY_RUN_SETTINGS=/tmp/woodshed-agy-settings.json', 'antigravityFlags'].join('\n')],
+    { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, ...env }) });
+  const base = ' --settings /tmp/woodshed-agy-settings.json --add-dir /tmp/uploads';
+  assert.equal(flags({}), `${base} --dangerously-skip-permissions`);
+  assert.equal(flags({ PERMISSION_MODE: 'acceptEdits' }), `${base} --mode accept-edits`);
+  assert.equal(flags({ PERMISSION_MODE: 'plan', MODEL: 'gemini-3.1-pro-low', EFFORT: 'high' }), `${base} --mode plan --model gemini-3.1-pro-low --effort high`);
+  assert.equal(flags({ PERMISSION_MODE: 'default', UPLOADS_DIR: '/data/uploads' }), ' --settings /tmp/woodshed-agy-settings.json --add-dir /data/uploads');
+  // The same flags session/agents.mjs types for an agy beside another agent: one meaning for each mode.
+  const command = execFileSync('bash', ['-c', [fn('antigravityFlags'), fn('agentCommand'), fn('promptFlag'), 'ANTIGRAVITY_RUN_SETTINGS=/tmp/s.json', 'printf "%s|%s" "$(agentCommand)" "$(promptFlag)"'].join('\n')],
+    { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, AGENT: 'antigravity', SESSION_DIR: '/opt/woodshed/session', PERMISSION_MODE: 'plan' }) });
+  assert.equal(command, '/opt/woodshed/session/bin/agy --settings /tmp/s.json --add-dir /tmp/uploads --mode plan| -i');
+});
+
+test('agy runs on the owner\'s own login only in a private session that was handed one, and otherwise on the team\'s key', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-agy-choose-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const authFile = path.join(tmp, 'agent-auth');
+  const chosen = (env, login) => {
+    fs.rmSync(authFile, { force: true });
+    if (login !== undefined) fs.writeFileSync(authFile, login);
+    // configureAntigravity and the file that writes its run settings are stood in for: they are the setup file's tests'.
+    return execFileSync('bash', ['-c', ['set -euo pipefail', `OWN_AGENT_AUTH_FILE=${authFile}`, 'configureAntigravity() { echo "configure $1"; }', 'writeAntigravityRunSettings() { echo "settings $1"; }',
+      fn('configureAntigravityPane'), 'configureAntigravityPane; echo "auth=$WOODSHED_AGY_AUTH"'].join('\n')], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, ...env }) });
+  };
+  assert.equal(chosen({ SESSION_KIND: 'private' }, '{"token":"x"}'), 'configure own\nsettings own\nauth=own\n');
+  assert.equal(chosen({ SESSION_KIND: 'private' }), 'configure key\nsettings key\nauth=key\n', 'none saved: the team\'s key');
+  assert.equal(chosen({ SESSION_KIND: 'private' }, ''), 'configure key\nsettings key\nauth=key\n', 'an empty file is none');
+  assert.equal(chosen({ SESSION_KIND: 'shared' }, '{"token":"x"}'), 'configure key\nsettings key\nauth=key\n', 'a login is a private session\'s alone');
+  assert.match(ENTRYPOINT, /^ {4}antigravity\) configureAntigravityPane ;;$/m);
+  assert.match(ENTRYPOINT, /^ {4}antigravity\) antigravityFlags > \/tmp\/woodshed-antigravity-flags ;;$/m);
+});
+
+test('an Antigravity CLI session without a sign-in is not refused: its sign-in is the owner\'s to give, the team\'s key stands in', () => {
+  const settings = fn('fetchOwnerSettings');
+  const branch = /\n {4}antigravity\)([\s\S]*?)\n {6};;/.exec(settings)?.[1];
+  assert.ok(branch, 'its own case');
+  assert.doesNotMatch(branch, /\bdie\b/);
+  assert.match(branch, /if \[ -n "\$token" \]; then/);
+  assert.match(branch, /\(umask 077 && printf '%s' "\$token" > "\$OWN_AGENT_AUTH_FILE"\)/);
+  assert.doesNotMatch(settings.split('grok | opencode)')[1].split(';;')[0], /antigravity/, 'grok and opencode still need theirs');
+});
+
+test('an Antigravity CLI on its owner\'s login runs none of the branch\'s installs by itself, and on the team\'s key runs them', (t) => {
+  const repo = depsRepo(t);
+  fs.writeFileSync(path.join(repo.repoDir, 'api/deps.lock'), 'v2');
+  const own = refreshDeps(repo, { AGENT: 'antigravity', WOODSHED_AGY_AUTH: 'own' });
+  assert.equal(own.runs, 0);
+  assert.match(own.status, /^skipped: this Antigravity CLI session runs none of the branch's installs by itself/);
+  const team = depsRepo(t);
+  fs.writeFileSync(path.join(team.repoDir, 'api/deps.lock'), 'v2');
+  const key = refreshDeps(team, { AGENT: 'antigravity', WOODSHED_AGY_AUTH: 'key' });
+  assert.deepEqual([key.status, key.runs], ['ready\n', 1]);
+});
+
+test('the agents beside an Antigravity CLI skip branch startup configuration only where it holds the owner\'s own login', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-agy-extra-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const mcp = path.join(tmp, 'mcp.json');
+  fs.writeFileSync(mcp, '{}');
+  const authFile = path.join(tmp, 'agent-auth');
+  const claudeBeside = (login) => {
+    fs.rmSync(authFile, { force: true });
+    if (login) fs.writeFileSync(authFile, login);
+    const script = ['set -euo pipefail', 'tainted() { return 1; }', `OWN_AGENT_AUTH_FILE=${authFile}`, fn('claudeFlags'), fn('extraClaudeFlags'), 'extraClaudeFlags'].join('\n');
+    return execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, SESSION_DIR, AGENT: 'antigravity', MCP_CONFIG: mcp } });
+  };
+  assert.match(claudeBeside('{"token":"x"}'), /--setting-sources user --strict-mcp-config --disable-slash-commands/);
+  assert.doesNotMatch(claudeBeside('{"token":"x"}'), / --mcp-config/);
+  assert.doesNotMatch(claudeBeside(''), /--setting-sources|--strict-mcp-config/);
+  assert.match(claudeBeside(''), /--mcp-config/);
+  // A Codex beside it likewise leaves the branch\'s configuration untrusted where there is a login to read.
+  assert.match(fn('configureCodex'), /antigravity\) \[ ! -s "\$OWN_AGENT_AUTH_FILE" \] \|\| trust=untrust ;;/);
+});

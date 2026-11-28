@@ -188,14 +188,20 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     const saved = me.agentAuth?.[id];
     const set = Boolean(saved?.set);
     const pill = set ? h('span', { class: 'pill is-ok' }, `Saved ${W.when(saved.savedAt)}`) : h('span', { class: 'pill' }, 'Not set');
+    // An agent with a team credential too (Antigravity) runs on that with no sign-in saved: a sign-in here is the plan to use.
+    const optional = Boolean(a.signIn.optional);
     const how = [
       steps(...a.signIn.steps, { text: `Paste it below and press Save.${a.signIn.rotates ? ` A login ${a.product} refreshes is saved back when a session stops.` : ''}` }),
     ];
     return row({
       id, title: a.product, pill,
-      value: set ? `Your own sign-in, for ${a.name} sessions${a.reviews && me.ownAgentForReviews?.[id] ? ' and reviews of your pull requests' : ''}` :`Save ${a.signIn.kinds}, and New session offers ${a.name}`,
+      value: set ? `Your own sign-in, for ${a.name} sessions${a.reviews && me.ownAgentForReviews?.[id] ? ' and reviews of your pull requests' : ''}`
+        : optional ? `Save ${a.signIn.kinds} to use your own plan. Without one, ${a.name} runs on the team\u2019s key`
+          : `Save ${a.signIn.kinds}, and New session offers ${a.name}`,
     },
-      h('p', { class: 'sub' }, `${a.name} runs only on your sign-in, in your My Woodshed sessions. Never in a shared session.`),
+      h('p', { class: 'sub' }, optional
+        ? `${a.name} runs on your own sign-in when you save one here, which is your plan, and otherwise on the team\u2019s key through the console, when it has one. In your My Woodshed sessions only: never in a shared session.`
+        : `${a.name} runs only on your sign-in, in your My Woodshed sessions. Never in a shared session.`),
       set ? howTo('How to get a sign-in', how) : how,
       h('label', { class: 'field-label', for: `${id}-auth` }, h('span', null, set ? 'Replace the sign-in' : 'Paste your sign-in')),
       agentInputs[id],
@@ -203,7 +209,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
         h('button', { type: 'button', class: 'btn btn-open', disabled: !me.available || busy.has(id), onclick: () => agentChange(id, `/api/my/agent-auth/${id}`, { value: agentInputs[id].value }, `Saved. Your next ${a.name} session uses it.`) }, 'Save'),
         set && h('button', {
           type: 'button', class: 'btn btn-quiet', disabled: busy.has(id), onclick: () => {
-            if (window.confirm(`Remove your ${a.product} sign-in? New ${a.name} sessions are refused until you save one again.`)) agentChange(id, `/api/my/agent-auth/${id}/remove`, {}, 'Removed.', 'Removing…');
+            if (window.confirm(optional ? `Remove your ${a.product} sign-in? New ${a.name} sessions run on the team\u2019s key until you save one again.` : `Remove your ${a.product} sign-in? New ${a.name} sessions are refused until you save one again.`)) agentChange(id, `/api/my/agent-auth/${id}/remove`, {}, 'Removed.', 'Removing…');
           },
         }, 'Remove')),
       agentReviewsSwitch(id),

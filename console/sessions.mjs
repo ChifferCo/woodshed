@@ -422,6 +422,13 @@ export function runsCodex(session) {
   return session.options?.agent === 'codex' || (Boolean(session.owner) && !session.taintedAt && (session.extraAgents ?? []).includes('codex'));
 }
 
+/** Whether the session runs Antigravity CLI: an Antigravity session, or a private one whose owner started an Antigravity agent
+ * in it (fleet.allowAgent): the team's Gemini key (geminiProxy.mjs) is for it as for an Antigravity session. Never once the
+ * session has seen production data, for an agent started beside another. */
+export function runsAntigravity(session) {
+  return session.options?.agent === 'antigravity' || (Boolean(session.owner) && !session.taintedAt && (session.extraAgents ?? []).includes('antigravity'));
+}
+
 const AGENT_STATES = new Set(['starting', 'working', 'needs-you', 'done', 'not-running']);
 const MESSAGE_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 const AGENT_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;

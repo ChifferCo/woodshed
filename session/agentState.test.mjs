@@ -106,3 +106,21 @@ test('OpenCode: its pane, while it runs', () => {
   assert.deepEqual(oc(input({ paneText: pane('pane-opencode-idle.txt'), agentOpen: true })), { state: 'done', source: 'pane' });
   assert.deepEqual(oc(input({ paneText: SHELL, agentOpen: false, now: STARTING_MS + 1 })), { state: 'not-running', source: 'pane' });
 });
+
+test('Antigravity CLI: its screen first, its hooks where the screen says nothing, and whether it runs at all', () => {
+  const agy = stateReader({ agent: 'antigravity' });
+  const pane = (name) => readFileSync(new URL(`../shared/__fixtures__/${name}`, import.meta.url), 'utf8');
+  assert.deepEqual(agy(input({ paneText: SHELL, agentOpen: false, startedAt: NOW - 1000 })), { state: 'starting', source: 'pane' });
+  assert.deepEqual(agy(input({ paneText: SHELL, agentOpen: false, startedAt: 0, now: STARTING_MS + 1 })), { state: 'not-running', source: 'pane' });
+  assert.deepEqual(agy(input({ paneText: pane('pane-agy-working.txt'), agentOpen: true })), { state: 'working', source: 'pane' });
+  assert.deepEqual(agy(input({ paneText: pane('pane-agy-idle.txt'), agentOpen: true })), { state: 'done', source: 'pane' });
+  // Esc ends a turn with no hook, so the last one still says working: the screen at its prompt says it is done.
+  assert.deepEqual(agy(input({ paneText: pane('pane-agy-idle.txt'), agentOpen: true, hook: hook('working') })), { state: 'done', source: 'pane' });
+  // PreToolUse fires before the approval does, and the hook still says working under it.
+  for (const name of ['approval-command', 'approval-create', 'approval-edit', 'question']) {
+    assert.deepEqual(agy(input({ paneText: pane(`pane-agy-${name}.txt`), agentOpen: true, hook: hook('working') })), { state: 'needs-you', source: 'pane' }, name);
+  }
+  // A screen this cannot read (a trace in the scrollback, a dialog of its own): the hook's word, if it is this run's.
+  assert.deepEqual(agy(input({ paneText: 'agy is drawing', agentOpen: true, hook: hook('working') })), { state: 'working', source: 'hook' });
+  assert.deepEqual(agy(input({ paneText: 'agy is drawing', agentOpen: true, hook: hook('working'), startedAt: NOW })), { state: 'done', source: 'pane' });
+});

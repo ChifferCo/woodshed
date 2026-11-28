@@ -309,3 +309,87 @@ test('extra Grok and OpenCode deliver Chat follow-ups into their own idle panes'
     assert.deepEqual(view.deliveredIds, [messageId]);
   }
 });
+
+
+test('an Antigravity CLI starts as agy, with a settings file of its own that makes its mode and its credential', async (t) => {
+  const given = [];
+  const { agents, tmux, dir } = agentsWith({
+    antigravityEnv: async (login) => { given.push(login); return { env: { WOODSHED_AGY_AUTH: login ? 'own' : 'key' }, undo: async () => { given.push('undone'); } }; },
+  });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  assert.deepEqual(startOptions({ agent: 'antigravity', model: 'gemini-3.1-pro-low', effort: 'xhigh', permissionMode: 'plan' }),
+    { agent: 'antigravity', model: 'gemini-3.1-pro-low', effort: 'xhigh', permissionMode: 'plan', prompt: '' });
+  assert.throws(() => startOptions({ agent: 'antigravity', model: 'x y' }), { status: 400 });
+  assert.throws(() => startOptions({ agent: 'antigravity', permissionMode: 'bypass' }), { status: 400 });
+
+  const keyed = await agents.start({ agent: 'antigravity', permissionMode: 'plan', model: 'gemini-3.1-pro-low', effort: 'high', prompt: '--look at it' });
+  const line = tmux.typed.get(`=${keyed.id}:`);
+  const settingsFile = path.join(dir, `woodshed-${keyed.id}-agy-settings.json`);
+  assert.equal(line, `/opt/woodshed/session/bin/agy --settings ${settingsFile} --add-dir /tmp/uploads --mode plan --model gemini-3.1-pro-low --effort high --prompt-interactive="$(cat ${path.join(dir, `woodshed-${keyed.id}-prompt.md`)})"`);
+  const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+  assert.equal(settings.modelProvider, 'gemini', 'the team\'s key, through the console');
+  assert.deepEqual(settings.permissions.deny, ['write_file(/work/repo)'], 'plan refuses edits in the checkout');
+  assert.equal(fs.statSync(settingsFile).mode & 0o777, 0o600);
+  const made = tmux.calls.find((c) => c[1] === 'new-session' && c.includes(keyed.id));
+  assert.ok(made.includes('WOODSHED_AGY_AUTH=key'));
+  assert.ok(made.includes(`WOODSHED_CLAUDE_STATE_FILE=${path.join(dir, `woodshed-${keyed.id}-state.json`)}`), 'its hooks write its own file');
+
+  const own = await agents.start({ agent: 'antigravity', permissionMode: 'auto', antigravityAuth: 'the-login' });
+  assert.deepEqual(given, [null, 'the-login'], 'the login the console sent with the start, and none otherwise');
+  assert.equal('modelProvider' in JSON.parse(fs.readFileSync(path.join(dir, `woodshed-${own.id}-agy-settings.json`), 'utf8')), false, 'the owner\'s own login needs no key provider');
+  assert.match(tmux.typed.get(`=${own.id}:`), /^\/opt\/woodshed\/session\/bin\/agy --settings \S+ --add-dir \/tmp\/uploads --dangerously-skip-permissions$/);
+  assert.ok(tmux.calls.find((c) => c[1] === 'new-session' && c.includes(own.id)).includes('WOODSHED_AGY_AUTH=own'));
+  // Stopping one takes its settings file away, and the other's stays.
+  await agents.stop(keyed.id);
+  assert.equal(fs.existsSync(settingsFile), false);
+  assert.equal(fs.existsSync(path.join(dir, `woodshed-${own.id}-agy-settings.json`)), true);
+});
+
+test('an Antigravity CLI start with no setup, or whose terminal fails, says so and leaves nothing behind', async (t) => {
+  const none = agentsWith();
+  t.after(() => fs.rmSync(none.dir, { recursive: true, force: true }));
+  await assert.rejects(none.agents.start({ agent: 'antigravity' }), (err) => err.status === 409 && /not set up/.test(err.message));
+  const standIn = standInTmux();
+  let undone = 0;
+  const { agents, dir } = agentsWith({
+    run: async (command, args) => { if (args[0] === 'new-session') throw new Error('terminal failed'); return standIn.run(command, args); },
+    antigravityEnv: async () => ({ env: { WOODSHED_AGY_AUTH: 'key' }, undo: async () => { undone++; } }),
+  });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  await assert.rejects(agents.start({ agent: 'antigravity', prompt: 'x' }), /terminal failed/);
+  assert.equal(undone, 1);
+  assert.deepEqual(fs.readdirSync(dir).filter((name) => name.includes('agy-settings')), []);
+});
+
+test('an Antigravity CLI is read from its own hooks and screen, and its Chat from the transcript its hooks named', async (t) => {
+  const standIn = standInTmux();
+  const panes = new Map();
+  const { agents, dir } = agentsWith({
+    run: async (command, args) => {
+      const pane = panes.get(args[args.indexOf('-t') + 1]);
+      if (pane && args[0] === 'capture-pane') return { stdout: pane };
+      if (pane && args[0] === 'display') return { stdout: '1\n' };
+      return standIn.run(command, args);
+    },
+    antigravityEnv: async () => ({ env: { WOODSHED_AGY_AUTH: 'key' } }),
+  });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const fixture = (name) => fs.readFileSync(new URL(`../shared/__fixtures__/${name}`, import.meta.url), 'utf8');
+  const { id } = await agents.start({ agent: 'antigravity', permissionMode: 'default' });
+  const target = `=${id}:`;
+  panes.set(target, fixture('pane-agy-approval-command.txt'));
+  assert.equal((await agents.list())[0].state, 'needs-you');
+  const asked = await agents.prompt(id);
+  assert.deepEqual([asked.kind, asked.title], ['approval', 'Run this command?']);
+  panes.set(target, fixture('pane-agy-working.txt'));
+  assert.equal((await agents.list())[0].state, 'working');
+  panes.set(target, fixture('pane-agy-idle.txt'));
+  assert.equal((await agents.list())[0].state, 'done');
+  // Before its first hook there is no conversation to read.
+  assert.deepEqual((await agents.transcript(id)).entries, []);
+  // A hook naming a file that is not in agy's own brain folder is never read, whatever it holds.
+  const elsewhere = path.join(dir, 'transcript_full.jsonl');
+  fs.copyFileSync(new URL('../shared/__fixtures__/transcript-agy-full.jsonl', import.meta.url), elsewhere);
+  fs.writeFileSync(path.join(dir, `woodshed-${id}-state.json`), JSON.stringify({ state: 'done', event: 'Stop', at: Date.now(), transcript: elsewhere }));
+  assert.deepEqual((await agents.transcript(id)).entries, []);
+});

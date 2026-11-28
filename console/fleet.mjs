@@ -763,7 +763,7 @@ export function createFleet({
     herdrParent = false, startedFrom = null, startedApart = false,
   }) {
     refuseWithoutRepo(project, { kind, trigger });
-    // An agent that runs on its owner's own sign-in alone runs only in that owner's private session: a shared session,
+    // An agent with an own sign-in (Grok Build, OpenCode, and Antigravity, whose team key is for a private session too) runs only in its owner's private session: a shared session,
     // a question, a QA run and a review hold no one's sign-in (shared/agents.cjs).
     if (!owner && agents.agent(options?.agent).signIn) {
       console.warn('fleet: session refused, its agent needs an owner\'s own sign-in', { kind, number, trigger, agent: options.agent });

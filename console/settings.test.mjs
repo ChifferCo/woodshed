@@ -99,7 +99,7 @@ test('the view lists every secret without a value, and the webhook as GitHub and
   const { settings } = setup();
   const view = await settings.view();
   assert.deepEqual(view.secrets.map((s) => [s.name, s.set, s.readable]), [
-    ['anthropic-api-key', true, false], ['openai-api-key', false, false], ['registry-token', true, true],
+    ['anthropic-api-key', true, false], ['openai-api-key', false, false], ['gemini-api-key', false, false], ['registry-token', true, true],
     ['github-app-key', true, false], ['github-webhook-secret', false, true], ['github-app-client-secret', false, false],
     ['github-reviewer-app-key', false, false], ['slack-bot-token', false, false], ['slack-signing-secret', false, false],
   ]);
@@ -258,7 +258,7 @@ test('a secret the console makes is named and tagged after the installation\'s p
 
 test('the Secrets page lists one secret for each install secret the installation names, and none for an env file', () => {
   const names = (opts) => secretSpecs(opts).map((s) => s.name);
-  assert.deepEqual(names({ installSecrets: INSTALL_SECRETS }).slice(0, 3), ['anthropic-api-key', 'openai-api-key', 'registry-token']);
+  assert.deepEqual(names({ installSecrets: INSTALL_SECRETS }).slice(0, 4), ['anthropic-api-key', 'openai-api-key', 'gemini-api-key', 'registry-token']);
   assert.ok(!names().includes('registry-token'), 'no install secret the installation does not name');
   assert.ok(!secretSpecs({ installSecrets: INSTALL_SECRETS }).some((s) => s.kind === 'env'), 'the env files are Repo settings, not secrets');
   assert.deepEqual(secretSpecs({ installSecrets: INSTALL_SECRETS }).find((s) => s.name === 'registry-token'), { name: 'registry-token', group: 'session', kind: 'line', readable: true });

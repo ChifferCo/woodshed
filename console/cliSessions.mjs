@@ -59,8 +59,8 @@
 import agents from '../shared/agents.cjs';
 import { CONFIG_ROUTES } from './cliConfig.mjs';
 
-/** The save of an own sign-in (shared/agents.cjs, OWN_SIGN_IN_AGENTS), never its removal. */
-export const CLI_AGENT_AUTH_RE = new RegExp(`^/api/my/agent-auth/(${agents.OWN_SIGN_IN_AGENTS.join('|')})$`);
+/** The save of an own sign-in a laptop keeps in a file (shared/agents.cjs, OWN_ONLY_AGENTS: Antigravity's is in the OS keyring), never its removal. */
+export const CLI_AGENT_AUTH_RE = new RegExp(`^/api/my/agent-auth/(${agents.OWN_ONLY_AGENTS.join('|')})$`);
 
 const ROUTES = [
   ['GET', /^\/api\/sessions$/],

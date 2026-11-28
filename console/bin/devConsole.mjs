@@ -674,6 +674,12 @@ if (webhookPort) {
   ];
   fs.writeFileSync(path.join(stateDir, 'webhookEvents.jsonl'), made.map((e) => `${JSON.stringify(e)}\n`).join(''), { mode: 0o600 });
 }
+// The session env file a console with a team Gemini key reads (console/config.mjs, readSessionEnv).
+function devSessionEnvFile() {
+  const file = path.join(stateDir, 'session-env.json');
+  fs.writeFileSync(file, JSON.stringify({ GEMINI_API_KEY: 'AIza-made-up-dev-key-not-real' }), { mode: 0o600 });
+  return file;
+}
 let child = null;
 function startConsole() {
   child = spawn(process.execPath, [server], {
@@ -695,6 +701,9 @@ function startConsole() {
       ...(process.env.DEV_CONSOLE_NO_REPO === '1' ? {}
         : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
       ...repoSettingsDev?.env,
+      // DEV_CONSOLE_TEAM_GEMINI=1: a made-up team Gemini key in the session env file, so New session offers Antigravity CLI on
+      // the team's key as a console with `gemini-api-key` saved does. It is no key: nothing here calls Google.
+      ...(process.env.DEV_CONSOLE_TEAM_GEMINI === '1' ? { WOODSHED_SESSION_ENV_FILE: devSessionEnvFile() } : {}),
       // DEV_CONSOLE_HOMES_DIR keeps saved Claude homes in that folder (providers/local/homeStore.mjs), as the console's
       // own at `_sessions/<id>/claude-home.tar.gz`, for Console settings' Sessions holding data. Without it, in the state
       // folder, which goes with the run.

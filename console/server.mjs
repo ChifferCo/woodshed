@@ -962,7 +962,7 @@ export function createHandler({
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, stillSignedIn = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, appPorts = null,
-  openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
+  openaiTeamKey = null, geminiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
   cli = null, reviewReadiness = null, analytics = null,
 }) {
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
@@ -1772,6 +1772,18 @@ export function createHandler({
     return teamOpenAiKey;
   }
 
+  // Whether the console has the team's Gemini key: Antigravity runs on it for someone with no sign-in of their own.
+  let teamGeminiKey = false;
+  async function readTeamGeminiKey() {
+    if (!geminiTeamKey) return false;
+    try {
+      teamGeminiKey = Boolean(await geminiTeamKey());
+    } catch (err) {
+      console.warn('console: team Gemini key not read', { message: String(err?.message ?? err).split('\n')[0] });
+    }
+    return teamGeminiKey;
+  }
+
   // What each agent's "default" is in the person's next session, as of their last look at /api/my (savedChoices in
   // claudeSettings.mjs): New session names it in its Model and Effort menus and on each agent's card.
   const choicesSeen = new Map();
@@ -1790,7 +1802,7 @@ export function createHandler({
     }
     // Grok Build and OpenCode keep their model in nothing a session carries: each picks its own (null). Once one is
     // carried, savedChoices reads it, as it does Claude Code's and Codex's.
-    const found = { ...savedChoices(items), grok: null, opencode: null };
+    const found = { ...savedChoices(items), grok: null, opencode: null, antigravity: null };
     choicesSeen.set(login, found);
     return found;
   }
@@ -1814,6 +1826,8 @@ export function createHandler({
       agents: {
         claude: Boolean(view.claudeToken?.set), codex: Boolean(view.codexAuth?.set) || teamOpenAiKey,
         ...Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, Boolean(view.agentAuth?.[id]?.set)])),
+        // Antigravity also runs on the team's Gemini key, so it is offered with either.
+        antigravity: Boolean(view.agentAuth?.antigravity?.set) || teamGeminiKey,
       },
       databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last(defaultProject(config).name) ?? null,
       // Each project the person may start on that is not ready, by name (databaseGate.mjs), as last read.
@@ -1908,13 +1922,17 @@ export function createHandler({
    */
   async function startRefusal(login, { agent, model, effort }) {
     await userSettings?.refresh?.(login, { force: true });
-    // A Codex session signs in with its own login or the team's OpenAI key, and Grok Build and OpenCode with their
-    // owner's own sign-in alone: none of them needs a Claude token.
+    // A Codex session signs in with its own login or the team's OpenAI key, Antigravity with its own login or the team's
+    // Gemini key, and Grok Build and OpenCode with their owner's own sign-in alone: none of them needs a Claude token.
     const ownRefusal = signInRefusal(login, agent);
     if (ownRefusal) return { status: 409, body: { error: ownRefusal } };
     if ((!agent || agent === 'claude') && !userSettings?.view(login).claudeToken.set) return { status: 409, body: { error: 'save your Claude token on My settings first' } };
     if (agent === 'codex' && !userSettings?.view(login).codexAuth?.set && !(await readTeamOpenAiKey())) {
       return { status: 409, body: { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' } };
+    }
+    // Antigravity runs on its owner's own Google login when they saved one, and otherwise on the team's Gemini key.
+    if (agent === 'antigravity' && !userSettings?.view(login).agentAuth?.antigravity?.set && !(await readTeamGeminiKey())) {
+      return { status: 409, body: { error: 'save your Antigravity sign-in on My settings first: the console has no Gemini key' } };
     }
     // A Codex model or effort is one OpenAI's catalog offers this person now, as New session listed it.
     const codexRefusal = agent === 'codex' && codexModels ? await codexModels.allows(login, String(model ?? ''), String(effort ?? '')) : null;
@@ -1973,7 +1991,7 @@ export function createHandler({
 
   // An agent that runs on its owner's own sign-in alone starts only with it saved: the session would fail at start.
   function signInRefusal(login, agent) {
-    if (!agentsRegistry.OWN_SIGN_IN_AGENTS.includes(agent)) return null;
+    if (!agentsRegistry.OWN_ONLY_AGENTS.includes(agent)) return null;
     if (userSettings?.view(login).agentAuth?.[agent]?.set) return null;
     return `save your ${agentsRegistry.agent(agent).product} sign-in on My settings first`;
   }
@@ -2388,15 +2406,31 @@ export function createHandler({
         // Asked again after the read: a lockdown that started meanwhile gets no sign-in sent into the session.
         if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
       }
+      // An extra Antigravity agent runs on its owner's own Google login, handed to the session with the start itself, as
+      // Codex's is; with none, on the team's Gemini key through the console's proxy (geminiProxy.mjs), which the session
+      // may use only once the agent has started (fleet.allowAgent). Beside an Antigravity session it shares that one's.
+      const extraAntigravity = picked.agent === 'antigravity' && session.options?.agent !== 'antigravity';
+      let antigravityAuth = null;
+      if (extraAntigravity && userSettings) {
+        try {
+          antigravityAuth = await userSettings.agentAuth(session.owner, 'antigravity');
+        } catch (err) {
+          console.warn('console: Antigravity sign-in not read for an agent', { id: session.id, message: err?.message });
+          return reply(res, 502, { error: 'the console could not read your Antigravity sign-in: try again' });
+        }
+        if (!antigravityAuth && !(await readTeamGeminiKey())) return reply(res, 409, { error: 'save your Antigravity sign-in on My settings first: the console has no Gemini key' });
+        // Asked again after the read: a lockdown that started meanwhile gets no sign-in sent into the session.
+        if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
+      }
       console.log('console: another agent asked for', {
         id: session.id, agent: picked.agent, model: picked.model || null, effort: picked.effort || null, permissionMode: picked.permissionMode,
-        prompt: Boolean(prompt.trim()), ...(extraCodex && { ownCodex: Boolean(codexAuth) }),
+        prompt: Boolean(prompt.trim()), ...(extraCodex && { ownCodex: Boolean(codexAuth) }), ...(extraAntigravity && { ownAntigravity: Boolean(antigravityAuth) }),
       });
       const finishGrokStart = proxyGrok ? beginInteractiveGrok(session) : null;
       return toStatusd(req, res, session, {
         // Older images refuse this route rather than ignoring the credential and launching on the session token.
         method: 'POST', path: needsClaudeToken ? '/agents/with-claude-token' : proxyGrok ? '/agents/with-grok-proxy' : '/agents',
-        body: { ...picked, prompt, ...(claudeToken ? { claudeToken } : {}), ...(codexAuth ? { codexAuth } : {}) },
+        body: { ...picked, prompt, ...(claudeToken ? { claudeToken } : {}), ...(codexAuth ? { codexAuth } : {}), ...(antigravityAuth ? { antigravityAuth } : {}) },
         onStatus: (code) => {
           finishGrokStart?.(code);
           if (code === 200 && !session.taintedAt && !fleet.isLocked?.(session)) fleet.allowAgent(session, picked.agent);
@@ -3315,7 +3349,7 @@ export function createHandler({
       const looking = userSettings?.refresh?.(user.login)?.catch((err) => {
         console.warn('userSettings: stored sign-ins not followed', { message: String(err?.message ?? err).split('\n')[0] });
       });
-      await Promise.all([readProjectBlockers(user.login), first ? looking : null, readTeamOpenAiKey(), readSavedChoices(user.login)]);
+      await Promise.all([readProjectBlockers(user.login), first ? looking : null, readTeamOpenAiKey(), readTeamGeminiKey(), readSavedChoices(user.login)]);
       return reply(res, 200, myView(user.login));
     }
     if (pathname === '/api/my/reviews') return reply(res, 200, await myReviewsView(user.login));

@@ -958,6 +958,39 @@ own `--model` takes, blank for the agent's default (OpenCode's is `provider/mode
 offer what each one's command line has (`efforts` and `permissionModes` in the registry). None of them gets the
 console's MCP servers yet, and Grok Build runs none of a repo's own either (`session/grokRequirements.toml`).
 
+**Antigravity CLI** (`agy`, Google's terminal agent) runs in a private session on either of two credentials, so its Agent
+card is offered with one of them (`/api/my`'s `agents.antigravity`):
+
+- **The team's `gemini-api-key`** (Secrets page, group session), through the console's Gemini proxy
+  (`geminiProxy.mjs`, `/gemini/…` on the session API), as Codex runs on `openai-api-key`. The session holds only its
+  `SESSION_TOKEN`, as the API key `agy` sends in `x-goog-api-key`, and `GOOGLE_GEMINI_BASE_URL` points it at the console;
+  the proxy swaps in the team key. Only an Antigravity session may use it (one started on it, or a private one whose
+  owner started an Antigravity agent beside its own: `fleet.allowAgent`, as Codex's), and only what a model turn needs
+  passes, each path with its one method (`POST /v1beta/models/<model>:streamGenerateContent`, `generateContent` and
+  `countTokens`, and the model list): never the Files API, cached contents, tuned models or batches, or a key in the
+  query. A session that has seen production data reaches Google only through it, and each call is read first: one that
+  asks Google to reach out (grounding with Google Search, the URL context tool, a file or cached content given by
+  address) is refused, as the Anthropic proxy refuses Anthropic's. A lockdown cuts the calls on their way
+  (`geminiProxy: calls cut at the lockdown`).
+- **The owner's own Google login**, their Antigravity plan (Free, Pro or Ultra), saved on My settings as
+  `users/<login>/antigravity-auth` and handed to their private sessions in `/settings`'s `agentAuth` when they saved one.
+  It is agy's own file, `~/.gemini/antigravity-cli/antigravity-oauth-token` (a laptop writes it only after `AGY_CLI_FORCE_FILE_TOKEN_STORAGE=true agy`;
+  otherwise agy keeps the login in the operating system's keyring, so `woodshed setup` and `sign-in push` do not offer it), checked on
+  save for a `token.refresh_token`. agy refreshes the access token itself and rewrites the file with the same refresh token, so
+  nothing is sent back at stop and `/agent-auth` refuses it (`rotates: false`): the saved copy keeps working until Google
+  revokes the login.
+  That is the one agent whose `signIn` is `optional` in the registry: with none saved the `/settings` answer has no
+  `agentAuth` and the session runs on the team key instead of being refused, as Grok Build and OpenCode are. A start
+  needs one or the other (`save your Antigravity sign-in on My settings first: the console has no Gemini key`).
+
+An extra Antigravity agent (**+ Another agent**) is started with the owner's login in the start itself
+(`antigravityAuth`), or on the team key, which the console allows only once the agent started, and not once the session
+has seen production data. Antigravity does not review pull requests yet (`reviews: false`), and gets none of the console's
+MCP servers. Its **Model** is a name its own `--model` takes (`agy models` lists them); **Effort** is its `--effort`.
+The console logs `geminiProxy: team key read`, `first call on the team key`, `refused, not an Antigravity session`,
+`refused a path Antigravity does not need`, `no team key saved` (503 to the session) and, for a tainted session,
+`refused, a tainted session asked Google to reach out`.
+
 Grok Build's **Model** is a menu when the console could read its models on your own Grok sign-in (`grokModels.mjs`,
 `GET /api/my/grok-models`), as Codex's is: a login (`~/.grok/auth.json`) asks `GET
 https://cli-chat-proxy.grok.com/v1/models` with its access token, and an xAI key `GET https://api.x.ai/v1/models`, whose

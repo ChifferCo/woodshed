@@ -104,7 +104,7 @@ test('the install secrets are secret=VARIABLE pairs, from WOODSHED_INSTALL_SECRE
   assert.throws(bad('registry-token=REGISTRY_TOKEN=ghp_pastedValue123'), (err) => /pair 1 is not/.test(err.message) && !err.message.includes('ghp_'));
   // The place counts the commas as written, empty pairs too.
   assert.throws(bad('a-token=A,,b-token=bad'), /pair 3 is not/);
-  for (const name of ['anthropic-api-key', 'openai-api-key', 'github-app-key', 'github-app-client-secret', 'github-webhook-secret', 'slack-bot-token', 'slack-signing-secret']) {
+  for (const name of ['anthropic-api-key', 'openai-api-key', 'gemini-api-key', 'github-app-key', 'github-app-client-secret', 'github-webhook-secret', 'slack-bot-token', 'slack-signing-secret']) {
     assert.throws(bad(`${name}=REGISTRY_TOKEN`), /one of the console's own secrets/, name);
   }
 });

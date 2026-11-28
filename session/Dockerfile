@@ -59,6 +59,14 @@ ARG OPENCODE_VERSION=1.19.6
 ARG GROK_VERSION=1.0.92
 ARG GROK_SHA256_AMD64=add4d201dbf2c0bd6077a36feb55a76939de30bae48dbb06f16b2307d38ceacb
 ARG GROK_SHA256_ARM64=8c74f1dc6cdc1befff6b9faada06bec4cf6759d04f2a60cdc28ece5ff696b44f
+# Antigravity CLI (`agy`): the tarball Google's installer (https://antigravity.google/cli/install.sh) downloads, at the build
+# it names in its release manifest ($base/manifests/linux_<arch>.json, glibc), with that manifest's sha512 checked here as the
+# installer checks it. The installer itself is not run: it always takes the latest and then runs the binary's own `install`,
+# which sets up shells. A changed file, or a version bump with no new sha512, fails the build.
+ARG AGY_VERSION=1.5.18
+ARG AGY_BUILD=6386224290725888
+ARG AGY_SHA512_AMD64=ef379ec869719112f696e8c7cfddf776618712e58fc38e53df80801d6528abb4677782c7c8778f9c09c9123fa44c2c32675d228c06f2a8f7a8f4214e75f5bb26
+ARG AGY_SHA512_ARM64=6c59cbce5a7632083dd4ef594296e52ce0abdc12f8b4ecb55523e093748cf178f8f8383d7e51e9ed7859ea6e46c83a43a7b46364b0e033dd13afb24d6bfbe4c8
 
 FROM node:22.16.0-bookworm-slim AS base
 
@@ -167,18 +175,22 @@ RUN case "$TARGETARCH" in \
   && echo "${buildx_sha}  /usr/local/lib/docker/cli-plugins/docker-buildx" | sha256sum -c - \
   && chmod 755 /usr/local/lib/docker/cli-plugins/docker-buildx
 
-# Grok Build as `grok`, the name its own installer gives it, and OpenCode from npm, whose postinstall puts the
-# platform's binary in place of a stub (so scripts must run). Pinned by the ARGs at the top. Neither updates itself in
-# a session: their wrappers in session/bin and the configs the entrypoint writes turn their updaters off, rather than
+# Grok Build as `grok`, the name its own installer gives it, OpenCode from npm, whose postinstall puts the
+# platform's binary in place of a stub (so scripts must run), and Antigravity CLI as `agy`. Pinned by the ARGs at the top.
+# None updates itself in a session: their wrappers in session/bin and the configs the entrypoint writes turn their updaters off, rather than
 # ENV here, which the db-admin task would refuse (dbAdmin.mjs, unexpectedEnv). The last stage installs them again on a
 # published runtime built before they were in it.
 ARG OPENCODE_VERSION
 ARG GROK_VERSION
 ARG GROK_SHA256_AMD64
 ARG GROK_SHA256_ARM64
+ARG AGY_VERSION
+ARG AGY_BUILD
+ARG AGY_SHA512_AMD64
+ARG AGY_SHA512_ARM64
 RUN case "$TARGETARCH" in \
-    amd64) grok_arch=x86_64; grok_sha="$GROK_SHA256_AMD64" ;; \
-    arm64) grok_arch=aarch64; grok_sha="$GROK_SHA256_ARM64" ;; \
+    amd64) grok_arch=x86_64; grok_sha="$GROK_SHA256_AMD64"; agy_file=linux-x64/cli_linux_x64.tar.gz; agy_sha="$AGY_SHA512_AMD64" ;; \
+    arm64) grok_arch=aarch64; grok_sha="$GROK_SHA256_ARM64"; agy_file=linux-arm/cli_linux_arm64.tar.gz; agy_sha="$AGY_SHA512_ARM64" ;; \
     *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
   esac \
   && { curl -fsSL -o /tmp/grok "https://x.ai/cli/grok-${GROK_VERSION}-linux-${grok_arch}" \
@@ -186,7 +198,11 @@ RUN case "$TARGETARCH" in \
   && echo "${grok_sha}  /tmp/grok" | sha256sum -c - \
   && install -m 755 /tmp/grok /usr/local/bin/grok && rm /tmp/grok \
   && npm install -g "opencode-ai@${OPENCODE_VERSION}" && npm cache clean --force \
-  && echo "grok ${GROK_VERSION}, opencode ${OPENCODE_VERSION}" > /usr/local/share/woodshed-agents
+  && curl -fsSL -o /tmp/agy.tar.gz "https://storage.googleapis.com/antigravity-public/antigravity-cli/${AGY_VERSION}-${AGY_BUILD}/${agy_file}" \
+  && echo "${agy_sha}  /tmp/agy.tar.gz" | sha512sum -c - \
+  && tar -xzf /tmp/agy.tar.gz -C /tmp antigravity \
+  && install -m 755 /tmp/antigravity /usr/local/bin/agy && rm /tmp/agy.tar.gz /tmp/antigravity \
+  && echo "grok ${GROK_VERSION}, opencode ${OPENCODE_VERSION}, agy ${AGY_VERSION}" > /usr/local/share/woodshed-agents
 
 # The session should not be root: the node image's own uid 1000 user runs everything below.
 USER node
@@ -288,10 +304,14 @@ ARG OPENCODE_VERSION
 ARG GROK_VERSION
 ARG GROK_SHA256_AMD64
 ARG GROK_SHA256_ARM64
-RUN if [ "$(cat /usr/local/share/woodshed-agents 2>/dev/null)" = "grok ${GROK_VERSION}, opencode ${OPENCODE_VERSION}" ]; then echo "agents from the runtime"; exit 0; fi \
+ARG AGY_VERSION
+ARG AGY_BUILD
+ARG AGY_SHA512_AMD64
+ARG AGY_SHA512_ARM64
+RUN if [ "$(cat /usr/local/share/woodshed-agents 2>/dev/null)" = "grok ${GROK_VERSION}, opencode ${OPENCODE_VERSION}, agy ${AGY_VERSION}" ]; then echo "agents from the runtime"; exit 0; fi \
   && case "$TARGETARCH" in \
-    amd64) grok_arch=x86_64; grok_sha="$GROK_SHA256_AMD64" ;; \
-    arm64) grok_arch=aarch64; grok_sha="$GROK_SHA256_ARM64" ;; \
+    amd64) grok_arch=x86_64; grok_sha="$GROK_SHA256_AMD64"; agy_file=linux-x64/cli_linux_x64.tar.gz; agy_sha="$AGY_SHA512_AMD64" ;; \
+    arm64) grok_arch=aarch64; grok_sha="$GROK_SHA256_ARM64"; agy_file=linux-arm/cli_linux_arm64.tar.gz; agy_sha="$AGY_SHA512_ARM64" ;; \
     *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
   esac \
   && { curl -fsSL -o /tmp/grok "https://x.ai/cli/grok-${GROK_VERSION}-linux-${grok_arch}" \
@@ -299,7 +319,11 @@ RUN if [ "$(cat /usr/local/share/woodshed-agents 2>/dev/null)" = "grok ${GROK_VE
   && echo "${grok_sha}  /tmp/grok" | sha256sum -c - \
   && install -m 755 /tmp/grok /usr/local/bin/grok && rm /tmp/grok \
   && npm install -g "opencode-ai@${OPENCODE_VERSION}" && npm cache clean --force \
-  && echo "grok ${GROK_VERSION}, opencode ${OPENCODE_VERSION}" > /usr/local/share/woodshed-agents
+  && curl -fsSL -o /tmp/agy.tar.gz "https://storage.googleapis.com/antigravity-public/antigravity-cli/${AGY_VERSION}-${AGY_BUILD}/${agy_file}" \
+  && echo "${agy_sha}  /tmp/agy.tar.gz" | sha512sum -c - \
+  && tar -xzf /tmp/agy.tar.gz -C /tmp antigravity \
+  && install -m 755 /tmp/antigravity /usr/local/bin/agy && rm /tmp/agy.tar.gz /tmp/antigravity \
+  && echo "grok ${GROK_VERSION}, opencode ${OPENCODE_VERSION}, agy ${AGY_VERSION}" > /usr/local/share/woodshed-agents
 
 # The base stage's psql, for a published runtime built before it was there: the same install, skipped when the runtime
 # has that major.

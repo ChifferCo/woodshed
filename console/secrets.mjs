@@ -29,6 +29,7 @@ export function secretSpecs({ installSecrets = [] } = {}) {
   return [
     { name: 'anthropic-api-key', group: 'session', kind: 'line', readable: false },
     { name: 'openai-api-key', group: 'session', kind: 'line', readable: false },
+    { name: 'gemini-api-key', group: 'session', kind: 'line', readable: false },
     ...installSecrets.map(({ secret }) => ({ name: secret, group: 'session', kind: 'line', readable: true })),
     { name: 'github-app-key', group: 'console', kind: 'pem', readable: false },
     { name: 'github-webhook-secret', group: 'console', kind: 'webhook', readable: true },

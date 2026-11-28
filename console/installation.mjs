@@ -38,6 +38,7 @@ import { createOidcIssuer } from './oidcIssuer.mjs';
 import { createMcpRelay } from './mcpRelay.mjs';
 import { createMcpServers, mcpSettings } from './mcpServers.mjs';
 import { createOpenAiProxy } from './openaiProxy.mjs';
+import { createGeminiProxy } from './geminiProxy.mjs';
 import { createReviewAgentProxy } from './reviewAgentProxy.mjs';
 import { createCodexModels } from './codexModels.mjs';
 import { createGrokModels } from './grokModels.mjs';
@@ -415,6 +416,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const slackPeople = createSlackPeople({ store, slack });
   // In AWS the team key is the console's alone; the docker launcher's sessions keep the one in its env file.
   const openai = createOpenAiProxy({ secrets, teamKey: config.sessionEnv.OPENAI_API_KEY ?? null, userSettings });
+  const gemini = createGeminiProxy({ secrets, teamKey: config.sessionEnv.GEMINI_API_KEY ?? null });
   const codexModels = createCodexModels({ userSettings, teamCredential: openai.teamCredential });
   // A review's Grok Build and OpenCode, on its author's own sign-in alone: there is no team key for them.
   const reviewAgentProxy = createReviewAgentProxy({ userSettings });
@@ -486,6 +488,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   fleet.onLocking((id) => mcpRelay.cut(id));
   // A Codex agent's calls on the team key, opened before its session's lockdown (session/agents.mjs).
   fleet.onLocking((id) => openai.cut(id));
+  fleet.onLocking((id) => gemini.cut(id));
   // Sessions of anyone the program's list does not have go back to Unassigned, now for the first read and at each after.
   members?.whenGone?.((login) => fleet.releaseAssignments({ login, by: 'the program' }));
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
@@ -576,7 +579,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const handle = createHandler({
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
-    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, grokModels, openaiTeamKey: openai.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
+    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, grokModels, openaiTeamKey: openai.teamCredential, geminiTeamKey: gemini.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
     workflowLinks: () => projectReader.workflowLinks(),
     projectAccess,
@@ -627,7 +630,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     canWrite: (login) => startsWriteAccess.allowed(login),
   });
   const sessionApi = config.sessionApi.host ? createSessionApi({
-    fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, reviewAgentProxy, attachments, askTokens: tokens?.asks ?? null, asks,
+    fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, gemini, reviewAgentProxy, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
     mcpRelay, egress: access.egress, sessionStarts,
     ownerTokenRepos: hostConnect ? () => allProjects(config).map((p) => p.repo).filter(Boolean) : null,

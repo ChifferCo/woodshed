@@ -1,0 +1,40 @@
+
+      ▄▀▀▄        Antigravity CLI 1.5.18
+     ▀▀▀▀▀▀       Gemini API key
+    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)
+   ▄▀▀    ▀▀▄     /work/repo
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+> please do it
+
+● Edited 1 file (new-file.txt) (ctrl+o to expand)
+
+Create file
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/work/repo/new-file.txt  +1
+  1  +  hello
+
+Allow creation of this file?
+> 1. Yes, allow creation
+  2. No, deny creation
+
+  ↑/↓ Navigate · f full diff
+esc to cancel                                                                                                           Gemini 3.1 Pro · low
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -90,7 +90,7 @@ export const COMMANDS = [
       // owner/name, or the project's name on a console that names projects (repo add --name).
       { name: 'repo', value: 'owner/name', about: 'the repo to work on (default: the one New session opens on for you)', check: /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9._-]+)?$/ },
       { name: 'branch', value: 'branch', about: 'work on this branch, or a pull request or issue: 123, pr 123, or its URL' },
-      { name: 'agent', value: 'agent', check: /^[a-z][a-z0-9-]{0,31}$/, about: 'the agent it runs: claude, codex, grok, opencode (default claude)' },
+      { name: 'agent', value: 'agent', check: /^[a-z][a-z0-9-]{0,31}$/, about: 'the agent it runs: claude, codex, grok, opencode, antigravity (default claude)' },
       { name: 'model', value: 'model', about: 'the agent\'s model (default the agent\'s own)' },
       { name: 'no-wait', about: 'print the session and return once the console has it' },
       { name: 'connect', needs: 'terminal', about: 'once it runs, put this terminal on its agent\'s, as connect does' },
@@ -180,7 +180,7 @@ export const COMMANDS = [
     about: 'hand one of your running sessions\' work to another agent: it stops, pushing its work, and a new session starts on its branch with that agent, its conversation attached as a file; then wait for the new one as new does',
     args: [id()],
     options: [
-      { name: 'agent', value: 'agent', required: true, check: /^[a-z][a-z0-9-]{0,31}$/, about: 'the agent the new session runs (required): claude, codex, grok or opencode' },
+      { name: 'agent', value: 'agent', required: true, check: /^[a-z][a-z0-9-]{0,31}$/, about: 'the agent the new session runs (required): claude, codex, grok, opencode or antigravity' },
       { name: 'model', value: 'model', about: 'its model (default the agent\'s own)' },
       { name: 'note', value: 'text', text: true, about: 'what to tell the new agent first, such as what is left to do' },
       { name: 'no-conversation', about: 'leave the conversation behind: the new session starts from the branch and the note' },

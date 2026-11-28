@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// askInImage.mjs's copy for a private session on Grok Build or OpenCode (shared/agents.cjs): the whole
+// askInImage.mjs's copy for a private session on Grok Build, OpenCode or Antigravity CLI (shared/agents.cjs): the whole
 // entrypoint runs in the real session image with the environment ECS would give it (the fleet builds the session's env
 // from New session's options, the ECS launcher's allowlist filters it, the task definition's variables are added), and
 // the console's real session API answers it from here with a stand-in owner: a made-up sign-in for the agent (the agent
@@ -7,7 +7,10 @@
 // container's log as the start goes, until the agent is open or the start failed, then the agent's pane, and passes
 // when the agent runs in the pane with the session's first message in it:
 //
-//   node woodshed/providers/aws/bin/agentInImage.mjs <image> <grok|opencode> [entrypoint.sh]
+//   node woodshed/providers/aws/bin/agentInImage.mjs <image> <grok|opencode|antigravity> [entrypoint.sh]
+//
+// Antigravity CLI has two credentials: with IN_IMAGE_ANTIGRAVITY=team the answer carries no sign-in, so the session runs on
+// the team's Gemini key through the console's /gemini (which this stand-in console does not serve: its first call fails).
 //
 // `entrypoint.sh` is copied over the image's, to try a start change before the image is built. Needs Docker. The
 // container runs the repo's code and an agent in auto mode, so it is handed no GitHub credential of yours (as
@@ -43,7 +46,10 @@ const PROMPT = 'Say hello from agentInImage, then stop.';
 const SIGN_INS = {
   grok: 'xai-agentInImage-not-a-real-key-0123456789',
   opencode: JSON.stringify({ anthropic: { type: 'api', key: 'sk-ant-agentInImage-not-a-real-key' } }),
+  antigravity: JSON.stringify({ token: { access_token: 'ya29.agentInImage-not-a-real-token', token_type: 'Bearer', refresh_token: '1//agentInImage-not-a-real-token', expiry: '2099-01-01T00:00:00Z', expires_in: 3599 }, auth_method: 'consumer', id_token_email: 'in-image@example.invalid' }),
 };
+// Antigravity on the team key: the answer has no sign-in.
+const TEAM_KEY = AGENT === 'antigravity' && process.env.IN_IMAGE_ANTIGRAVITY === 'team';
 const REPO = envValue(process.env, 'REPO') || 'ChifferCo/woodshed';
 
 async function privateEnv() {
@@ -77,7 +83,7 @@ function serve(fleet) {
     tokens: { token: async () => ({ token: ghToken, expiresAt: Date.now() + 3_600_000 }) },
     userSettings: {
       claudeToken: async () => null,
-      agentAuth: async (login, id) => (id === AGENT ? SIGN_INS[id] : null),
+      agentAuth: async (login, id) => (id === AGENT && !TEAM_KEY ? SIGN_INS[id] : null),
       ownFiles: async () => ({}),
       gitIdentity: () => ({ name: null, email: null }),
       terminal: () => 'tmux',

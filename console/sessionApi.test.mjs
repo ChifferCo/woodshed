@@ -685,6 +685,43 @@ test('a private Codex session needs no Claude token, gets its owner\'s Codex sig
   assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer claude-token', body: '{}' })).status, 404, 'not a Codex session');
 });
 
+test('a private Antigravity session runs on its owner\'s own sign-in when they saved one, and on the team key without one', async (t) => {
+  const logs = [];
+  t.mock.method(console, 'log', (...a) => { logs.push(a); });
+  t.mock.method(console, 'warn', () => {});
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'running', token: 'own-token', owner: 'joel', options: { agent: 'antigravity' } },
+    { id: 'bbbbbbbb', status: 'running', token: 'team-token', owner: 'mia', options: { agent: 'antigravity' } },
+  ];
+  const login = JSON.stringify({ token: { access_token: 'ya29.secret', refresh_token: '1//secret', expiry: '2026-12-01T00:00:00Z' } });
+  const userSettings = {
+    claudeToken: async () => { throw new Error('never asked for a Claude token'); },
+    agentAuth: async (who, id) => (who === 'joel' && id === 'antigravity' ? login : null),
+    ownFiles: async () => ({}),
+    gitIdentity: () => null,
+  };
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  const own = await request(port, { path: '/settings', authorization: 'Bearer own-token' });
+  assert.equal(own.status, 200);
+  assert.deepEqual([own.body.agentAuth, own.body.claudeToken, own.body.codexAuth], [login, null, undefined]);
+  // No sign-in saved: not refused as Grok Build and OpenCode are, and no `agentAuth` in the answer: the session reads that as the team key.
+  const team = await request(port, { path: '/settings', authorization: 'Bearer team-token' });
+  assert.equal(team.status, 200);
+  assert.equal('agentAuth' in team.body, false);
+  assert.equal(team.body.claudeToken, null);
+  // agy refreshes its own login and its refresh token stays the same: nothing is sent back, and nothing is kept.
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer own-token', body: login })).status, 404, 'a login that does not rotate is not written back');
+  const said = logs.map((a) => a.join(' ')).join('\n');
+  assert.match(said, /Antigravity CLI sign-in handed out/);
+  assert.match(said, /Antigravity CLI runs on the team key, the owner saved no sign-in/);
+  assert.ok(!said.includes('ya29') && !said.includes('1//secret'), 'never the sign-in');
+});
+
 test('a private Grok Build or OpenCode session runs on its owner\'s own sign-in alone, and can keep a refreshed login', async (t) => {
   t.mock.method(console, 'log', () => {});
   t.mock.method(console, 'warn', () => {});

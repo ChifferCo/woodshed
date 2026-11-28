@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-import { classifyAgentPane, classifyCodexPane, classifyGrokPane, classifyOpencodePane } from './paneStates.mjs';
+import { classifyAgentPane, classifyAntigravityPane, classifyCodexPane, classifyGrokPane, classifyOpencodePane } from './paneStates.mjs';
 import { answerApproval, draftInBox, opencodeHighlight, readApproval, readPrompt } from './panePrompt.mjs';
 
 const fixture = (name) => fs.readFileSync(new URL(`../shared/__fixtures__/${name}`, import.meta.url), 'utf8');
@@ -179,4 +179,78 @@ test('a draft left in Grok Build\'s or OpenCode\'s box is seen, so a Chat messag
   }
   assert.equal(draftInBox('a shell prompt $ \n', 'grok'), null, 'no box, no reading');
   assert.equal(draftInBox(fixture('pane-opencode-approval-once-captured.ansi'), 'opencode'), null, 'a prompt in its place');
+});
+
+// Antigravity CLI 1.5.18's screens, captured from the real TUI in tmux against a stand-in Gemini server (140 columns,
+// altScreenMode never, the checkout drawn as /work/repo): shared/__fixtures__/pane-agy-*.
+test('Antigravity CLI\'s pane reads as working, waiting on a person, or at its prompt', () => {
+  assert.equal(classifyAntigravityPane(fixture('pane-agy-idle.txt')), 'done');
+  assert.equal(classifyAntigravityPane(fixture('pane-agy-working.txt')), 'working');
+  for (const name of ['approval-command', 'approval-create', 'approval-edit', 'question']) {
+    assert.equal(classifyAntigravityPane(fixture(`pane-agy-${name}.txt`)), 'needs-you', name);
+    assert.equal(classifyAgentPane('antigravity', fixture(`pane-agy-${name}.txt`)), 'needs-you', name);
+  }
+  assert.equal(classifyAntigravityPane('woodshed@abc:/work/app$ '), null);
+  assert.equal(classifyAntigravityPane(''), null);
+  assert.equal(classifyAgentPane('claude', fixture('pane-agy-idle.txt')), null);
+});
+
+test('a slash menu opened in agy\'s box is a person typing, not a question for them', () => {
+  const menu = ['> /exit', '─────', '> /exit  Exit the CLI', '  ↑/↓ Navigate · enter Select · tab Complete', 'esc to cancel'].join('\n');
+  assert.equal(classifyAntigravityPane(menu), 'done');
+  assert.equal(readApproval(menu, 'antigravity'), null);
+});
+
+test('agy\'s approvals are read whatever they ask: a command, a new file, an edit', () => {
+  const command = readApproval(fixture('pane-agy-approval-command.txt'), 'antigravity');
+  assert.deepEqual([command.agent, command.what, command.title, command.detail], ['antigravity', 'Command', 'Run this command?', ['Requesting permission for:', '   echo hello-agy']]);
+  assert.deepEqual(command.options.map((o) => o.label), ["Yes, run command", "Yes, and always allow in this conversation for commands that start with 'echo'", "Yes, and always allow for commands that start with 'echo' (Persist to settings.json)", 'No, cancel']);
+  // Approve is the plain Yes, never an "always allow" row; deny the No.
+  assert.deepEqual([command.approve, command.deny, command.highlighted, command.complete], [0, 3, 0, true]);
+  const created = readApproval(fixture('pane-agy-approval-create.txt'), 'antigravity');
+  assert.deepEqual([created.what, created.title, created.detail, created.options.map((o) => o.label)], ['Create file', 'Allow creation of this file?', ['/work/repo/new-file.txt  +1', '  1  +  hello'], ['Yes, allow creation', 'No, deny creation']]);
+  const edit = readApproval(fixture('pane-agy-approval-edit.txt'), 'antigravity');
+  assert.deepEqual([edit.what, edit.title, edit.options.map((o) => o.label)], ['Pending edit', 'Accept this file edit?', ['Yes, accept this change', 'No, reject this change']]);
+  assert.match(edit.detail.join('\n'), /-  hello\n.*\+  howdy/);
+  // The key is what it asks, as drawn: another command is another approval.
+  assert.notEqual(command.key, readApproval(fixture('pane-agy-approval-command.txt').replaceAll('echo hello-agy', 'echo hello-agz'), 'antigravity').key);
+  // Its question picker is no approval, nor is an idle screen, nor another agent's reading of either.
+  assert.equal(readApproval(fixture('pane-agy-question.txt'), 'antigravity'), null);
+  assert.equal(readApproval(fixture('pane-agy-idle.txt'), 'antigravity'), null);
+  assert.equal(readApproval(fixture('pane-agy-approval-command.txt'), 'codex'), null);
+  assert.equal(readPrompt(fixture('pane-agy-approval-command.txt'), 'antigravity').kind, 'approval');
+});
+
+test('a numbered list agy printed above its prompt is no approval', () => {
+  const printed = ['Which do you want?', '  1. first', '  2. second', '', '─────', '> ', '─────', '? for shortcuts'].join('\n');
+  assert.equal(readApproval(printed, 'antigravity'), null);
+});
+
+test('answering agy moves the highlight to the row and presses Enter; a deny walks down to No', async () => {
+  const screen = fixture('pane-agy-approval-command.txt');
+  const key = readApproval(screen, 'antigravity').key;
+  const approve = fakePane(screen, (keys) => keys.includes('Enter'));
+  assert.deepEqual(await answerApproval({ ...approve.io, agent: 'antigravity' }, { decision: 'approve', key }), { moves: 0, agent: 'antigravity' });
+  assert.deepEqual(approve.typed, ['Enter']);
+  // The pane moves its `>` with each Down, as agy does.
+  let at = 0;
+  const typed = [];
+  const walking = {
+    capture: async () => {
+      if (typed.includes('Enter')) return 'done\n';
+      let n = 0;
+      return screen.split('\n').map((l) => (/^\s*>? ?\d\.\s/.test(l) ? `${++n - 1 === at ? '>' : ' '} ${l.trim().replace(/^>\s*/, '')}` : l)).join('\n');
+    },
+    keys: async (...keys) => { for (const k of keys) { typed.push(k); if (k === 'Down') at++; } },
+    sleep: async () => {}, waitMs: 50, agent: 'antigravity',
+  };
+  assert.deepEqual(await answerApproval(walking, { decision: 'deny', key }), { moves: 3, agent: 'antigravity' });
+  assert.deepEqual(typed, ['Down', 'Down', 'Down', 'Enter']);
+});
+
+test('agy\'s box holds a draft only when something is in the colour a typed draft has, not its mode\'s hint in bright black', () => {
+  assert.equal(draftInBox(fixture('pane-agy-box-idle-default.ansi'), 'antigravity'), false);
+  assert.equal(draftInBox(fixture('pane-agy-box-empty.ansi'), 'antigravity'), false, 'the accept-edits hint is a placeholder');
+  assert.equal(draftInBox(fixture('pane-agy-box-draft.ansi'), 'antigravity'), true);
+  assert.equal(draftInBox('no box here\n', 'antigravity'), null);
 });
