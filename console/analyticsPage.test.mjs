@@ -15,7 +15,8 @@ const DAY = 86_400_000;
 
 function element(tag) {
   return {
-    tag, attrs: {}, listeners: {}, children: [], className: '', value: '',
+    tag, attrs: {}, listeners: {}, children: [], className: '', value: '', style: {}, hidden: false,
+    classList: { toggle() {}, add() {}, remove() {} },
     setAttribute(k, v) { this.attrs[k] = v; },
     addEventListener(k, fn) { this.listeners[k] = fn; },
     append(c) { this.children.push(c); },
@@ -200,4 +201,75 @@ test('the Sessions group draws the agents as a bar with a tag and count for each
   const tags = page.walk().filter((e) => /agent-tag/.test(e.className) && /\d$/.test(textOf(e))).map((e) => textOf(e));
   assert.deepEqual(tags, ['Claude 50', 'Codex 20']);
   assert.ok(page.walk().some((e) => e.className === 'cell-bar-fill'), 'a bar in the people table');
+});
+
+test('every chart is the one component: a y axis of ticks, gridlines, more than two day labels, and a tooltip with the day, each series and the total', async () => {
+  const data = report();
+  data.sessions.agents = { claude: 50, codex: 20 };
+  data.sessions.work = 70;
+  data.sessions.recent.forEach((r, i) => { if (i % 2) r.agent = 'codex'; });
+  data.pulls.recent.forEach((p, i) => { p.via = i % 2 ? 'woodshed' : 'other'; });
+  const page = await loadPage(data);
+  const charts = page.walk().filter((e) => e.className === 'trend');
+  assert.equal(charts.length, 3, 'sessions, pull requests opened, pull requests merged');
+  for (const chart of charts) {
+    const all = walk(chart);
+    const ticks = all.find((e) => e.className === 'trend-y mono').children.map(textOf);
+    assert.ok(ticks.length >= 2 && ticks[0] === '0', `ticks from 0: ${ticks}`);
+    assert.equal(all.find((e) => e.className === 'trend-grid').children.length, ticks.length, 'a gridline for each tick');
+    const labels = all.find((e) => e.className === 'trend-x mono').children.map(textOf);
+    assert.ok(labels.length >= 3 && labels.at(-1) === 'today', `labelled days: ${labels}`);
+    assert.ok(!all.some((e) => /trend-max/.test(e.className)), 'no max in the corner');
+  }
+  // Sessions: stacked by agent with the Agents bar's classes, and a legend of them.
+  const [sessions, opened] = charts;
+  const segs = walk(sessions).filter((e) => /trend-seg/.test(e.className)).map((e) => e.className);
+  assert.ok(segs.some((c) => /is-agent-claude/.test(c)) && segs.some((c) => /is-agent-codex/.test(c)), 'a segment for each agent');
+  assert.ok(!segs.some((c) => /is-violet/.test(c)), 'no colour that is one agent\'s for the total');
+  assert.deepEqual(walk(sessions).find((e) => e.className === 'trend-legend').children.map(textOf), ['Claude', 'Codex']);
+  // Hovering a column shows its day, each series and the total.
+  const col = walk(sessions).find((e) => e.className === 'trend-col' && /Claude/.test(e.attrs['aria-label']) && !/0 Claude/.test(e.attrs['aria-label']));
+  col.listeners.mouseenter();
+  const tip = walk(sessions).find((e) => e.className === 'trend-tip');
+  assert.equal(tip.hidden, false);
+  assert.match(textOf(tip), /^(From|Day of) \w+ \d+\d* .*Claude.*in all$|From .*Claude/);
+  col.listeners.mouseleave();
+  assert.equal(tip.hidden, true);
+  const popped = walk(opened).find((e) => e.className === 'trend-col' && /[1-9]\d* through Woodshed, [1-9]\d* without/.test(e.attrs['aria-label']));
+  popped.listeners.focus();
+  const openedTip = walk(opened).find((e) => e.className === 'trend-tip');
+  assert.match(textOf(openedTip), /Day of .*through Woodshed.*without.*in all/);
+  // Focus one column, hover another and leave it: the focused column's tooltip comes back.
+  const [other] = walk(opened).filter((e) => e.className === 'trend-col' && e !== popped);
+  const focusedText = textOf(openedTip);
+  other.listeners.mouseenter();
+  other.listeners.mouseleave();
+  assert.equal(openedTip.hidden, false);
+  assert.equal(textOf(openedTip), focusedText);
+  popped.listeners.blur();
+  assert.equal(openedTip.hidden, true);
+  // A series at 0 that day is still a row, so the tooltip agrees with the column's label.
+  const zero = walk(opened).find((e) => e.className === 'trend-col' && /\b0 through Woodshed/.test(e.attrs['aria-label']));
+  if (zero) { zero.listeners.mouseenter(); assert.match(textOf(openedTip), /0 through Woodshed/); }
+});
+
+test('the people table gives the whole merge risk, a dash for nothing reviewed, and says what each slashed pair is', async () => {
+  const data = report();
+  data.people = [
+    { login: 'ana', sessions: 1, activeDays: 1, lastAt: new Date(NOW).toISOString(), share: 0.5,
+      woodshed: { opened: 2, merged: 1, medianMergeHours: 3, tiers: { Low: 2, Medium: 0, High: 0 }, added: 1, removed: 1 },
+      other: { opened: 1, merged: 1, medianMergeHours: 5, tiers: { Low: 0, Medium: 1, High: 3 }, added: 1, removed: 1 } },
+    { login: 'bo', sessions: 1, activeDays: 1, lastAt: null, share: null,
+      woodshed: { opened: 0, merged: 0, medianMergeHours: null, tiers: { Low: 0, Medium: 0, High: 0 }, added: 0, removed: 0 },
+      other: { opened: 1, merged: 0, medianMergeHours: null, tiers: { Low: 0, Medium: 0, High: 0 }, added: 0, removed: 0 } },
+  ];
+  const page = await loadPage(data);
+  const [ana, bo] = page.rows('people');
+  const risk = (r) => textOf(r.children[8]);
+  assert.equal(risk(ana), '2 low1 med3 high');
+  assert.equal(walk(ana.children[8]).find((e) => e.attrs?.role === 'img').attrs['aria-label'], 'Merge risk: 2 low, 1 medium, 3 high');
+  assert.equal(risk(bo), '—');
+  assert.match(walk(bo.children[8]).find((e) => e.className === 'quiet').attrs.title, /none of their pull requests was reviewed/i);
+  const heads = walk(page.app).filter((e) => e.tag === 'th').map(textOf);
+  assert.ok(heads.includes('Woodshed PRsopened / merged') && heads.includes('Other PRsopened / merged') && heads.includes('To mergeWoodshed / without'), heads.join('|'));
 });

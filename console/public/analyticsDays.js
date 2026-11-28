@@ -21,14 +21,14 @@
   /**
    * @param {object[]} items
    * @param {(item: object) => string} atOf  when it happened, ISO
-   * @param {(item: object) => 'a'|'b'} keyOf  which of the two series it counts in
+   * @param {(item: object) => string} keyOf  which series it counts in ('a' and 'b', or an agent's id)
    */
   function dayCounts(items, atOf, keyOf, sinceIso, untilIso) {
     const buckets = dayBuckets(sinceIso, untilIso);
     const byKey = new Map(buckets.map((b) => [b.key, b]));
     for (const item of items) {
       const bucket = byKey.get(key(new Date(atOf(item))));
-      if (bucket) bucket[keyOf(item)]++;
+      if (bucket) { const k = keyOf(item); bucket[k] = (bucket[k] ?? 0) + 1; }
     }
     return buckets;
   }

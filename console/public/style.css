@@ -1430,7 +1430,7 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 .analytics-table .quiet, .analytics-page .quiet { color: var(--meta); }
 .analytics-table tr.is-picked td { background: var(--slate-tint); }
 /* meta is 4.1:1 on slate-tint: the picked row's quiet text is sub, 4.5:1 or better. */
-.analytics-table tr.is-picked .quiet { color: var(--sub); }
+.analytics-table tr.is-picked .quiet, .analytics-table tr.is-picked .risk-mix-counts { color: var(--sub); }
 .analytics-table .analytics-title { min-width: 260px; }
 .analytics-table .link-btn { padding: 0; border: 0; background: none; color: var(--slate); font: inherit; cursor: pointer; text-align: left; }
 .analytics-table .link-btn:hover { text-decoration: underline; }
@@ -1441,14 +1441,36 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 .trend-legend { display: inline-flex; gap: 14px; font-size: 12.5px; color: var(--sub); }
 .trend-key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
 .trend-max { margin-left: auto; font-size: 11.5px; color: var(--meta); }
-.trend-svg { display: block; width: 100%; height: 120px; overflow: visible; }
-.trend-bar.is-woodshed, .trend-key.is-woodshed { fill: var(--slate); background: var(--slate); }
-.trend-bar.is-violet, .trend-key.is-violet { fill: var(--proj-violet); background: var(--proj-violet); }
-.trend-bar.is-other, .trend-key.is-other { fill: var(--proj-teal); background: var(--proj-teal); }
-.trend-hit { fill: transparent; }
-.trend-svg g:hover .trend-bar { opacity: 0.8; }
-.trend-base { stroke: var(--line); stroke-width: 1; }
-.trend-axis { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11.5px; color: var(--meta); }
+.trend-chart { position: relative; display: grid; grid-template-columns: 34px 1fr; grid-template-rows: 150px 20px; column-gap: 8px; }
+.trend-y { position: relative; grid-row: 1; font-size: 11.5px; color: var(--meta); }
+.trend-y span { position: absolute; right: 0; transform: translateY(50%); line-height: 1; }
+.trend-plot { position: relative; grid-row: 1; grid-column: 2; border-bottom: 1px solid var(--line); }
+.trend-grid i { position: absolute; left: 0; right: 0; height: 0; border-top: 1px solid var(--line-soft); }
+.trend-cols { position: absolute; inset: 0; display: flex; align-items: stretch; }
+.trend-col { flex: 1; min-width: 0; display: flex; flex-direction: column-reverse; justify-content: flex-start; gap: 2px; border-radius: 2px; cursor: default; outline-offset: 1px; }
+.trend-col:hover, .trend-col.is-hot { background: var(--slate-tint); }
+.trend-seg { display: block; border-radius: 2px; min-height: 2px; }
+.trend-seg.is-woodshed, .trend-key.is-woodshed { background: var(--slate); }
+.trend-seg.is-other, .trend-key.is-other { background: var(--proj-teal); }
+.trend-seg.is-agent-claude, .trend-key.is-agent-claude { background: var(--amber); }
+.trend-seg.is-agent-codex, .trend-key.is-agent-codex { background: var(--proj-teal); }
+.trend-seg.is-agent-grok, .trend-key.is-agent-grok { background: var(--proj-violet); }
+.trend-seg.is-agent-opencode, .trend-key.is-agent-opencode { background: var(--proj-rose); }
+.trend-seg.is-agent-other, .trend-key.is-agent-other { background: var(--idle-dot); }
+.trend-x { position: relative; grid-column: 2; grid-row: 2; font-size: 11.5px; color: var(--meta); }
+.trend-x span { position: absolute; top: 4px; transform: translateX(-50%); white-space: nowrap; }
+.trend-x span:last-child { transform: translateX(-100%); }
+.trend-tip { position: absolute; top: 4px; z-index: 5; transform: translateX(8px); display: flex; flex-direction: column; gap: 2px; padding: 6px 9px; border-radius: 6px; background: var(--ink); color: var(--ground); font-size: 12px; line-height: 1.35; white-space: nowrap; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+.trend-tip[hidden] { display: none; }
+.trend-tip.is-left { transform: translateX(calc(-100% - 8px)); }
+.trend-tip-row { display: flex; align-items: center; }
+.trend-tip-row.is-total { margin-top: 2px; padding-top: 3px; border-top: 1px solid currentColor; opacity: .85; }
+.trend-tip .trend-key { margin-right: 6px; box-shadow: 0 0 0 1px var(--ground); }
+.th-sub { display: block; font-size: 10.5px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--sub); white-space: nowrap; }
+.risk-mix { display: flex; flex-direction: column; gap: 3px; min-width: 120px; }
+.risk-mix .risk-bar { height: 8px; border-radius: 4px; }
+.risk-mix-counts { display: flex; gap: 8px; font-size: 11.5px; color: var(--meta); white-space: nowrap; }
+.analytics-table tr.is-picked .risk-mix-counts .is-high, .risk-mix-counts .is-high { color: var(--bad); font-weight: 600; }
 .sign-in-list { display: flex; flex-wrap: wrap; gap: 4px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .slack-line { display: flex; align-items: center; gap: 8px; margin-top: 2px; }

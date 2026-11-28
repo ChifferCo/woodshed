@@ -82,7 +82,7 @@ export function devAnalytics(now) {
         const opened = rand() < person.opens ? pull({ login: person.login, at: at + 2 * 3_600_000, branch, woodshed: true }) : null;
         usageKept.push({
           id: sessionId, project: opened && opened.__repo === TOOLS ? 'example-tools' : 'example-repo', repo: opened?.__repo ?? REPO, kind: 'work', login: person.login, private: rand() < 0.7,
-          agent: rand() < 0.8 ? person.agent : 'codex', createdAt: new Date(at).toISOString(), title: TITLES[id % TITLES.length],
+          agent: id % 17 === 0 ? 'grok' : id % 29 === 0 ? 'opencode' : rand() < 0.8 ? person.agent : 'codex', createdAt: new Date(at).toISOString(), title: TITLES[id % TITLES.length],
           branch, prUrls: opened ? [opened.url] : [], number: null, tier: null, status: 'stopped',
         });
       }

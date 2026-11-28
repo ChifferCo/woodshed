@@ -9,8 +9,11 @@
  .k{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
  .max,.axis{font:11.5px "Red Hat Mono",ui-monospace,monospace;color:var(--meta)}
  .max{margin-left:auto}
- .bars{display:flex;align-items:flex-end;gap:6px;height:120px;border-bottom:1px solid var(--line)}
- .bar{flex:1;display:flex;flex-direction:column;gap:2px}
+ .chart{display:grid;grid-template-columns:34px 1fr;column-gap:8px}.y{position:relative;height:150px;font:11.5px "Red Hat Mono",monospace;color:var(--meta)}.y span{position:absolute;right:0;transform:translateY(50%);line-height:1}
+ .plot{position:relative;height:150px;border-bottom:1px solid var(--line)}.g{position:absolute;left:0;right:0;border-top:1px solid var(--line-soft)}
+ .tip{position:absolute;top:4px;left:38%;display:flex;flex-direction:column;gap:2px;padding:6px 9px;border-radius:6px;background:var(--ink);color:var(--ground);font-size:12px}.tip span{display:flex;align-items:center}.tip .tot{border-top:1px solid currentColor;margin-top:2px;padding-top:3px}.hot{background:var(--slate-tint)}
+ .bars{position:absolute;inset:0;display:flex;align-items:stretch;gap:6px}
+ .bar{flex:1;display:flex;flex-direction:column-reverse;justify-content:flex-start;gap:2px}
  .w{background:var(--slate);border-radius:2px}.o{background:var(--proj-teal);border-radius:2px}
  .risk{display:flex;gap:2px;height:12px;border-radius:6px;overflow:hidden;margin-top:14px;background:var(--stopped)}
  .risk i{display:block}.lo{background:var(--add)}.me{background:var(--amber)}.hi{background:var(--del)}.no{background:var(--idle-dot)}
@@ -19,17 +22,21 @@
  .ag1{background:var(--amber)}.ag2{background:var(--proj-teal)}.ag3{background:var(--proj-violet)}.ag4{background:var(--proj-rose)}
  .at{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:999px}.at1{background:var(--amber-tint);color:var(--amber-ink)}.at2{background:var(--proj-teal-tint);color:var(--proj-teal)}.at3{background:var(--proj-violet-tint);color:var(--proj-violet)}.at4{background:var(--proj-rose-tint);color:var(--proj-rose)}
  .sb{display:flex;align-items:center;justify-content:flex-end;gap:8px;max-width:160px;font:600 13px "Red Hat Mono",monospace;color:var(--proj-violet)}.sb i{display:block;height:6px;border-radius:3px;background:var(--proj-violet);opacity:.55}
- .axis{display:flex;justify-content:space-between;margin-top:4px}
+ .axis{display:flex;justify-content:space-between;margin:4px 0 0 42px}
 </style>
 <div class="box">
- <div class="head"><span class="l">Pull requests merged</span><span class="leg"><span><i class="k w"></i>Through Woodshed</span><span><i class="k o"></i>Without</span></span><span class="max">max 22</span></div>
- <div class="bars">
-  <div class="bar" title="From Oct 27: 6 through Woodshed, 12 without"><div class="o" style="height:65px"></div><div class="w" style="height:32px"></div></div>
-  <div class="bar" title="From Nov 3: 9 through Woodshed, 13 without"><div class="o" style="height:70px"></div><div class="w" style="height:48px"></div></div>
-  <div class="bar" title="From Nov 11: 12 through Woodshed, 8 without"><div class="o" style="height:43px"></div><div class="w" style="height:65px"></div></div>
-  <div class="bar" title="From Nov 19: 8 through Woodshed, 12 without"><div class="o" style="height:65px"></div><div class="w" style="height:43px"></div></div>
- </div>
- <div class="axis"><span>Oct 27</span><span>today</span></div>
+ <div class="head"><span class="l">Pull requests merged</span><span class="leg"><span><i class="k w"></i>Through Woodshed</span><span><i class="k o"></i>Without</span></span></div>
+ <div class="chart"><div class="y"><span style="bottom:0">0</span><span style="bottom:33%">10</span><span style="bottom:66%">20</span><span style="bottom:100%">30</span></div>
+ <div class="plot"><i class="g" style="bottom:33%"></i><i class="g" style="bottom:66%"></i><i class="g" style="bottom:100%"></i>
+  <div class="bars">
+  <div class="bar" title="From Oct 27: 6 through Woodshed, 12 without"><div class="o" style="height:40%"></div><div class="w" style="height:20%"></div></div>
+  <div class="bar hot"><div class="o" style="height:43%"></div><div class="w" style="height:27%"></div></div>
+  <div class="bar"><div class="o" style="height:27%"></div><div class="w" style="height:40%"></div></div>
+  <div class="bar"><div class="o" style="height:40%"></div><div class="w" style="height:27%"></div></div>
+  </div>
+  <div class="tip"><b>From Nov 3</b><span><i class="k w"></i>9 through Woodshed</span><span><i class="k o"></i>13 without</span><span class="tot">22 in all</span></div>
+ </div></div>
+ <div class="axis"><span>Oct 27</span><span>Nov 3</span><span>Nov 11</span><span>today</span></div>
  <div class="head" style="margin-top:14px"><span class="l">Merge risk, every level</span></div>
  <div class="risk" role="img" aria-label="58 low, 54 medium, 16 high, 30 not reviewed"><i class="lo" style="flex:58"></i><i class="me" style="flex:54"></i><i class="hi" style="flex:16"></i><i class="no" style="flex:30"></i></div>
  <div class="cnt" style="display:flex;gap:6px;margin-top:8px"><span class="pl lo2">58 low</span><span class="pl me2">54 medium</span><span class="pl hi2">16 high</span><span class="pl no2">30 not reviewed</span></div>

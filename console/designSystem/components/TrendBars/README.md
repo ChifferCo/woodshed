@@ -2,18 +2,27 @@ Trend bars show how a count moves over a window: sessions started each week, pul
 Analytics page (`console/public/analytics.js`) uses them under its figures.
 
 - They sit in a group's box, under its figures, split from them by a `line-soft` rule: never a card of their own.
-- A head row: the label in `group-label` type (uppercase, `label`), a legend when there are two series, and on the
-  right `max N` in mono, `meta`. Under the bars, the first day and `today` in mono, `meta`. No other axis or grid.
+- One chart component draws every chart on Analytics (`trendBars` in `public/analytics.js`), so they stay alike.
+- A head row: the label in `group-label` type (uppercase, `label`) and a legend whenever there is more than one series.
+- A y axis: about four ticks at round numbers (1, 2 or 5 times a power of ten) from 0, in mono `meta` to the left of the
+  plot, each on a light gridline (`line-soft`); the base line is `line`. Never a `max N` in the corner.
+- An x axis: about seven days (or weeks) labelled evenly under the bars in mono `meta`, the last one `today`.
 - One bar per day for a window of two weeks or less, else one per week or so, ending today. Bars are flat-topped with a
-  2px radius, 120px tall at most, with a gap between them.
+  2px radius, 150px tall, with a gap between them.
+- Hover or keyboard focus on a bar tints its column `slate-tint` and shows a tooltip (`ink` ground, `ground` text, 12px):
+  the day in bold, a row for each series with its swatch and count in words, and `N in all` under a rule when there are
+  several. The bar's `aria-label` says the same.
+- A chart of one measure that splits by agent is stacked by agent, in the Agent bar's colours (Claude `amber`, Codex
+  `proj-teal`, Grok Build `proj-violet`, OpenCode `proj-rose`, other `idle-dot`) with a legend: a total never takes one
+  agent's colour, which would read as that agent alone.
 - One series is `slate`. Two are stacked: Woodshed's own in `slate` at the bottom, the rest in `idle-dot` grey on top,
   with 2px of `ground` between them. Never a status colour, a project colour or orange: a bar is a count, not a state.
 - A bar's numbers are in its tooltip (`From Nov 3: 9 through Woodshed, 4 without`) and the chart's `aria-label`; the
   colour never says them alone, and the legend names each series.
 - Never two scales on one chart: a second measure is a second chart.
 
-On Analytics a chart may take a colour of its own (a day-by-day bar chart of pull requests opened, one of sessions started) (still never a status colour or orange): sessions started in `proj-violet`, pull requests
-through Woodshed in `slate` or violet and without in `proj-teal`. The page's figures carry a 2px top rule, an icon and a
+On Analytics a chart may take a colour of its own (a day-by-day bar chart of pull requests opened, one of sessions started) (still never a status colour or orange): pull requests
+through Woodshed in `slate` and without in `proj-teal`. The page's figures carry a 2px top rule, an icon and a
 value in one of the project colours; tier pills are green, amber and red; lines added are `add`, removed `del`.
 
 Also on Analytics, in the same box as the bars:
@@ -33,3 +42,7 @@ Also on Analytics, in the same box as the bars:
 - **Repo menu**: the same select (`person-pick`, a repo icon and the word Repo) before the Person menu, `All repos` first, shown only with two or more repos and listing every repo the viewer may open, a quiet one too; picking one filters every group below it, the by-repo table excepted, which keeps every repo to pick from.
 - **Show more / Show all**: outline buttons (`analytics-btn`, only on this page) under a list of more than 25 rows.
 - **Lines**: `+added` in `add` and `−removed` in `del`, in mono, bold.
+
+- **By person table**: the merge risk column is the risk bar's shape at 8px with `N low`, `N med`, `N high` in words under it
+  (`high` in `bad`, bold, when any; `meta`, or `sub` on a picked row); a dash means none of their pull requests was reviewed. A column that shows two numbers
+  with a slash says what they are in a `sub` sub-header (`meta` is under 4.5:1 on the header's `stopped`) under its name (`opened / merged`, `Woodshed / without`), and in its tooltip.
