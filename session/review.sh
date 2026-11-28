@@ -60,7 +60,10 @@ repoOfCheckout() {
 modelFor() {
   local word
   for word in ${REVIEW_MODELS:-}; do
-    if [ "${word%%=*}" = "$1" ] && [[ "${word#*=}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$ ]]; then printf '%s' "${word#*=}"; return; fi
+    [ "${word%%=*}" = "$1" ] || continue
+    # The console's own shapes (shared/agents.cjs, MODEL_NAME and PROVIDER_MODEL), `:` and the longest included.
+    if [[ "${word#*=}" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]{0,192}$ ]]; then printf '%s' "${word#*=}"; return; fi
+    say "The model picked for $1 is not a model name, so it runs on its default" >&2
   done
 }
 

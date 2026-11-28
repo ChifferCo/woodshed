@@ -576,7 +576,7 @@ test('the model each reviewer runs on is kept per person, checked, and replaced 
   assert.deepEqual(settings.reviewModels('joel'), {}, 'each person\'s own');
   assert.throws(() => settings.setReviewModels('mia', { claude: 'gpt-5' }), /Claude Code's review model must be one of opus, sonnet, haiku, fable/);
   assert.throws(() => settings.setReviewModels('mia', { codex: 'a b' }), (err) => err.shown && err.status === 400);
-  assert.throws(() => settings.setReviewModels('mia', { nobody: 'x' }), /not a reviewer/);
+  assert.throws(() => settings.setReviewModels('mia', { nobody: 'x' }), /a review model is for one of/);
   assert.throws(() => settings.setReviewModels('mia', ['claude']), /models must be an object/);
   assert.deepEqual(settings.reviewModels('mia'), { claude: 'sonnet', codex: 'gpt-5.5' }, 'a refused save changes nothing');
   settings.setReviewModels('mia', {});
@@ -584,4 +584,16 @@ test('the model each reviewer runs on is kept per person, checked, and replaced 
   settings.setReviewAgents('mia', 'codex');
   settings.setReviewModels('mia', { claude: 'haiku' });
   assert.equal(settings.reviewAgents('mia'), 'codex', 'picking models leaves who reviews alone');
+});
+
+test('a credential pasted into a review model box is refused and never logged', (t) => {
+  const lines = [];
+  t.mock.method(console, 'log', (...a) => lines.push(JSON.stringify(a)));
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: fakeSecrets() });
+  const pat = `ghp_${'a'.repeat(36)}`;
+  assert.throws(() => settings.setReviewModels('mia', { codex: pat }), (err) => err.shown && !err.message.includes('ghp_'));
+  assert.throws(() => settings.setReviewModels('mia', { codex: 'sk-ant-made-up-0123456789' }), /model must be/);
+  settings.setReviewModels('mia', { codex: 'gpt-5.5' });
+  assert.ok(lines.some((l) => l.includes('review models') && l.includes('"reviewers":["codex"]')));
+  assert.ok(!lines.join('').includes('gpt-5.5') && !lines.join('').includes(pat), 'the log names reviewers, never a model');
 });

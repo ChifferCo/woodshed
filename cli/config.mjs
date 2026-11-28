@@ -15,7 +15,9 @@ function reviewModelsBody(value) {
   const models = {};
   for (const word of String(value).split(/[\s,]+/).filter(Boolean)) {
     const at = word.indexOf('=');
-    models[at < 0 ? word : word.slice(0, at)] = at < 0 ? '' : word.slice(at + 1);
+    // A word with no model (`codex`) is a typo, not a reset: the console replaces every pick with what it is sent.
+    if (at < 1 || at === word.length - 1) return null;
+    models[word.slice(0, at)] = word.slice(at + 1);
   }
   return models;
 }
@@ -153,6 +155,9 @@ export async function configCommand({ origin, rest }, ctx) {
   if (words.length > shape) throw fail(`too many words for config ${sub}: put a value with spaces in quotes`);
   if (key !== undefined && !Object.hasOwn(CONFIG_KEYS, key)) throw refused(`not a config key. Keys: ${Object.keys(CONFIG_KEYS).join(', ')}`);
   const spec = key ? CONFIG_KEYS[key] : null;
+  if (sub === 'set' && key === 'review-models' && reviewModelsBody(value) === null) {
+    throw refused(`review-models takes default, or reviewer=model words such as claude=sonnet,codex=gpt-5.5`);
+  }
   // A switch's on or off is turned into true or false here, so it is checked here; every other value the console checks,
   // as it does the page's.
   if (sub === 'set' && spec.values?.includes('on') && !spec.values.includes(value)) {

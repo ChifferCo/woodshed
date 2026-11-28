@@ -2784,6 +2784,8 @@ export function createHandler({
     try {
       // Either half alone: a body with only `models` leaves who reviews as it is, and one with only `choice` leaves the models.
       const hasModels = body && typeof body === 'object' && Object.hasOwn(body, 'models');
+      // Both halves are checked before either is kept, so a refused body changes nothing.
+      if (hasModels) userSettings.checkReviewModels(body.models);
       if (!hasModels || (body && Object.hasOwn(body, 'choice'))) userSettings.setReviewAgents(login, body?.choice ?? null);
       if (hasModels) userSettings.setReviewModels(login, body.models);
     } catch (err) {

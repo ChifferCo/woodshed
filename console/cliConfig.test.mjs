@@ -117,6 +117,9 @@ test('a config write runs the page\'s own route and checks, and answers with the
   assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { choice: 'codex' } })).body['review-models'], 'claude=sonnet codex=gpt-5.5', 'and a choice alone leaves the models');
   assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { models: { claude: 'gpt-5' } } })).status, 400);
   assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { models: {} } })).body['review-models'], 'default');
+  const both = await c.call('/api/my/reviews', { method: 'POST', body: { choice: 'none', models: { claude: 'gpt-5' } } });
+  assert.equal(both.status, 400);
+  assert.equal(c.userSettings.reviewAgents('mia-dev'), 'codex', 'a refused body changes neither half');
   await c.call('/api/my/reviews', { method: 'POST', body: { choice: null } });
   assert.equal((await c.call('/api/my/claude-token/shared', { method: 'POST', body: { on: false } })).body['claude-token-shared'], 'off');
   const noSignIn = await c.call('/api/my/codex-auth/reviews', { method: 'POST', body: { on: true } });

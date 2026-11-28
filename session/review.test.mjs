@@ -362,7 +362,7 @@ test('OpenCode alone on the author\'s OpenAI key, and none at all with no provid
 
 // Fakes that keep the arguments they were run with, and approve, for the model picks.
 const LOGGING = (prompt) => `#!/bin/bash
-printf '%s\\n' "$(basename "$0") $(printf '%s ' "$@" | cut -c1-60)" >> "$ARGS_LOG"
+line=$(basename "$0"); for a in "$@"; do [ "\${#a}" -lt 80 ] && line="$line $a" || line="$line <prompt>"; done; printf '%s \\n' "$line" >> "$ARGS_LOG"
 prompt=${prompt}
 dir=$(printf '%s' "$prompt" | grep -o '[^ \`]*/context\\.md' | head -1 | sed 's#/context\\.md$##')
 echo APPROVE > "$dir/verdict.txt"; echo ok > "$dir/summary.md"; printf 'LOW\\nDocs.\\n' > "$dir/merge-risk.md"
@@ -378,12 +378,12 @@ test('the models an author picked are passed to each reviewer, and a reviewer wi
   const codex = LOGGING('${@: -1}');
   const grok = LOGGING('$2');
   const opencode = LOGGING('${@: -1}');
-  await runReview(t, { agents: 'claude codex grok opencode', via: 'key', provider: 'openai', claude, codex, grok, opencode, models: 'claude=sonnet codex=gpt-5.5 opencode=openai/gpt-5' });
+  await runReview(t, { agents: 'claude codex grok opencode', via: 'key', provider: 'openai', claude, codex, grok, opencode, models: 'claude=sonnet codex=gpt-5.5 grok=grok-4:beta opencode=openai/ft:gpt-5:acme' });
   const seen = fs.readFileSync(log, 'utf8');
-  assert.match(seen, /^claude --model sonnet -p /m);
+  assert.match(seen, /^claude --model sonnet -p <prompt> /m);
   assert.match(seen, /^codex exec --model gpt-5\.5 /m);
-  assert.doesNotMatch(seen.split('\n').find((l) => l.startsWith('grok')), /--model/, 'grok had no pick');
-  assert.match(seen, /^opencode run --pure --auto --model openai\/gpt-5 /m);
+  assert.match(seen, /^grok -p <prompt> --model grok-4:beta /m, 'the exact model, colon and all');
+  assert.match(seen, /^opencode run --pure --auto --model openai\/ft:gpt-5:acme /m);
 });
 
 test('with no picks Claude Code runs on opus as before, and a pick that is not a model name, or not OpenCode\'s provider, is ignored', async (t) => {

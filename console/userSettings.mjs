@@ -619,20 +619,27 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
    * @throws {Error}  shown on the page, for a reviewer that does not review or a model it does not take
    */
   function setReviewModels(login, models) {
+    const picks = checkReviewModels(models);
+    const saved = agents.reviewModelsOf(picks);
+    touch(login, { reviewModels: saved });
+    // Which reviewers have a pick, never the values: a model box is free text.
+    console.log('userSettings: review models', { login, reviewers: Object.keys(saved) });
+  }
+
+  /** The picks `models` holds, checked and with the empty ones left out; throws as setReviewModels does, changing nothing. */
+  function checkReviewModels(models) {
     if (!models || typeof models !== 'object' || Array.isArray(models)) throw Object.assign(new Error('models must be an object of reviewer to model'), { shown: true, status: 400 });
     const picks = {};
     for (const [id, model] of Object.entries(models)) {
       if (model === '' || model === null) continue;
-      if (!agents.REVIEW_AGENT_IDS.includes(id)) throw Object.assign(new Error(`${id} is not a reviewer (${agents.REVIEW_AGENT_IDS.join(', ')})`), { shown: true, status: 400 });
+      if (!agents.REVIEW_AGENT_IDS.includes(id)) throw Object.assign(new Error(`a review model is for one of ${agents.REVIEW_AGENT_IDS.join(', ')}`), { shown: true, status: 400 });
       if (!agents.reviewModelOk(id, model)) {
         const takes = id === 'claude' ? `one of ${agents.REVIEW_CLAUDE_MODELS.join(', ')}` : `a model name such as ${agents.agent(id).modelHint || 'gpt-5.5'}`;
         throw Object.assign(new Error(`${agents.agent(id).product}'s review model must be ${takes}`), { shown: true, status: 400 });
       }
       picks[id] = model;
     }
-    const saved = agents.reviewModelsOf(picks);
-    touch(login, { reviewModels: saved });
-    console.log('userSettings: review models', { login, models: agents.reviewModelsText(saved) || 'every default' });
+    return picks;
   }
 
   /** @returns {Record<string, string>}  the person's own picks, none for a reviewer left to its default */
@@ -711,7 +718,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, agentAuthTurn, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setOwnAgentForReviews, usesOwnAgentForReviews, setReviewAgents, reviewAgents, setReviewModels, reviewModels, usesExpandedReviewDefault, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, agentAuthTurn, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setOwnAgentForReviews, usesOwnAgentForReviews, setReviewAgents, reviewAgents, setReviewModels, checkReviewModels, reviewModels, usesExpandedReviewDefault, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }
