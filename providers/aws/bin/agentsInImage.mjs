@@ -14,6 +14,12 @@
 //
 //   node woodshed/providers/aws/bin/agentsInImage.mjs <image>
 //
+// With IN_IMAGE_ANTIGRAVITY=1 it also starts an Antigravity CLI beside the session's own, on the team's Gemini key: the
+// console's real Gemini proxy (console/geminiProxy.mjs) answers /gemini with a made-up team key, in front of a recording
+// stand-in for Google, and the stand-in console allows the agent as the real one does once statusd has started it
+// (fleet.allowAgent). It then checks that the agent is listed, that Google's stand-in saw only calls with the team's key and
+// no Authorization header, and that the stand-in's answer is in the agent's transcript.
+//
 // With IN_IMAGE_TERMINAL=herdr the owner's Agent terminal is Herdr (My settings): the session's agent runs in a Herdr
 // terminal, and so do the agents beside it, which the check then looks for with `hc ls` rather than `tmux ls`.
 //
@@ -36,6 +42,7 @@ import { fileURLToPath } from 'node:url';
 import { sessionOverrides } from '../ecsLauncher.mjs';
 import { createFleet } from '../../../console/fleet.mjs';
 import { createSessionApi } from '../../../console/sessionApi.mjs';
+import { createGeminiProxy } from '../../../console/geminiProxy.mjs';
 import { envValue } from '../../../shared/envNames.mjs';
 import { taskDefinitionEnv } from './askInImageEnv.mjs';
 
@@ -52,6 +59,23 @@ const WOODSHED = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '
 // The agent's first message, which its pane shows: how the TUI's websocket tells it from the session's own.
 const MARK = 'agents-in-image-marker';
 const TERMINAL = process.env.IN_IMAGE_TERMINAL === 'herdr' ? 'herdr' : 'tmux';
+// Antigravity CLI beside the session's own, on the team key (see the top).
+const ANTIGRAVITY = process.env.IN_IMAGE_ANTIGRAVITY === '1';
+const TEAM_KEY_VALUE = 'AIza-agentsInImage-not-a-real-team-key';
+const GEMINI_ANSWER = 'Hello from the agentsInImage stand-in for Gemini.';
+const googleSeen = [];
+function standInGoogle() {
+  const stand = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      googleSeen.push({ path: req.url.split('?')[0], teamKey: req.headers['x-goog-api-key'] === TEAM_KEY_VALUE, hasAuthorization: Boolean(req.headers.authorization) });
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end(`data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: GEMINI_ANSWER }] }, finishReason: 'STOP', index: 0 }], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 6, totalTokenCount: 11 } })}\r\n\r\n`);
+    });
+  });
+  return new Promise((resolve) => stand.listen(0, '127.0.0.1', () => resolve(stand)));
+}
+const google = ANTIGRAVITY ? await standInGoogle() : null;
 
 async function privateEnv() {
   const started = [];
@@ -69,10 +93,12 @@ async function privateEnv() {
     sessionEnv: {}, ghToken: null, pollMs: 30_000, fallbackPollMs: 300_000, maxPrivatePerPerson: 3,
   };
   const fleet = createFleet({ config, store: { state: { sessions: [], github: null }, save() {} }, launcher, github: {}, statusd: async () => ({}) });
-  await fleet.createSession({
+  const session = await fleet.createSession({
     kind: 'task', number: null, title: 'agentsInImage', startedBy: 'in-image', trigger: 'my-woodshed', owner: 'in-image',
     prompt: 'Say hello, then stop.', options: { agent: 'claude', model: '', effort: '', permissionMode: 'auto' },
   });
+  // What the console does once statusd has started an Antigravity agent, which lets the session use the team's key.
+  if (ANTIGRAVITY) fleet.allowAgent(session, 'antigravity');
   return { fleet, overrides: sessionOverrides(started[0]) };
 }
 
@@ -80,6 +106,7 @@ function serve(fleet) {
   const ghToken = process.env.IN_IMAGE_GH_TOKEN || 'in-image-no-github-token';
   const handle = createSessionApi({
     fleet,
+    ...(google ? { gemini: createGeminiProxy({ teamKey: TEAM_KEY_VALUE, upstream: `http://127.0.0.1:${google.address().port}` }) } : {}),
     tokens: { token: async () => ({ token: ghToken, expiresAt: Date.now() + 3_600_000 }) },
     userSettings: {
       claudeToken: async () => 'in-image-dummy-token',
@@ -123,11 +150,16 @@ function tui(query) {
   });
 }
 const out = {};
-out.started = [await call('POST', '/agents', { agent: 'claude', model: 'sonnet', prompt: '${MARK}' }), await call('POST', '/agents', { agent: 'codex', permissionMode: 'plan' })]
+out.started = [await call('POST', '/agents', { agent: 'claude', model: 'sonnet', prompt: '${MARK}' }), await call('POST', '/agents', { agent: 'codex', permissionMode: 'plan' })${ANTIGRAVITY ? ", await call('POST', '/agents', { agent: 'antigravity', permissionMode: 'default', prompt: 'Say hello, then stop.' })" : ''}]
   .map((r) => ({ status: r.status, id: r.body.agent?.id ?? null, agent: r.body.agent?.agent ?? null, error: r.body.error ?? null }));
 await new Promise((r) => setTimeout(r, 15000));
 out.listed = (await call('GET', '/agents')).body.agents?.map((a) => ({ id: a.id, agent: a.agent, model: a.model, permissionMode: a.permissionMode, state: a.state }));
 out.statusAgents = ((await call('GET', '/status')).body.agents ?? []).length;
+${ANTIGRAVITY ? `const agy = out.listed?.find((a) => a.agent === 'antigravity');
+if (agy) {
+  const transcript = await call('GET', '/agents/' + agy.id + '/transcript');
+  out.agy = { id: agy.id, state: agy.state, answered: JSON.stringify(transcript.body).includes(${JSON.stringify(GEMINI_ANSWER)}) };
+}` : ''}
 const agentScreen = await tui('?arg=agent-2');
 const ownScreen = await tui('');
 out.tuiAgent = { bytes: agentScreen.length, hasMark: agentScreen.includes('${MARK}') };
@@ -183,15 +215,18 @@ try {
   const out = JSON.parse(checked.split('\n').at(-1));
   const passed = /statusd: Codex agent beside claude set up \{ own: false \}/.test(log)
     && /\/tmp\/woodshed-agent-claude-flags: there/.test(files) && /\/tmp\/woodshed-codex-ready: there/.test(files) && /woodshed-attach/.test(files)
-    && out.started.every((s) => s.status === 200) && out.listed?.length === 2 && out.statusAgents === 2
+    && out.started.every((s) => s.status === 200) && out.listed?.length === (ANTIGRAVITY ? 3 : 2) && out.statusAgents === (ANTIGRAVITY ? 3 : 2)
     && /^agent-2:/m.test(tmux) && /^agent-3:/m.test(tmux) && /^claude:/m.test(tmux)
+    && (!ANTIGRAVITY || (/^agent-4:/m.test(tmux) && out.agy?.answered && googleSeen.length > 0 && googleSeen.every((c) => c.teamKey && !c.hasAuthorization)))
     && new RegExp(`Claude started .*terminal: ${TERMINAL}\\)`).test(log)
     && out.tuiAgent.hasMark && !out.tuiOwn.hasMark && out.tuiOwn.bytes > 0;
-  console.log(passed ? '--- PASSED: the start wrote what the agents need, statusd started a claude and a codex beside its own, and the TUI attaches to each'
+  if (ANTIGRAVITY) console.log(`--- the stand-in for Google saw ${googleSeen.length} call(s): ${googleSeen.map((c) => `${c.path} (team key: ${c.teamKey}, authorization header: ${c.hasAuthorization})`).join(', ') || 'none'}`);
+  console.log(passed ? `--- PASSED: the start wrote what the agents need, statusd started a claude and a codex${ANTIGRAVITY ? ' and an Antigravity CLI on the team key' : ''} beside its own, and the TUI attaches to each`
     : '--- FAILED: see above');
   process.exitCode = passed ? 0 : 1;
   console.log(`docker rm -f ${CONTAINER} when done`);
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
   server.close();
+  google?.close();
 }
