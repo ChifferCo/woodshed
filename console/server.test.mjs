@@ -3274,10 +3274,30 @@ test('an Antigravity agent beside claude is started with its owner\'s login, or 
   assert.equal(asked.at(-1).body.antigravityAuth, undefined);
   mine.startupCodeRuns = null;
   login = JSON.stringify({ token: { access_token: 'ya29.test' } });
+  // The window before the first report: the record says nothing yet, but statusd, asked now, says it runs. Nothing is sent.
+  let fresh = true;
+  fleet.readStartupCode = async (session) => { if (fresh instanceof Error) throw fresh; if (fresh) session.startupCodeRuns = true; return fresh; };
+  const windowed = await start('0a1b2c3d');
+  assert.equal(windowed.status, 409);
+  assert.match((await windowed.json()).error, /could read the owner's Google login: it is not sent/);
+  assert.equal(asked.length, before + 1, 'nothing was sent in the window');
+  assert.equal(mine.startupCodeRuns, true, 'and the console keeps what statusd said');
+  mine.startupCodeRuns = null;
+  // A session that cannot be asked is sent nothing either.
+  fresh = new Error('statusd did not answer');
+  const unasked = await start('0a1b2c3d');
+  assert.equal(unasked.status, 502);
+  assert.match((await unasked.json()).error, /no sign-in of yours was sent/);
+  assert.equal(asked.length, before + 1);
+  // And with statusd saying no, it goes, with the login.
+  fresh = false;
+  assert.equal((await start('0a1b2c3d')).status, 200);
+  assert.equal(asked.at(-1).body.antigravityAuth, login);
+  delete fleet.readStartupCode;
   // A lockdown gets nothing, and a model that is not a name Antigravity takes is refused before anything is read.
   assert.equal((await start('2c3d4e5f')).status, 409);
   assert.equal((await start('0a1b2c3d', { agent: 'antigravity', model: 'x; rm -rf /' })).status, 400);
-  assert.equal(asked.length, 4);
+  assert.equal(asked.length, 5);
 });
 
 test('a Codex agent beside claude is started with its owner\'s sign-in, and allowed the team key only once it started', async (t) => {

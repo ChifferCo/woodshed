@@ -722,46 +722,75 @@ test('a private Antigravity session runs on its owner\'s own sign-in when they s
   assert.ok(!said.includes('ya29') && !said.includes('1//secret'), 'never the sign-in');
 });
 
-test('an Antigravity run that started on the team key is not handed a login saved after, which the repo\'s code could ask for with the session token', async (t) => {
+test('a run is handed only the personal credentials its first answer handed out: none saved since, which the repo\'s code could ask for with the session token', async (t) => {
   const logs = [];
   t.mock.method(console, 'log', (...a) => { logs.push(a); });
   t.mock.method(console, 'warn', (...a) => { logs.push(a); });
   const sessions = [
-    { id: 'aaaaaaaa', status: 'running', token: 'late-token', owner: 'joel', options: { agent: 'antigravity' } },
-    { id: 'bbbbbbbb', status: 'running', token: 'own-token', owner: 'mia', options: { agent: 'antigravity' } },
+    { id: 'aaaaaaaa', status: 'running', token: 'agy-token', owner: 'joel', options: { agent: 'antigravity' } },
+    { id: 'bbbbbbbb', status: 'running', token: 'agy-own-token', owner: 'mia', options: { agent: 'antigravity' } },
+    { id: 'cccccccc', status: 'running', token: 'codex-token', owner: 'joel', options: { agent: 'codex' } },
+    { id: 'dddddddd', status: 'running', token: 'claude-token', owner: 'ana', options: { agent: 'claude' } },
+    { id: 'eeeeeeee', status: 'running', token: 'late-db-token', owner: 'joel', options: { agent: 'antigravity' }, ownDatabases: true },
   ];
-  const login = JSON.stringify({ token: { access_token: 'ya29.dummy-not-real', refresh_token: '1//dummy-not-real' } });
-  const saved = new Set(['mia']);
+  const google = JSON.stringify({ token: { access_token: 'ya29.dummy-not-real', refresh_token: '1//dummy-not-real' } });
+  const codexLogin = '{"tokens":{"refresh_token":"dummy-codex-not-real"}}';
+  const saved = { google: new Set(['mia']), codex: new Set(), claude: new Set(['ana']) };
+  let copying = true;
   const userSettings = {
-    claudeToken: async () => { throw new Error('never asked for a Claude token'); },
-    agentAuth: async (who) => (saved.has(who) ? login : null),
+    claudeToken: async (who) => (saved.claude.has(who) ? 'sk-ant-oat01-dummy-not-real' : null),
+    codexAuth: async (who) => (saved.codex.has(who) ? codexLogin : null),
+    agentAuth: async (who) => (saved.google.has(who) ? google : null),
     ownFiles: async () => ({}),
     gitIdentity: () => null,
   };
-  // As the fleet keeps it: the first answer of a run decides, on the session's own record.
-  const fleet = { sessions: () => sessions, rememberAgentCredential: (session, how) => { session.agentCredential ??= how; return session.agentCredential; } };
-  const handle = createSessionApi({ fleet, tokens: { token: async () => ({}) }, userSettings });
+  const databases = { available: true, sessionDatabase: async () => (copying ? { status: 'working' } : { status: 'ready', database: { name: 'd' } }), credentials: async () => ({ name: 'd' }) };
+  // As the fleet keeps it: the first answer of a run stands, on the session's own record.
+  const fleet = { sessions: () => sessions, rememberCredentials: (session, given) => (session.credentialsGiven ??= given) };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({}) }, userSettings, databases });
   const server = http.createServer((req, res) => { handle(req, res); });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => server.close());
   const { port } = server.address();
   const ask = (token) => request(port, { path: '/settings', authorization: `Bearer ${token}` });
+  const said = () => logs.map((a) => a.join(' ')).join('\n');
+  // These sessions have no databases of their own to wait for, except the last.
+  databases.available = false;
 
-  // Joel has no login when his run starts: it is on the team key.
-  assert.equal('agentAuth' in (await ask('late-token')).body, false);
-  // He saves one while it runs. The repo's code in the container asks with the session's token: it gets no login.
-  saved.add('joel');
-  const later = await ask('late-token');
+  // An Antigravity run on the team key: a login saved after is not handed to it.
+  assert.equal('agentAuth' in (await ask('agy-token')).body, false);
+  saved.google.add('joel');
+  const later = await ask('agy-token');
   assert.equal(later.status, 200);
   assert.equal('agentAuth' in later.body, false, 'not handed to a run that started on the team key');
   assert.ok(!JSON.stringify(later).includes('1//dummy-not-real'));
-  assert.match(logs.map((a) => a.join(' ')).join('\n'), /sign-in not handed out, this run started on the team key/);
-  // Mia's run started on her login: it gets it again if it asks again (a retried start).
-  assert.equal((await ask('own-token')).body.agentAuth, login);
-  assert.equal((await ask('own-token')).body.agentAuth, login);
+  assert.match(said(), /a agent sign-in saved since is not handed out, this run started without it/);
+  // A Codex run on the team key, then a Codex sign-in saved: the same.
+  assert.equal((await ask('codex-token')).body.codexAuth, null, 'no Codex sign-in saved at the start: the run is on the team key');
+  saved.codex.add('joel');
+  const codex = await ask('codex-token');
+  assert.equal(codex.body.codexAuth, null, 'a Codex sign-in saved after is not handed to a run on the team key');
+  assert.ok(!JSON.stringify(codex).includes('dummy-codex-not-real'));
+  // A run that started with a Claude token has it again if it asks again, and a run that holds none is not given one.
+  assert.equal((await ask('claude-token')).body.claudeToken, 'sk-ant-oat01-dummy-not-real');
+  assert.equal((await ask('claude-token')).body.claudeToken, 'sk-ant-oat01-dummy-not-real');
+  // Mia's run started on her login: it gets it again if a retried start asks.
+  assert.equal((await ask('agy-own-token')).body.agentAuth, google);
+  assert.equal((await ask('agy-own-token')).body.agentAuth, google);
   // A new run of the same session is a new decision (fleet.resumePrivate clears it).
-  sessions[0].agentCredential = null;
-  assert.equal((await ask('late-token')).body.agentAuth, login);
+  sessions[0].credentialsGiven = null;
+  assert.equal((await ask('agy-token')).body.agentAuth, google);
+
+  // An answer that failed decides nothing: its databases are still being copied, the owner saves a login during the retry, and
+  // the run that finally starts gets it, as it would have had it asked later.
+  databases.available = true;
+  saved.google.delete('joel');
+  assert.equal((await ask('late-db-token')).status, 503);
+  assert.equal(sessions[4].credentialsGiven, undefined, 'a 503 recorded nothing');
+  saved.google.add('joel');
+  copying = false;
+  assert.equal((await ask('late-db-token')).body.agentAuth, google);
+  assert.ok(!said().includes('1//dummy-not-real'), 'never the sign-in in a log');
 });
 
 test('a private Grok Build or OpenCode session runs on its owner\'s own sign-in alone, and can keep a refreshed login', async (t) => {

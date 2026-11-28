@@ -2389,9 +2389,24 @@ export function createHandler({
       // `startupCodeRuns`): no personal sign-in of the owner's is sent into it, since the code could watch it arrive at statusd or
       // read it where it lands. A team-key agent carries none and starts.
       const startupCodeRefusal = (what) => reply(res, 409, { error: `Antigravity CLI is running in this session on a repo that ships startup code, which runs by itself and could read ${what}: it is not sent. Start a new session to use it` });
+      // Asked of the session's statusd now, not read from the last poll, which may be seconds old: a credential is sent only
+      // after this says no. A session that cannot be asked is sent nothing.
+      const startupCodeNow = async () => {
+        if (session.startupCodeRuns) return true;
+        return fleet.readStartupCode ? fleet.readStartupCode(session) : false;
+      };
+      const startupCodeUnknown = () => reply(res, 502, { error: 'the console could not ask the session whether startup code of the repo\'s is running, so no sign-in of yours was sent: try again' });
       const needsClaudeToken = picked.agent === 'claude' && !primary.teamCredential;
       let claudeToken = null;
-      if (needsClaudeToken && session.startupCodeRuns) return startupCodeRefusal('the owner\'s Claude token');
+      if (needsClaudeToken) {
+        let held;
+        try {
+          held = await startupCodeNow();
+        } catch {
+          return startupCodeUnknown();
+        }
+        if (held) return startupCodeRefusal('the owner\'s Claude token');
+      }
       if (needsClaudeToken) {
         try {
           claudeToken = await userSettings?.claudeToken(session.owner);
@@ -2416,7 +2431,17 @@ export function createHandler({
         }
         // Asked again after the read: a lockdown that started meanwhile gets no sign-in sent into the session.
         if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
-        if (codexAuth && session.startupCodeRuns) return startupCodeRefusal('the owner\'s Codex sign-in');
+        if (codexAuth) {
+          let held;
+          try {
+            held = await startupCodeNow();
+          } catch {
+            return startupCodeUnknown();
+          }
+          if (held) return startupCodeRefusal('the owner\'s Codex sign-in');
+          // Asked again after the read: a lockdown that started while statusd was asked gets no sign-in sent into the session.
+          if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
+        }
       }
       // An extra Antigravity agent runs on its owner's own Google login, handed to the session with the start itself, as
       // Codex's is; with none, on the team's Gemini key through the console's proxy (geminiProxy.mjs), which the session
@@ -2430,7 +2455,16 @@ export function createHandler({
           console.warn('console: Antigravity sign-in not read for an agent', { id: session.id, message: err?.message });
           return reply(res, 502, { error: 'the console could not read your Antigravity sign-in: try again' });
         }
-        if (antigravityAuth && session.startupCodeRuns) return startupCodeRefusal('the owner\'s Google login');
+        if (antigravityAuth) {
+          let held;
+          try {
+            held = await startupCodeNow();
+          } catch {
+            return startupCodeUnknown();
+          }
+          if (held) return startupCodeRefusal('the owner\'s Google login');
+          if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
+        }
         if (!antigravityAuth && !(await readTeamGeminiKey())) return reply(res, 409, { error: 'save your Antigravity sign-in on My settings first: the console has no Gemini key' });
         // Asked again after the read: a lockdown that started meanwhile gets no sign-in sent into the session.
         if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });

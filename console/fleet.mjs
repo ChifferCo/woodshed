@@ -2107,15 +2107,32 @@ export function createFleet({
    * @returns {boolean}  whether it was allowed now, rather than before
    */
   /**
-   * Which credential an Antigravity session's first /settings answer gave it, `own` or `key`, kept for the run: the first
-   * answer decides. Asked again, a session that started on the team's key is not handed a login saved since, which the
-   * repo's code in the container could ask for with the session's token (sessionApi.mjs settingsReply).
-   * @returns {'own'|'key'}  the one now in force
+   * Which personal credentials (`claude`, `codex`, `agent`) a run's first successful /settings answer handed out, kept for the
+   * run: the first answer stands. Asked again, a run is handed only those, so a credential the owner saved after the run
+   * started, which the repo's code in the container could ask for with the session's token, never reaches it
+   * (sessionApi.mjs settingsReply). A Resume starts the decision again.
+   * @param {object} session
+   * @param {{claude: boolean, codex: boolean, agent: boolean}} given
+   * @returns {{claude: boolean, codex: boolean, agent: boolean}}  the one in force
    */
-  function rememberAgentCredential(session, how) {
-    if (session.agentCredential === 'own' || session.agentCredential === 'key') return session.agentCredential;
-    update(session, { agentCredential: how });
-    return how;
+  function rememberCredentials(session, given) {
+    if (session.credentialsGiven) return session.credentialsGiven;
+    update(session, { credentialsGiven: given });
+    return given;
+  }
+
+  /**
+   * Whether startup code of the repo's runs in the session, asked of its statusd now rather than read from the last poll, which
+   * may be seconds old: the owner's own sign-in is sent into a session only after this says no (server.mjs). Kept on the record
+   * once true. Throws when statusd could not be asked: nothing personal is sent then either.
+   * @returns {Promise<boolean>}
+   */
+  async function readStartupCode(session) {
+    if (session.startupCodeRuns) return true;
+    const fresh = await statusd(session, 'GET', '/status', { timeoutMs: 8000 });
+    if (fresh?.startupCodeRuns !== true) return false;
+    update(session, { startupCodeRuns: true });
+    return true;
   }
 
   function allowAgent(session, agent) {
@@ -2296,7 +2313,7 @@ export function createFleet({
       latestImage: latestImage ? true : null,
       // A Resume starts its own agent alone: what the agents of the last run were allowed (a Codex one's sign-in) is
       // not this run's, and the last run's list is not either.
-      extraAgents: null, agents: null, agentCredential: null, startupCodeRuns: null,
+      extraAgents: null, agents: null, credentialsGiven: null, startupCodeRuns: null,
       // Its pull request's watch ended when it stopped: it is watched again once statusd reports it.
       announcedPrUrl: null,
       // A tainted session starts locked down, its entrypoint told so (WOODSHED_TAINTED): its statusd needs no notice.
@@ -3503,7 +3520,7 @@ export function createFleet({
 
   return {
     noteMessage, noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
-    onChange, soon, checkLive, createSession, conversationSaved, forgetConversations, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, rememberAgentCredential, extend, setLimits, limitsOf, pauseOf, resumePrivate, keptMachine, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    onChange, soon, checkLive, createSession, conversationSaved, forgetConversations, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, rememberCredentials, readStartupCode, extend, setLimits, limitsOf, pauseOf, resumePrivate, keptMachine, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaLog, reviewLog, qaVideo, qaPoster, publicQaVideo, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

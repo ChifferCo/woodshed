@@ -393,20 +393,21 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
   let agentAuth = own && userSettings
     ? await (userSettings.agentAuthTurn ? userSettings.agentAuthTurn(session.owner, own.id, ({ read }) => read()) : userSettings.agentAuth(session.owner, own.id))
     : null;
-  // The first answer of a run decides which credential an agent with both runs on. A session that started on the team's key
-  // is not handed a login saved after: the repo's code in the container holds the session's token and could ask for it.
-  if (own?.signIn.optional && session.options?.agent === own.id) {
-    const decided = fleet?.rememberAgentCredential ? fleet.rememberAgentCredential(session, agentAuth ? 'own' : 'key') : (agentAuth ? 'own' : 'key');
-    if (decided === 'key' && agentAuth) {
-      console.warn(`sessionApi: ${own.product} sign-in not handed out, this run started on the team key`, { sessionId: session.id, owner: session.owner, agent: own.id });
-      agentAuth = null;
-    }
-  }
+  // The first answer of a run decides which personal credentials the run holds. A run that started on the team's key (an
+  // Antigravity CLI, a Codex) or without a Claude token is not handed one saved after: the repo's code in the container holds
+  // the session's token and could ask for it. Only an answer that succeeded decides (it is recorded below, with the reply).
+  const prior = session.credentialsGiven ?? null;
+  const withheld = (what, value) => {
+    if (!prior || prior[what] || !value) return value;
+    console.warn(`sessionApi: a ${what} sign-in saved since is not handed out, this run started without it`, { sessionId: session.id, owner: session.owner });
+    return null;
+  };
+  agentAuth = withheld('agent', agentAuth);
   if (own && !agentAuth && !own.signIn.optional) {
     console.warn(`sessionApi: no ${own.product} sign-in for the owner`, { sessionId: session.id, owner: session.owner, agent: own.id });
     return reply(res, 409, { error: `@${session.owner} has no ${own.product} sign-in saved on My settings` });
   }
-  const claudeToken = userSettings && !own ? await userSettings.claudeToken(session.owner) : null;
+  const claudeToken = withheld('claude', userSettings && !own ? await userSettings.claudeToken(session.owner) : null);
   if (!claudeToken && !codex && !own) {
     console.warn('sessionApi: no Claude token for the owner', { sessionId: session.id, owner: session.owner });
     return reply(res, 409, { error: `@${session.owner} has no Claude token saved on My settings` });
@@ -436,12 +437,14 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
     terminal: userSettings.terminal?.(session.owner) ?? 'tmux',
   });
   // A Codex session runs on its owner's own sign-in when they saved one, and otherwise on the team's key through /openai.
-  const codexAuth = codex ? await userSettings.codexAuth(session.owner) : null;
+  const codexAuth = codex ? withheld('codex', await userSettings.codexAuth(session.owner)) : null;
   if (codex) console.log('sessionApi: Codex sign-in decided', { sessionId: session.id, owner: session.owner, own: Boolean(codexAuth) });
   // What the owner picked on My settings for their agent's terminal (session/agentPane.mjs): a private session's alone.
   const terminal = userSettings.terminal?.(session.owner) ?? 'tmux';
   if (own && agentAuth) console.log(`sessionApi: ${own.product} sign-in handed out`, { sessionId: session.id, owner: session.owner, agent: own.id, apiKey: !agentAuth.startsWith('{') });
   else if (own) console.log(`sessionApi: ${own.product} runs on the team key, the owner saved no sign-in`, { sessionId: session.id, owner: session.owner, agent: own.id });
+  // What this answer hands out is what the run holds from now on (fleet.rememberCredentials: the first one stands).
+  fleet?.rememberCredentials?.(session, { claude: Boolean(claudeToken), codex: Boolean(codexAuth), agent: Boolean(agentAuth) });
   return reply(res, 200, { files, ownFiles, git: userSettings.gitIdentity(session.owner), database, claudeToken, terminal, ...(codex ? { codexAuth } : {}), ...(agentAuth ? { agentAuth } : {}) });
 }
 
