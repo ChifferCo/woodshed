@@ -972,8 +972,9 @@ card is offered with one of them (`/api/my`'s `agents.antigravity`):
   a `cachedContent`, a file search store) is refused, since a model call that names one by its resource name would read it
   under the team's project whoever stored it. A session that has seen production data reaches Google only through it, and
   its calls are also refused when they ask Google to reach out (grounding with Google Search, the URL context tool), as
-  the Anthropic proxy refuses Anthropic's. A lockdown cuts the calls on their way
-  (`geminiProxy: calls cut at the lockdown`).
+  the Anthropic proxy refuses Anthropic's. A lockdown cuts a call from the moment it is authorized, a body still arriving
+  included (`geminiProxy: calls cut at the lockdown`), and each call's access and lock state are asked again with the whole
+  call in hand, just before it goes: nothing of a call that was on its way when the lockdown began reaches Google.
 - **The owner's own Google login**, their Antigravity plan (Free, Pro or Ultra), saved on My settings as
   `users/<login>/antigravity-auth` and handed to their private sessions in `/settings`'s `agentAuth` when they saved one.
   It is agy's own file, `~/.gemini/antigravity-cli/antigravity-oauth-token` (a laptop writes it only after `AGY_CLI_FORCE_FILE_TOKEN_STORAGE=true agy`;

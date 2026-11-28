@@ -81,10 +81,6 @@ const STORE_TOOLS = new Set(['fileSearch', 'file_search']);
  */
 export function storedResource(body) {
   if (!body || typeof body !== 'object') return null;
-  for (const tool of Array.isArray(body.tools) ? body.tools : []) {
-    const name = Object.keys(tool ?? {}).find((k) => STORE_TOOLS.has(k));
-    if (name) return 'a file search store';
-  }
   return storedIn(body);
 }
 
@@ -97,6 +93,8 @@ function storedIn(value, depth = 0) {
     }
     return null;
   }
+  // A tool of a file search store, wherever the call carries its tools: a count wraps a whole request in `generateContentRequest`.
+  if ([...STORE_TOOLS].some((name) => value[name] !== undefined)) return 'a file search store';
   if (value.cachedContent !== undefined || value.cached_content !== undefined) return 'cached content';
   if (value.fileData !== undefined || value.file_data !== undefined) return 'a file given by its name or address';
   for (const item of Object.values(value)) {
@@ -110,11 +108,23 @@ function storedIn(value, depth = 0) {
  * @param {unknown} body  a call's JSON
  * @returns {string|null}  what in it would have Google reach out for the session, or null
  */
-export function serverSideReach(body) {
-  if (!body || typeof body !== 'object') return null;
+export function serverSideReach(body, depth = 0) {
+  if (!body || typeof body !== 'object' || depth > 64) return null;
+  if (Array.isArray(body)) {
+    for (const item of body) {
+      const found = serverSideReach(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  // Tools anywhere in the call: a count wraps a whole request in `generateContentRequest`.
   for (const tool of Array.isArray(body.tools) ? body.tools : []) {
     const name = Object.keys(tool ?? {}).find((k) => SERVER_REACH_TOOLS.has(k));
     if (name) return `the ${name} tool`;
+  }
+  for (const item of Object.values(body)) {
+    const found = serverSideReach(item, depth + 1);
+    if (found) return found;
   }
   return null;
 }
@@ -166,7 +176,7 @@ export function createGeminiProxy({ secrets = null, teamKey = null, upstream = '
     return teamRead;
   }
 
-  function forward(req, res, { path, key, sessionId, body = null }) {
+  function forward(req, res, { path, key, call, body = null }) {
     const transport = target.protocol === 'http:' ? http : https;
     const headers = {};
     for (const [name, value] of Object.entries(req.headers)) if (!DROPPED_HEADERS.has(name)) headers[name] = value;
@@ -188,15 +198,24 @@ export function createGeminiProxy({ secrets = null, teamKey = null, upstream = '
     });
     // agy cancels a turn by closing its request: the call to Google goes with it.
     res.on('close', () => { if (!res.writableFinished) out.destroy(); });
+    call.out = out;
+    if (body) out.end(body);
+    else req.pipe(out);
+  }
+
+  /**
+   * A call, tracked from the moment it is authorized, before its body is read: a lockdown cuts it whatever stage it is at,
+   * a body still arriving included, and `cut` marks it so nothing is forwarded after.
+   */
+  function track(req, res, sessionId) {
+    const call = { req, res, out: null, cut: false };
     if (!open.has(sessionId)) open.set(sessionId, new Set());
-    const call = { req, res, out };
     open.get(sessionId).add(call);
     res.on('close', () => {
       open.get(sessionId)?.delete(call);
       if (!open.get(sessionId)?.size) open.delete(sessionId);
     });
-    if (body) out.end(body);
-    else req.pipe(out);
+    return call;
   }
 
   /** Every call of the session's still on its way, ended: its lockdown has started (fleet.onLocking). */
@@ -204,10 +223,11 @@ export function createGeminiProxy({ secrets = null, teamKey = null, upstream = '
     const calls = open.get(sessionId);
     if (!calls?.size) return;
     console.log('geminiProxy: calls cut at the lockdown', { sessionId, calls: calls.size });
-    for (const { req, res, out } of calls) {
-      out.destroy();
-      req.destroy();
-      res.destroy();
+    for (const call of calls) {
+      call.cut = true;
+      call.out?.destroy();
+      call.req.destroy();
+      call.res.destroy();
     }
     open.delete(sessionId);
   }
@@ -216,24 +236,29 @@ export function createGeminiProxy({ secrets = null, teamKey = null, upstream = '
   // Every session's is, for what is stored under the team's key; a tainted session's also for what has Google reach out.
   async function checkedBody(req, res, session) {
     if (req.method === 'GET' || req.method === 'HEAD') return undefined;
-    const tainted = Boolean(session.taintedAt);
     // Read, or not sent: a call the console cannot check never goes.
     if (req.method !== 'POST' || !/json/i.test(String(req.headers['content-type'] ?? ''))) {
       req.resume();
-      console.warn('geminiProxy: refused, a call the console cannot read', { sessionId: session.id, method: req.method, tainted });
+      console.warn('geminiProxy: refused, a call the console cannot read', { sessionId: session.id, method: req.method, tainted: Boolean(session.taintedAt) });
       refuse(res, 415, 'only JSON calls the console can check go to Google');
       return null;
     }
     const chunks = [];
     let bytes = 0;
-    for await (const chunk of req) {
-      bytes += chunk.length;
-      if (bytes > MAX_BODY_BYTES) {
-        req.resume();
-        refuse(res, 413, 'this call is larger than the console reads');
-        return null;
+    try {
+      for await (const chunk of req) {
+        bytes += chunk.length;
+        if (bytes > MAX_BODY_BYTES) {
+          req.resume();
+          refuse(res, 413, 'this call is larger than the console reads');
+          return null;
+        }
+        chunks.push(chunk);
       }
-      chunks.push(chunk);
+    } catch (err) {
+      // The request ended before its body did: agy gave up on the turn, or a lockdown cut it. Nothing goes, and nobody is left to answer.
+      console.log('geminiProxy: call ended before its body did', { sessionId: session.id, why: err?.code ?? 'closed' });
+      return null;
     }
     const body = Buffer.concat(chunks);
     let parsed = null;
@@ -249,7 +274,8 @@ export function createGeminiProxy({ secrets = null, teamKey = null, upstream = '
       refuse(res, 403, `${stored} is off: it would be read under the team's key, whoever stored it`);
       return null;
     }
-    const reach = tainted ? serverSideReach(parsed) : null;
+    // Asked now, with the body read: a lockdown that started while it arrived makes this a tainted session's call.
+    const reach = session.taintedAt ? serverSideReach(parsed) : null;
     if (reach) {
       console.warn('geminiProxy: refused, a tainted session asked Google to reach out', { sessionId: session.id, what: reach });
       refuse(res, 403, `this session has seen production data, so ${reach} is off: Google would reach out for it`);
@@ -258,13 +284,13 @@ export function createGeminiProxy({ secrets = null, teamKey = null, upstream = '
     return body;
   }
 
-  async function handle(req, res, session) {
+  async function handle(req, res, session, isLocked = null) {
     if (!session) {
       req.resume();
       console.warn('geminiProxy: refused, no active session has that token', { from: req.socket.remoteAddress });
       return refuse(res, 401, 'not an active Woodshed session');
     }
-    if (!runsAntigravity(session)) {
+    if (!runsAntigravity(session) || isLocked?.(session)) {
       req.resume();
       console.warn('geminiProxy: refused, not an Antigravity session', { sessionId: session.id });
       return refuse(res, 403, 'only an Antigravity session may use the team\'s Gemini key');
@@ -275,6 +301,8 @@ export function createGeminiProxy({ secrets = null, teamKey = null, upstream = '
       console.warn('geminiProxy: refused a path Antigravity does not need', { sessionId: session.id, method: req.method, path: req.url.split('?')[0].slice(0, 120) });
       return refuse(res, 404, 'not something Antigravity needs');
     }
+    // From here the call is cut by a lockdown, whatever it is waiting for: the key's read, or the rest of its body.
+    const call = track(req, res, session.id);
     let key;
     try {
       key = await teamCredential();
@@ -289,19 +317,20 @@ export function createGeminiProxy({ secrets = null, teamKey = null, upstream = '
       console.warn('geminiProxy: no team key saved', { sessionId: session.id });
       return refuse(res, 503, 'the console has no Gemini key: save your own Antigravity sign-in on My settings, or set gemini-api-key on the Secrets page');
     }
-    // Asked again after the key's read: a lockdown that started meanwhile took the session's Antigravity agent's access.
-    if (!runsAntigravity(session)) {
-      req.resume();
-      console.warn('geminiProxy: refused, not an Antigravity session', { sessionId: session.id });
-      return refuse(res, 403, 'only an Antigravity session may use the team\'s Gemini key');
-    }
     const body = await checkedBody(req, res, session);
     if (body === null) return;
+    // Asked again last, with the whole call in hand and just before it goes: a lockdown that started while the key was read or
+    // the body arrived took the session's Antigravity agent's access, and a call it cut goes nowhere.
+    if (call.cut || !runsAntigravity(session) || isLocked?.(session)) {
+      req.resume();
+      console.warn('geminiProxy: refused, the session was locked down while the call was on its way', { sessionId: session.id });
+      return refuse(res, 403, 'only an Antigravity session may use the team\'s Gemini key');
+    }
     if (!routed.has(session.id)) {
       routed.add(session.id);
       console.log('geminiProxy: first call on the team key', { sessionId: session.id, extra: session.options?.agent !== 'antigravity' });
     }
-    return forward(req, res, { path, key, sessionId: session.id, body: body ?? null });
+    return forward(req, res, { path, key, call, body: body ?? null });
   }
 
   return { isProxyPath: isGeminiPath, handle, teamCredential, cut };

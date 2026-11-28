@@ -131,6 +131,9 @@ test('a repo that ships hooks, MCP servers or plugins is a warning on the team\'
   const warned = key.configure('key');
   assert.ok(!warned.failed, warned.out);
   assert.match(warned.out, /WARNING: the repo ships hooks, MCP servers or plugins that Antigravity CLI runs by itself \(files: .*\.agents\/hooks\.json .*\.agent\/plugins/);
+  // It leaves a marker naming the files, for statusd, which then puts no personal sign-in of the owner's in the container.
+  assert.match(key.read('.config/woodshed/repo-startup-code'), /\.agents\/hooks\.json\n\.agent\/plugins\n?/);
+  assert.equal(fs.statSync(path.join(key.home, '.config/woodshed/repo-startup-code')).mode & 0o777, 0o600);
   // The owner's own login, or another agent's beside it: what such code could read.
   const own = session(t, shipped).configure('own');
   assert.ok(own.failed);
@@ -143,6 +146,11 @@ test('a repo that ships hooks, MCP servers or plugins is a warning on the team\'
   // Rules and skills are text, which the agent could be told to follow anyway: no warning.
   const plain = session(t, { checkout: (repo) => { fs.mkdirSync(path.join(repo, '.agents/rules'), { recursive: true }); fs.writeFileSync(path.join(repo, '.agents/rules/a.md'), 'x'); } });
   assert.doesNotMatch(plain.configure('own').out, /ships/);
+  assert.equal(plain.read('.config/woodshed/repo-startup-code'), null, 'no startup code, no marker');
+  // A start that is refused went no further: nothing left behind, and nothing for agy to run.
+  const refused = session(t, shipped);
+  assert.ok(refused.configure('own').failed);
+  assert.equal(refused.read('.config/woodshed/repo-startup-code'), null);
 });
 
 test('a repo that ships startup code stops a team-key start beside any agent whose personal credential is in the container', (t) => {

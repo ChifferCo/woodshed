@@ -1740,6 +1740,46 @@ test('a Codex agent beside claude gets the sign-in its start brings, and the sto
   assert.equal(back[0].body, refreshed);
 });
 
+test('beside an Antigravity CLI that runs a repo\'s startup code, no personal sign-in of the owner\'s is put in the container', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-agents-marker-'));
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  const consoleServer = http.createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{}'); }); });
+  const consolePort = await listen(consoleServer);
+  t.after(async () => {
+    consoleServer.close();
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const home = path.join(dir, 'home');
+  const codexHome = path.join(home, '.codex');
+  await fs.mkdir(codexHome, { recursive: true });
+  await fs.mkdir(path.join(dir, 'bin'));
+  await fs.writeFile(path.join(dir, 'bin', 'codex'), '#!/bin/sh\nexec sleep 600\n', { mode: 0o755 });
+  await fs.writeFile(path.join(dir, 'codex-ready'), '');
+  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '40', 'sleep 600');
+  const { call } = await statusdWithApp(t, { env: {
+    TMUX: '', TMUX_TMPDIR: dir, HOME: home, CODEX_HOME: codexHome, SESSION_KIND: 'private', SESSION_MODE: '', AGENT: '',
+    WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consolePort}`, WOODSHED_AGENT_BIN: path.join(dir, 'bin'),
+    WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'), WOODSHED_CODEX_READY_FILE: path.join(dir, 'codex-ready'),
+    WOODSHED_AGENT_STATE_DIR: dir, WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'own-state.json'),
+  } });
+  // What antigravitySetup.sh leaves when it let a team-key start go ahead on a checkout that ships startup code.
+  await fs.mkdir(path.join(home, '.config/woodshed'), { recursive: true });
+  await fs.writeFile(path.join(home, '.config/woodshed/repo-startup-code'), '.agents/hooks.json\n');
+
+  const login = '{"last_refresh":"2026-11-23T10:00:00Z","tokens":{"refresh_token":"dummy-not-a-real-token"}}';
+  const refused = await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'codex', codexAuth: login }));
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.error, /ships startup code, which runs by itself and could read the owner's Codex sign-in/);
+  assert.ok(!JSON.stringify(refused.body).includes('dummy-not-a-real-token'), 'never the sign-in');
+  await assert.rejects(fs.stat(path.join(codexHome, 'auth.json')), { code: 'ENOENT' }, 'no sign-in was written');
+  // Codex on the team's key, which holds only the session's own token, is not held back.
+  const onKey = await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'codex' }));
+  assert.equal(onKey.status, 200, JSON.stringify(onKey.body));
+  await assert.rejects(fs.stat(path.join(codexHome, 'auth.json')), { code: 'ENOENT' });
+});
+
 // The same, where the session's agent runs in Herdr: the agent beside it is a Herdr terminal of its own on the session's
 // core (the test's scratch one, isolatedEnv), driven through hc, and gone once stopped.
 test('in Herdr, an agent beside the session\'s own is a Herdr terminal of its own, asked and answered through hc', { skip: spawnSync('hc', ['--version'], { env: isolatedEnv() }).status !== 0 && 'no hc here' }, async (t) => {

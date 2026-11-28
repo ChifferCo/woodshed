@@ -667,9 +667,20 @@ const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.
   hcBin: process.env.WOODSHED_HC_BIN || 'hc',
 }) : null;
 
+// An Antigravity CLI that started on the team's key on a repo that ships startup code (hooks, MCP servers, plugins) runs that
+// code by itself as this user for as long as it is open (antigravitySetup.sh leaves this marker). No personal sign-in of the
+// owner's goes into the container after it: the code could read it. A new session, started with nothing of the sort running,
+// is the way round.
+const REPO_STARTUP_CODE_MARKER = process.env.REPO_STARTUP_CODE_MARKER || path.join(os.homedir(), '.config/woodshed/repo-startup-code');
+function refuseWhileRepoStartupCodeRuns(what) {
+  if (!existsSync(REPO_STARTUP_CODE_MARKER)) return;
+  throw Object.assign(new Error(`Antigravity CLI started in this session on a repo that ships startup code, which runs by itself and could read ${what}: it is not put here. Start a new session to use it`), { status: 409 });
+}
+
 // Start Claude with the owner's own token. Hold it outside every saved home and pass only its filename to the pane.
 async function claudeBeside(token) {
   if (!token) throw Object.assign(new Error('save your Claude token on My settings first, then start Claude from the console'), { status: 409 });
+  refuseWhileRepoStartupCodeRuns('the owner\'s Claude token');
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'woodshed-extra-claude-'));
   const file = path.join(dir, 'token');
   const cleanup = () => fs.rm(dir, { recursive: true, force: true }).catch(() => {
@@ -699,6 +710,7 @@ async function codexBeside(given) {
     console.log('statusd: Codex agent beside claude set up', { own: false });
     return { env: { WOODSHED_CODEX_AUTH: 'key' } };
   }
+  refuseWhileRepoStartupCodeRuns('the owner\'s Codex sign-in');
   const body = given.startsWith('sk-') ? JSON.stringify({ OPENAI_API_KEY: given.trim() }) : given;
   await fs.writeFile(authFile, body, { mode: 0o600, flag: 'wx' });
   // The copy given, for the stop to tell whether this session refreshed it (keepCodexAuth).
@@ -828,7 +840,8 @@ async function antigravityBeside(given) {
   return {
     env: { WOODSHED_AGY_AUTH: own ? 'own' : 'key' },
     undo: async () => {
-      if (own) await takeBackLogin();
+      if (!own) return;
+      await takeBackLogin();
       console.log('statusd: Antigravity CLI sign-in taken back, the agent did not start');
     },
   };

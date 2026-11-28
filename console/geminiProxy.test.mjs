@@ -35,7 +35,9 @@ async function setup(t, { teamKey = 'AIza-team', secrets = null } = {}) {
   });
   const upPort = await listen(upstream);
   const gemini = createGeminiProxy({ teamKey, secrets, upstream: `http://127.0.0.1:${upPort}` });
-  const handle = createSessionApi({ fleet: { sessions: () => SESSIONS }, tokens: { token: async () => ({}) }, gemini });
+  // The sessions whose lockdown has started (fleet.isLocked), which the proxy asks as a call arrives and again before it goes.
+  const locked = new Set();
+  const handle = createSessionApi({ fleet: { sessions: () => SESSIONS, isLocked: (s) => locked.has(s.id) }, tokens: { token: async () => ({}) }, gemini });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => { server.close(); upstream.close(); });
@@ -50,7 +52,7 @@ async function setup(t, { teamKey = 'AIza-team', secrets = null } = {}) {
     r.on('error', reject);
     r.end(method === 'POST' ? '{}' : undefined);
   });
-  return { seen, call, raw, gemini };
+  return { seen, call, raw, gemini, locked, port };
 }
 
 test('an Antigravity session\'s call goes out on the team key, and its session token never reaches Google', async (t) => {
@@ -246,4 +248,81 @@ test('lockdown cuts the calls of a session still on their way', async (t) => {
   gemini.cut('aaaaaaaa');
   const result = await pending;
   assert.ok(result instanceof Error || result.status >= 500, 'the call ended with no answer');
+});
+
+// A call whose body is held open: its head sent, its body not finished, until `finish` is called.
+function heldCall(port, token, { path = STREAM, chunks = ['{"contents":[{"role":"user","parts":[', '{"text":"hello"}]}]}'] } = {}) {
+  let resolve;
+  const outcome = new Promise((r) => { resolve = r; });
+  const r = http.request({ host: '127.0.0.1', port, method: 'POST', path: `/gemini${path}`, headers: { 'x-goog-api-key': token, 'content-type': 'application/json', 'transfer-encoding': 'chunked' } },
+    (res) => { res.resume(); res.on('end', () => resolve({ status: res.statusCode })); });
+  r.on('error', (err) => resolve({ error: err.code ?? err.message }));
+  r.write(chunks[0]);
+  return { outcome, finish: () => { try { r.end(chunks[1]); } catch { /* the connection is gone: that is the point */ } } };
+}
+const settle = (ms = 150) => new Promise((r) => setTimeout(r, ms));
+
+test('a call still uploading when its session\'s lockdown starts is cut, and nothing of it reaches Google', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const { seen, gemini, port } = await setup(t);
+  // The first part of the body is sent and the proxy has authorized the call, which waits for the rest.
+  const held = heldCall(port, 'agy-beside');
+  await settle();
+  gemini.cut('dddddddd');
+  held.finish();
+  const result = await held.outcome;
+  assert.ok(result.error || result.status >= 400, `the call ended with no answer from Google: ${JSON.stringify(result)}`);
+  await settle();
+  assert.equal(seen.length, 0, 'the stand-in for Google received nothing');
+});
+
+test('a call whose body finishes after the lockdown began is refused when it would go, even if nothing cut it', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const { seen, locked, port } = await setup(t);
+  const held = heldCall(port, 'agy-beside');
+  await settle();
+  // The lockdown started (fleet.isLocked) but the cut did not reach this call: the last check before it goes still refuses.
+  locked.add('dddddddd');
+  held.finish();
+  const result = await held.outcome;
+  assert.equal(result.status, 403);
+  await settle();
+  assert.equal(seen.length, 0, 'none of it reached Google');
+  // A call that arrives locked is refused at once.
+  assert.equal((await fetch(`http://127.0.0.1:${port}/gemini${STREAM}`, { method: 'POST', headers: { 'x-goog-api-key': 'agy-beside', 'content-type': 'application/json' }, body: '{}' })).status, 403);
+  assert.equal(seen.length, 0);
+});
+
+test('a session tainted while its body arrives has that call checked as a tainted one', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const sessions = [{ id: '22222222', status: 'running', token: 'agy-late', owner: 'joel', options: { agent: 'antigravity' } }];
+  const upstream = http.createServer((req) => { req.resume(); });
+  const upPort = await listen(upstream);
+  let reached = 0;
+  upstream.on('request', () => { reached += 1; });
+  const gemini = createGeminiProxy({ teamKey: 'AIza-team', upstream: `http://127.0.0.1:${upPort}` });
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, gemini });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => { server.close(); upstream.close(); });
+  const held = heldCall(port, 'agy-late', { chunks: ['{"tools":[{"google', 'Search":{}}],"contents":[]}'] });
+  await settle();
+  sessions[0].taintedAt = 1;
+  held.finish();
+  const result = await held.outcome;
+  assert.equal(result.status, 403, 'Google Search is off for a session that has seen production data, as the call finished');
+  assert.equal(reached, 0);
+});
+
+test('a file search store or a reach tool inside a count\'s wrapped request is found too', () => {
+  const wrapped = (tool) => ({ generateContentRequest: { model: 'models/m', contents: [], tools: [tool] } });
+  assert.equal(storedResource(wrapped({ fileSearch: { fileSearchStoreNames: ['fileSearchStores/a'] } })), 'a file search store');
+  assert.equal(storedResource(wrapped({ file_search: {} })), 'a file search store');
+  assert.equal(storedResource(wrapped({ functionDeclarations: [] })), null);
+  assert.equal(serverSideReach(wrapped({ googleSearch: {} })), 'the googleSearch tool');
+  assert.equal(serverSideReach(wrapped({ urlContext: {} })), 'the urlContext tool');
+  assert.equal(serverSideReach(wrapped({ functionDeclarations: [] })), null);
 });

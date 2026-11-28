@@ -223,7 +223,7 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
-    if (gemini?.isProxyPath(pathname)) return gemini.handle(req, res, sessionForToken(geminiKeyOf(req.headers), fleet.sessions()));
+    if (gemini?.isProxyPath(pathname)) return gemini.handle(req, res, sessionForToken(geminiKeyOf(req.headers), fleet.sessions()), (session) => fleet.isLocked?.(session));
     if (reviewAgentProxy?.isProxyPath(pathname)) return reviewAgentProxy.handle(req, res, sessionForToken(reviewAgentTokenOf(req.headers), fleet.sessions()), (session) => fleet.isLocked?.(session));
     if (isMcpPath(pathname)) {
       if (!mcpRelay) {

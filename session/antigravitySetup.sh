@@ -10,6 +10,10 @@
 # answer exits.
 
 ANTIGRAVITY_DIR=${ANTIGRAVITY_DIR:-$HOME/.gemini}
+# Left when a start went ahead on the team's key although the checkout ships startup code (below): agy then runs that code
+# for as long as it is open, as the session's user, and statusd refuses to put a personal sign-in of the owner's in the container
+# while the marker is there (session/statusd.mjs, refuseWhileRepoStartupCodeRuns). It names the files, never anything else.
+REPO_STARTUP_CODE_MARKER=${REPO_STARTUP_CODE_MARKER:-$HOME/.config/woodshed/repo-startup-code}
 
 # What a branch can ship that agy runs by itself when it opens in a trusted folder: hooks, MCP servers and plugins, from
 # the checkout's .agents (or .agent, _agents, _agent) folder. Run as agy opens, before anyone asked, in Plan mode too, as
@@ -38,7 +42,8 @@ personalCredentialPresent() {
     "$HOME/.codex/auth.json|the owner's Codex sign-in" \
     "$woodshed/agent-auth|the owner's Grok Build or OpenCode sign-in" \
     "$HOME/.grok/auth.json|the owner's Grok Build sign-in" \
-    "$HOME/.local/share/opencode/auth.json|the owner's OpenCode sign-in"; do
+    "$HOME/.local/share/opencode/auth.json|the owner's OpenCode sign-in" \
+    "${ANTIGRAVITY_DIR:-$HOME/.gemini}/antigravity-cli/antigravity-oauth-token|the owner's Antigravity CLI login"; do
     file=${entry%%|*}
     what=${entry#*|}
     if [ -s "$file" ]; then
@@ -90,6 +95,9 @@ configureAntigravity() {
       die "the repo ships $(tr '\n' ' ' <<< "$found")which Antigravity CLI would run as it opens, where it can read a saved sign-in${held:+ ($held)}: it is not started on this branch"
     fi
     log "WARNING: the repo ships hooks, MCP servers or plugins that Antigravity CLI runs by itself" "(files: $(tr '\n' ' ' <<< "$found"))"
+    # Agents started beside this one later must not be given a personal sign-in: that code, already running, would read it.
+    mkdir -p "$(dirname "$REPO_STARTUP_CODE_MARKER")"
+    (umask 077 && printf '%s\n' "$found" > "$REPO_STARTUP_CODE_MARKER")
   fi
   # Onboarding done, so no theme page and no Terms of Service page, whose data-use box is ticked by default.
   printf '{"consumerOnboardingComplete":true,"enterpriseOnboardingComplete":true,"onboardingComplete":true}\n' > "$ANTIGRAVITY_DIR/antigravity-cli/cache/onboarding.json"
