@@ -184,7 +184,8 @@ export function extractImports(rel, text) {
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/(^|[^:\\])\/\/[^\n]*/g, '$1');
     const patterns = [
-      /\b(?:import|export)\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?['"]([^'"\n]+)['"]/g,
+      /\bimport\s+['"]([^'"\n]+)['"]/g,
+      /\b(?:import|export)\s+(?:type\s+)?[^;'"]*?\s+from\s+['"]([^'"\n]+)['"]/g,
       /\bimport\s*\(\s*['"]([^'"\n]+)['"]\s*\)/g,
       /\brequire\s*\(\s*['"]([^'"\n]+)['"]\s*\)/g,
     ];

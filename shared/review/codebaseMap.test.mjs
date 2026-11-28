@@ -24,13 +24,14 @@ function makeTempRepo(files) {
 
 test('extractImports parses JS/TS, Python, Go, Rust, CSS and shell local imports', () => {
   const js = extractImports('src/a.mjs', `
+    import './setup.mjs';
     import { x } from './b.mjs';
     export * from '../shared/c';
     const d = require('./d.cjs');
     // import { ignored } from './commented.mjs';
     import pkg from 'node:fs';
   `);
-  assert.deepEqual(js.sort(), ['../shared/c', './b.mjs', './d.cjs']);
+  assert.deepEqual(js.sort(), ['../shared/c', './b.mjs', './d.cjs', './setup.mjs']);
 
   const py = extractImports('pkg/a.py', `
     from .helper import run

@@ -932,11 +932,11 @@ ${DARK_PALETTE}
     .cmap-medge.hot.hi text { fill: var(--c-arch); }
     .cmap-medge.quiet-label rect, .cmap-medge.quiet-label text { opacity: 0; }
     .cmap-medge.quiet-label.hi rect, .cmap-medge.quiet-label.hi text { opacity: 1; }
-    .cmap-medge.dim rect, .cmap-medge.dim text { opacity: 0.15; }
+    .cmap-medge.dim rect, .cmap-medge.dim text { opacity: 0; }
     .cmap-stage.zoom-detail .cmap-medge path { stroke-opacity: 0.22; }
     .cmap-stage.zoom-detail .cmap-medge.hi path { stroke-opacity: 0.85; }
     .cmap-stage.zoom-detail .cmap-medge rect,
-    .cmap-stage.zoom-detail .cmap-medge text { opacity: 0.35; }
+    .cmap-stage.zoom-detail .cmap-medge text { opacity: 0; }
     .cmap-stage.zoom-detail .cmap-medge.hi rect,
     .cmap-stage.zoom-detail .cmap-medge.hi text { opacity: 1; }
 
@@ -992,13 +992,14 @@ ${DARK_PALETTE}
       background: var(--sunk); cursor: pointer;
     }
     .cmap-mod.impact-major .cmap-mhead {
-      background: color-mix(in srgb, var(--c-arch) 9%, var(--sunk));
+      background: var(--sunk);
+      border-bottom-color: var(--c-arch);
     }
     .cmap-mod.impact-major.only-added .cmap-mhead {
       background: var(--add-bg);
     }
     .cmap-mod.impact-minor .cmap-mhead {
-      background: color-mix(in srgb, var(--slate) 6%, var(--sunk));
+      background: var(--sunk);
     }
     .cmap-mhead .mname {
       font: 700 13px/1.2 "Red Hat Mono", ui-monospace, monospace;
@@ -1025,21 +1026,21 @@ ${DARK_PALETTE}
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       padding: 12px 16px; text-align: center; border-radius: 8px; cursor: pointer;
       overflow: hidden;
-      background: color-mix(in srgb, var(--panel) 90%, transparent);
+      background: var(--panel);
       opacity: 0; pointer-events: none; transition: opacity 0.16s;
     }
     .cmap-mod.impact-major .cmap-macro {
-      background: color-mix(in srgb, var(--panel) 94%, var(--c-arch) 6%);
+      background: var(--panel);
     }
     .cmap-mod.impact-major.only-added .cmap-macro {
-      background: color-mix(in srgb, var(--panel) 88%, var(--add-bg) 12%);
+      background: var(--add-bg);
     }
     .cmap-mod.impact-minor .cmap-macro {
-      background: color-mix(in srgb, var(--panel) 92%, var(--slate) 4%);
+      background: var(--sunk);
     }
     .cmap-stage.zoom-macro .cmap-macro { opacity: 1; pointer-events: auto; }
-    .cmap-stage.zoom-macro .cmap-mhead { opacity: 0.15; pointer-events: none; }
-    .cmap-stage.zoom-macro .cmap-parcel { opacity: 0.25; pointer-events: none; }
+    .cmap-stage.zoom-macro .cmap-mhead { opacity: 0; pointer-events: none; }
+    .cmap-stage.zoom-macro .cmap-parcel { opacity: 0; pointer-events: none; }
     .cmap-macro-name {
       flex: none;
       font: 700 21px/1.2 "Red Hat Mono", ui-monospace, monospace;
@@ -1162,7 +1163,7 @@ ${DARK_PALETTE}
       padding: 0 4px; border-radius: 3px; border: 1px solid var(--rule-strong);
       color: var(--muted); background: var(--sunk);
     }
-    .cmap-tag.act { background: var(--c-act); border-color: var(--c-act); color: #fff; }
+    .cmap-tag.act { background: var(--panel); border-color: var(--c-act); color: var(--c-act); }
     .cmap-tag.added { color: var(--add); border-color: var(--add); background: var(--add-bg); }
     .cmap-tag.deleted { color: var(--del); border-color: var(--del); background: var(--del-bg); }
     .cmap-tag.modified { color: var(--warn); border-color: var(--warn); }
@@ -1271,7 +1272,7 @@ ${DARK_PALETTE}
     .cmap-legend {
       display: inline-flex; align-items: center; gap: 9px; padding: 4px 9px;
       border: 1px solid var(--rule); border-radius: 6px;
-      background: color-mix(in srgb, var(--panel) 94%, transparent);
+      background: var(--panel);
       font: 500 11px/1.2 "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--muted);
     }
     .cmap-legend span { display: inline-flex; align-items: center; gap: 4px; }
@@ -3715,7 +3716,7 @@ ${DARK_PALETTE}
     // from the same analysis groups and parsed diff that Files changed renders.
     function mapDetailsByPath() {
       var byPath = fileByPath();
-      var decisionCounts = {};
+      var decisionCounts = Object.create(null);
       var decisions = (state.review && state.review.decisions) || [];
       for (var d = 0; d < decisions.length; d++) {
         var dFiles = (decisions[d] && decisions[d].files) || [];
@@ -3723,7 +3724,7 @@ ${DARK_PALETTE}
           decisionCounts[dFiles[dfi]] = (decisionCounts[dFiles[dfi]] || 0) + 1;
         }
       }
-      var out = {};
+      var out = Object.create(null);
       var groups = groupsToRender();
       for (var g = 0; g < groups.length; g++) {
         var grp = groups[g];
@@ -3848,10 +3849,10 @@ ${DARK_PALETTE}
       world.style.width = layout.width + 'px';
       world.style.height = layout.height + 'px';
 
-      var modById = {};
-      var parcelByPath = {};
-      var modEls = {};
-      var parcelEls = {};
+      var modById = Object.create(null);
+      var parcelByPath = Object.create(null);
+      var modEls = Object.create(null);
+      var parcelEls = Object.create(null);
       var modEdgeEls = [];
       var fileEdgeEls = [];
 
@@ -4787,7 +4788,7 @@ ${DARK_PALETTE}
         }
         if (!focus) return;
         if (focus.kind === 'module') {
-          var neighbors = {};
+          var neighbors = Object.create(null);
           neighbors[focus.id] = true;
           for (var e = 0; e < modEdgeEls.length; e++) {
             var ed = modEdgeEls[e].edge;
@@ -4800,7 +4801,7 @@ ${DARK_PALETTE}
             if (!neighbors[mid]) modEls[mid].classList.add('dim');
           }
         } else if (focus.kind === 'file') {
-          var hitFiles = {};
+          var hitFiles = Object.create(null);
           hitFiles[focus.path] = true;
           for (var f = 0; f < fileEdgeEls.length; f++) {
             var feItem = fileEdgeEls[f].edge;
