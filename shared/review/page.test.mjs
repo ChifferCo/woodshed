@@ -344,8 +344,12 @@ function createMiniDom() {
 }
 
 test('codebase map opens Files changed at the clicked file and non-first hunk, defers pointer capture, and handles touch pinch', async () => {
-  const scriptMatch = /<script>([\s\S]*?)<\/script>/.exec(REVIEW_HTML);
-  assert.ok(scriptMatch, 'REVIEW_HTML must contain an inline <script>');
+  const openTag = '<script>';
+  const closeTag = '</script>';
+  const scriptStart = REVIEW_HTML.indexOf(openTag);
+  const scriptEnd = REVIEW_HTML.lastIndexOf(closeTag);
+  assert.ok(scriptStart !== -1 && scriptEnd > scriptStart, 'REVIEW_HTML must contain an inline <script>');
+  const inlineScript = REVIEW_HTML.slice(scriptStart + openTag.length, scriptEnd);
   const doc = createMiniDom();
   const scrolls = [];
   const rafQueue = [];
@@ -545,7 +549,7 @@ test('codebase map opens Files changed at the clicked file and non-first hunk, d
     decodeURIComponent,
   });
 
-  vm.runInContext(scriptMatch[1], context);
+  vm.runInContext(inlineScript, context);
   // Wait for openSession() -> loadReview() -> loadMap() microtasks to settle.
   for (let i = 0; i < 15; i += 1) {
     await new Promise((r) => setImmediate(r));

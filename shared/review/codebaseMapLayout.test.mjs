@@ -172,4 +172,17 @@ test('handles cycles, empty maps, and large unchanged modules gracefully', () =>
   const overflow = cyclic.modules.find((m) => m.id === 'a').parcels.find((p) => p.kind === 'overflow');
   assert.ok(overflow, 'overflow tile caps huge unchanged module');
   assert.equal(overflow.overflowCount, 19);
+
+  // Module names matching Object.prototype properties must not be dropped.
+  const protoNames = layoutCodebaseMap({
+    modules: [
+      { id: 'constructor', label: 'constructor', group: 'constructor', fileCount: 1, totalLines: 10, changedCount: 0, files: [{ path: 'constructor/index.mjs', name: 'index.mjs', lines: 10, status: 'unchanged' }] },
+      { id: 'toString', label: 'toString', group: 'toString', fileCount: 1, totalLines: 10, changedCount: 0, files: [{ path: 'toString/index.mjs', name: 'index.mjs', lines: 10, status: 'unchanged' }] },
+    ],
+    moduleEdges: [{ from: 'constructor', to: 'toString', count: 1 }],
+    fileEdges: [{ from: 'constructor/index.mjs', to: 'toString/index.mjs' }],
+  });
+  assert.deepEqual(protoNames.modules.map((m) => m.id).sort(), ['constructor', 'toString']);
+  assert.equal(protoNames.moduleEdges.length, 1);
+  assert.equal(protoNames.fileEdges.length, 1);
 });

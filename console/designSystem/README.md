@@ -363,11 +363,12 @@ each thread shows its file, author and opening comment, with outdated threads la
 
 Its **Overview** tab opens with a whole-codebase map (`components/CodebaseMap`) above the decisions and architecture:
 pan and zoom across every module district and its local import highways, with module summaries when zoomed out and full
-per-file change descriptions and clickable hunks as you zoom in. Key changes are marked in `--cmap-key` (the Architecture
-teal, never orange: orange stays reserved for **Submit review**), additions in `green`, deletions in `bad`, and minor
-supporting changes (tests, docs, config) in dashed neutral cards that keep full text contrast at 4.5:1 in both themes.
-Its HUD controls (**Focus key changes**, **Fit all**, **Full screen**) are quiet, never orange, and clicking a changed
-file's title or any hunk jumps straight to that spot on **Files changed**.
+per-file change descriptions and clickable hunks as you zoom in. Key changes reuse the Architecture teal (`--c-arch`,
+never orange: orange stays reserved for **Submit review**), additions use `green`, deletions use `bad`, and minor
+supporting changes (tests, docs, config) use dashed neutral cards. Neither minor cards nor unrelated modules on hover or
+selection fade their text: text stays at full opacity (4.5:1 or more in both themes) and focus is shown by borders and
+highways. Its HUD controls (**Focus key changes**, **Fit all**, **Full screen**) are quiet, never orange, and clicking a
+changed file's title or any hunk jumps straight to that spot on **Files changed**.
 
 Its **AI reviews** tab (`components/AiReviews`) shows what Claude Code and Codex posted on the pull request, newest
 first, each a Discussion `saidbox` whose head is a keyboard disclosure, with each finding as a card and the follow-ups

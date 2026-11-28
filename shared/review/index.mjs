@@ -1924,7 +1924,7 @@ async function handleMap(res, ctx, session) {
     return ctx.json(res, 200, { ok: true, session, ...map });
   } catch (err) {
     ctx.log('review.map_failed', { reqId: ctx.reqId, session, error: err?.message });
-    return ctx.json(res, 500, { ok: false, error: err?.message || 'could not build codebase map' });
+    return ctx.json(res, 500, { ok: false, error: 'could not build codebase map' });
   }
 }
 

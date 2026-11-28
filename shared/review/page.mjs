@@ -74,8 +74,6 @@ const DARK_PALETTE = [
   '        --c-arch: #2dd4bf;',
   '        --c-dec: #c4a5ff;',
   '        --c-act: #9cb8ff;',
-  '        --cmap-key: #2dd4bf;',
-  '        --cmap-key-ink: #14171d;',
 ].join('\n');
 
 export const REVIEW_HTML = `<!doctype html>
@@ -134,12 +132,6 @@ export const REVIEW_HTML = `<!doctype html>
       --c-arch: #0f766e;
       --c-dec: #6d28d9;
       --c-act: #526288;
-      /* Codebase map key-change emphasis stays off orange (--accent is reserved
-         for the page's primary action) and borrows the Architecture teal so key
-         changes stand apart from green additions, red deletions and slate links
-         while keeping 4.5:1 contrast in both themes. */
-      --cmap-key: #0f766e;
-      --cmap-key-ink: #ffffff;
     }
     /* Three theme states, not two. The launcher's picker writes 'system',
        'light' or 'dark' to localStorage and this page follows it (see
@@ -920,24 +912,24 @@ ${DARK_PALETTE}
       fill: none; stroke: var(--muted); stroke-opacity: 0.42;
       transition: stroke-opacity 0.14s, stroke 0.14s;
     }
-    .cmap-medge.hot path { stroke: var(--cmap-key); stroke-opacity: 0.78; }
+    .cmap-medge.hot path { stroke: var(--c-arch); stroke-opacity: 0.78; }
     .cmap-medge.hi path { stroke: var(--slate); stroke-opacity: 0.96; }
-    .cmap-medge.hot.hi path { stroke: var(--cmap-key); stroke-opacity: 0.98; }
+    .cmap-medge.hot.hi path { stroke: var(--c-arch); stroke-opacity: 0.98; }
     .cmap-medge.dim path { stroke-opacity: 0.12; }
     .cmap-medge rect {
       fill: var(--panel); stroke: var(--rule-strong); stroke-width: 1;
       transition: opacity 0.14s;
     }
-    .cmap-medge.hot rect { stroke: var(--cmap-key); }
+    .cmap-medge.hot rect { stroke: var(--c-arch); }
     .cmap-medge.hi rect { stroke: var(--slate); }
-    .cmap-medge.hot.hi rect { stroke: var(--cmap-key); }
+    .cmap-medge.hot.hi rect { stroke: var(--c-arch); }
     .cmap-medge text {
       fill: var(--muted); font: 600 11px/1 "Red Hat Mono", ui-monospace, monospace;
       transition: opacity 0.14s;
     }
-    .cmap-medge.hot text { fill: var(--cmap-key); }
+    .cmap-medge.hot text { fill: var(--c-arch); }
     .cmap-medge.hi text { fill: var(--slate); }
-    .cmap-medge.hot.hi text { fill: var(--cmap-key); }
+    .cmap-medge.hot.hi text { fill: var(--c-arch); }
     .cmap-medge.quiet-label rect, .cmap-medge.quiet-label text { opacity: 0; }
     .cmap-medge.quiet-label.hi rect, .cmap-medge.quiet-label.hi text { opacity: 1; }
     .cmap-medge.dim rect, .cmap-medge.dim text { opacity: 0.15; }
@@ -960,7 +952,7 @@ ${DARK_PALETTE}
     .cmap-stage.zoom-detail .cmap-fedge.hot path { stroke-dasharray: 4 3; }
     .cmap-fedge.hi { opacity: 1; }
     .cmap-fedge.hi path {
-      stroke: var(--cmap-key) !important; stroke-width: 2 !important;
+      stroke: var(--c-arch) !important; stroke-width: 2 !important;
       stroke-opacity: 0.92 !important; stroke-dasharray: none !important;
     }
 
@@ -972,8 +964,8 @@ ${DARK_PALETTE}
     }
     .cmap-mod:hover { border-color: var(--slate); }
     .cmap-mod.impact-major {
-      border: 2.5px solid var(--cmap-key);
-      box-shadow: 0 0 0 3px color-mix(in srgb, var(--cmap-key) 18%, transparent);
+      border: 2.5px solid var(--c-arch);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-arch) 18%, transparent);
     }
     .cmap-mod.impact-major.only-added {
       border-color: var(--add);
@@ -991,7 +983,7 @@ ${DARK_PALETTE}
       box-shadow: 0 0 0 3px var(--slate);
       z-index: 4;
     }
-    .cmap-mod.dim { opacity: 0.38; }
+    .cmap-mod.dim { border-color: var(--rule); box-shadow: none; }
 
     .cmap-mhead {
       position: absolute; top: 0; left: 0; right: 0; height: 42px;
@@ -1000,7 +992,7 @@ ${DARK_PALETTE}
       background: var(--sunk); cursor: pointer;
     }
     .cmap-mod.impact-major .cmap-mhead {
-      background: color-mix(in srgb, var(--cmap-key) 9%, var(--sunk));
+      background: color-mix(in srgb, var(--c-arch) 9%, var(--sunk));
     }
     .cmap-mod.impact-major.only-added .cmap-mhead {
       background: var(--add-bg);
@@ -1021,9 +1013,9 @@ ${DARK_PALETTE}
       background: var(--panel); border: 1px solid var(--rule-strong); color: var(--muted);
     }
     .cmap-mod.impact-major .cmap-mhead .mchg {
-      border-color: var(--cmap-key); color: var(--ink);
+      border-color: var(--c-arch); color: var(--ink);
     }
-    .cmap-mhead .mchg .key { color: var(--cmap-key); font-weight: 700; }
+    .cmap-mhead .mchg .key { color: var(--c-arch); font-weight: 700; }
     .cmap-mhead .mchg .p { color: var(--add); }
     .cmap-mhead .mchg .m { color: var(--del); }
 
@@ -1037,7 +1029,7 @@ ${DARK_PALETTE}
       opacity: 0; pointer-events: none; transition: opacity 0.16s;
     }
     .cmap-mod.impact-major .cmap-macro {
-      background: color-mix(in srgb, var(--panel) 94%, var(--cmap-key) 6%);
+      background: color-mix(in srgb, var(--panel) 94%, var(--c-arch) 6%);
     }
     .cmap-mod.impact-major.only-added .cmap-macro {
       background: color-mix(in srgb, var(--panel) 88%, var(--add-bg) 12%);
@@ -1071,14 +1063,14 @@ ${DARK_PALETTE}
       margin-top: 8px; display: inline-flex; align-items: center; gap: 8px;
       padding: 4px 12px; border-radius: 999px;
       font: 700 14.5px/1.3 "Red Hat Mono", ui-monospace, monospace;
-      background: var(--panel); border: 2px solid var(--cmap-key); color: var(--ink);
+      background: var(--panel); border: 2px solid var(--c-arch); color: var(--ink);
     }
     .cmap-mod.impact-major.only-added .cmap-macro-badge { border-color: var(--add); }
     .cmap-mod.impact-major.only-deleted .cmap-macro-badge { border-color: var(--del); }
     .cmap-mod.impact-minor .cmap-macro-badge {
       border: 1.5px dashed var(--rule-strong); color: var(--muted); font-weight: 600; font-size: 13px;
     }
-    .cmap-macro-badge .key { color: var(--cmap-key); }
+    .cmap-macro-badge .key { color: var(--c-arch); }
     .cmap-macro-badge .p { color: var(--add); }
     .cmap-macro-badge .m { color: var(--del); }
 
@@ -1091,7 +1083,7 @@ ${DARK_PALETTE}
     }
     .cmap-parcel:hover { border-color: var(--slate); }
     .cmap-parcel.selected { box-shadow: 0 0 0 2.5px var(--slate); border-color: var(--slate); z-index: 4; }
-    .cmap-parcel.neighbor { border-color: var(--cmap-key); }
+    .cmap-parcel.neighbor { border-color: var(--c-arch); }
     .cmap-parcel.unchanged {
       display: flex; align-items: center; justify-content: space-between; gap: 4px;
       padding: 0 8px; font: 11px/1.2 "Red Hat Mono", ui-monospace, monospace; color: var(--muted);
@@ -1107,11 +1099,11 @@ ${DARK_PALETTE}
     /* Changed file parcels: significant changes stand out boldly; minor/supporting changes stay dashed and legible */
     .cmap-parcel.changed {
       display: flex; flex-direction: column;
-      background: var(--panel); border: 1.5px solid var(--cmap-key);
+      background: var(--panel); border: 1.5px solid var(--c-arch);
       border-left-width: 4px; padding: 7px 9px;
     }
     .cmap-parcel.changed.impact-major {
-      box-shadow: 0 2px 10px color-mix(in srgb, var(--cmap-key) 14%, transparent);
+      box-shadow: 0 2px 10px color-mix(in srgb, var(--c-arch) 14%, transparent);
     }
     .cmap-parcel.changed.impact-major.added {
       border-color: var(--add);
@@ -1133,7 +1125,7 @@ ${DARK_PALETTE}
       border-color: var(--slate);
     }
     .cmap-tag.key-chg {
-      background: var(--cmap-key); border-color: var(--cmap-key); color: var(--cmap-key-ink);
+      background: var(--panel); border-color: var(--c-arch); color: var(--c-arch);
     }
     .cmap-tag.minor-chg {
       border-style: dashed; color: var(--muted); background: var(--panel);
@@ -1252,7 +1244,7 @@ ${DARK_PALETTE}
       box-shadow: 0 2px 8px rgba(27, 34, 50, 0.08);
     }
     .cmap-pill:hover { border-color: var(--slate); color: var(--slate); filter: none; }
-    .cmap-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cmap-key); flex: none; }
+    .cmap-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c-arch); flex: none; }
     .cmap-pill.only-added .dot { background: var(--add); }
     .cmap-pill.only-deleted .dot { background: var(--del); }
     .cmap-pill.impact-minor { color: var(--muted); border-style: dashed; }
@@ -1284,7 +1276,7 @@ ${DARK_PALETTE}
     }
     .cmap-legend span { display: inline-flex; align-items: center; gap: 4px; }
     .cmap-legend i { width: 10px; height: 8px; border-radius: 2px; border: 1.5px solid var(--rule-strong); background: var(--sunk); }
-    .cmap-legend i.major { border: 2px solid var(--cmap-key); background: color-mix(in srgb, var(--cmap-key) 18%, var(--panel)); }
+    .cmap-legend i.major { border: 2px solid var(--c-arch); background: color-mix(in srgb, var(--c-arch) 18%, var(--panel)); }
     .cmap-legend i.minor { border: 1.5px dashed var(--slate); background: var(--sunk); }
     .cmap-legend i.add { border-color: var(--add); background: var(--add-bg); }
     .cmap-legend i.del { border-color: var(--del); background: var(--del-bg); }
@@ -1369,11 +1361,11 @@ ${DARK_PALETTE}
       font: 500 11px/1.4 "Red Hat Mono", ui-monospace, monospace;
     }
     .cmap-dep-chip:hover { border-color: var(--slate); color: var(--ink); filter: none; }
-    .cmap-dep-chip.changed { border-color: var(--cmap-key); color: var(--ink); }
+    .cmap-dep-chip.changed { border-color: var(--c-arch); color: var(--ink); }
     .cmap-drawer-files { display: flex; flex-direction: column; gap: 5px; }
     .cmap-drawer-file {
       display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 6px 8px;
-      border: 1px solid var(--rule); border-left: 3px solid var(--cmap-key); border-radius: 5px;
+      border: 1px solid var(--rule); border-left: 3px solid var(--c-arch); border-radius: 5px;
       background: var(--sunk); color: var(--ink); text-align: left; cursor: pointer;
     }
     .cmap-drawer-file.added { border-left-color: var(--add); }
@@ -3881,7 +3873,7 @@ ${DARK_PALETTE}
       });
       var mPrefix = 'cmapm' + (archMarkers++) + '-';
       var mDefs = svgEl('defs');
-      [['plain', 'var(--muted)'], ['hot', 'var(--cmap-key)']].forEach(function mkArrow(spec) {
+      [['plain', 'var(--muted)'], ['hot', 'var(--c-arch)']].forEach(function mkArrow(spec) {
         var marker = svgEl('marker', {
           id: mPrefix + spec[0], viewBox: '0 0 10 10', refX: '8.5', refY: '5',
           markerWidth: '6.5', markerHeight: '6.5', orient: 'auto-start-reverse',
@@ -4034,7 +4026,7 @@ ${DARK_PALETTE}
         markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse',
       });
       var fmp = svgEl('path', { d: 'M0,1 L9,5 L0,9 z' });
-      fmp.style.fill = 'var(--cmap-key)';
+      fmp.style.fill = 'var(--c-arch)';
       fMark.appendChild(fmp);
       fDefs.appendChild(fMark);
       fileSvg.appendChild(fDefs);
@@ -4213,7 +4205,7 @@ ${DARK_PALETTE}
           x: String(modM.x), y: String(modM.y), width: String(modM.w), height: String(modM.h), rx: '10',
         });
         if (modM.impact === 'major') {
-          mRect.style.fill = modM.addedCount === modM.changedCount ? 'var(--add)' : (modM.deletedCount === modM.changedCount ? 'var(--del)' : 'var(--cmap-key)');
+          mRect.style.fill = modM.addedCount === modM.changedCount ? 'var(--add)' : (modM.deletedCount === modM.changedCount ? 'var(--del)' : 'var(--c-arch)');
           mRect.style.fillOpacity = '0.85';
         } else if (modM.impact === 'minor') {
           mRect.style.fill = 'var(--slate)';

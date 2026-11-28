@@ -52,7 +52,7 @@ export function layoutCodebaseMap(map, detailsByPath) {
   }
 
   var modules = [];
-  var byId = {};
+  var byId = Object.create(null);
   for (var i = 0; i < rawModules.length; i++) {
     var rm = rawModules[i];
     if (!rm || typeof rm.id !== 'string' || byId[rm.id]) continue;
@@ -78,7 +78,7 @@ export function layoutCodebaseMap(map, detailsByPath) {
 
   // Partition connected vs isolated modules so standalone folders (docs, root)
   // sit in a quiet trailing column instead of stretching the dependency layers.
-  var degree = {};
+  var degree = Object.create(null);
   for (var d = 0; d < modEdges.length; d++) {
     degree[modEdges[d].from] = (degree[modEdges[d].from] || 0) + 1;
     degree[modEdges[d].to] = (degree[modEdges[d].to] || 0) + 1;
@@ -96,11 +96,11 @@ export function layoutCodebaseMap(map, detailsByPath) {
   }
 
   // DFS back-edge detection on connected modules to break cycles cleanly.
-  var out = {};
+  var out = Object.create(null);
   for (var k = 0; k < modEdges.length; k++) {
     (out[modEdges[k].from] = out[modEdges[k].from] || []).push(modEdges[k]);
   }
-  var mark = {};
+  var mark = Object.create(null);
   function visit(id) {
     mark[id] = 1;
     var list = out[id] || [];
@@ -139,7 +139,7 @@ export function layoutCodebaseMap(map, detailsByPath) {
   // Order each vertical column by barycenter of upstream (west) neighbors and
   // group affinity to minimize highway crossings, then wrap tall layers into
   // adjacent columns.
-  var order = {};
+  var order = Object.create(null);
   var cols = [];
   for (var l = 0; l < layers.length; l++) {
     var layer = layers[l] || [];
@@ -213,7 +213,7 @@ export function layoutCodebaseMap(map, detailsByPath) {
   var height = Math.ceil(MARGIN * 2 + maxColH + bottomGutter);
 
   // Convert each file parcel's local offset into absolute map coordinates.
-  var fileBoxByPath = {};
+  var fileBoxByPath = Object.create(null);
   for (var mi = 0; mi < modules.length; mi++) {
     var md = modules[mi];
     for (var fi = 0; fi < md.parcels.length; fi++) {
@@ -227,8 +227,8 @@ export function layoutCodebaseMap(map, detailsByPath) {
   }
 
   // Spread edge anchors evenly along each district's side so highways do not overlap.
-  var portCounts = {};
-  var portSeen = {};
+  var portCounts = Object.create(null);
+  var portSeen = Object.create(null);
   for (var ec = 0; ec < modEdges.length; ec++) {
     var edc = modEdges[ec];
     var sides = pickSides(byId[edc.from], byId[edc.to], edc.back);
