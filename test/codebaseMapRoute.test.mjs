@@ -4,13 +4,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { isolatedEnv } from '../../test/isolatedEnv.mjs';
+import { isolatedEnv } from './isolatedEnv.mjs';
 
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'review-map-route-'));
 process.env.WOODSHED_REVIEWS = path.join(DIR, 'reviews');
 
-const { handleReviewRequest } = await import('./index.mjs');
-const { writeSessionReview, writeDiff } = await import('./store.mjs');
+const { handleReviewRequest } = await import('../shared/review/index.mjs');
+const { writeSessionReview, writeDiff } = await import('../shared/review/store.mjs');
 
 const AUTHOR = ['-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false'];
 

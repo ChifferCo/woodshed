@@ -4,9 +4,9 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { isolatedEnv } from '../../test/isolatedEnv.mjs';
+import { isolatedEnv } from './isolatedEnv.mjs';
 
-import { buildCodebaseMap, extractImports } from './codebaseMap.mjs';
+import { buildCodebaseMap, extractImports } from '../shared/review/codebaseMap.mjs';
 
 const AUTHOR = ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', '-c', 'commit.gpgsign=false'];
 
