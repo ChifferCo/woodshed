@@ -279,3 +279,12 @@ test('a success whose body cannot be read, or holds no token, is ambiguous too: 
     assert.equal(posts, 1);
   }
 });
+
+test('what is remembered of a login does not depend on the capitals the handle is written in', async (t) => {
+  capture(t);
+  const fetch = xai({ token: { status: 400, body: { error: 'invalid_grant' } } });
+  const grok = make(store(login()), fetch);
+  await grok.fresh('Lou');
+  await grok.fresh('lou');
+  assert.equal(fetch.calls.filter((c) => c.method === 'POST').length, 1);
+});

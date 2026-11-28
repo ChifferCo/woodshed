@@ -69,6 +69,7 @@ export function createGrokLogin({ userSettings = null, sessions = () => [], fetc
   // By login: the saved text that must not be sent again (a digest, so a new login is tried) with why, and when a try failed.
   const refused = new Map();
   const failedAt = new Map();
+  const keyOf = (login) => String(login).toLowerCase();
 
   const turn = (login, fn) => userSettings.agentAuthTurn
     ? userSettings.agentAuthTurn(login, 'grok', fn)
@@ -182,9 +183,9 @@ export function createGrokLogin({ userSettings = null, sessions = () => [], fetc
       const stay = (why) => ({ saved, state: gone ? 'expired' : 'ok', why: gone ? `the author's saved ${product} login has expired, ${why}` : null });
       if (!info.refreshable) return stay('and it holds no refresh token: save a new one');
       const digest = agents.signInDigest(saved);
-      if (refused.get(login)?.digest === digest) return stay(refused.get(login).why);
+      if (refused.get(keyOf(login))?.digest === digest) return stay(refused.get(keyOf(login)).why);
       if (growing(login)) return stay("and a Grok session of the author's is running: it refreshes the login when it stops");
-      if (now0 - (failedAt.get(login) ?? 0) < RETRY_MS) return stay('and the console could not refresh it just now');
+      if (now0 - (failedAt.get(keyOf(login)) ?? 0) < RETRY_MS) return stay('and the console could not refresh it just now');
       const { scope, entry } = loginEntryOf(JSON.parse(saved));
       let renewed;
       try {
@@ -192,11 +193,11 @@ export function createGrokLogin({ userSettings = null, sessions = () => [], fetc
       } catch (err) {
         if (err.terminal) {
           const why = err.ambiguous ? 'and the console cannot tell whether xAI took its refresh: save a new one' : 'and xAI refused to refresh it: save a new one';
-          refused.set(login, { digest, why });
+          refused.set(keyOf(login), { digest, why });
           console.warn('grokLogin: xAI refused the refresh, the login is not tried again until a new one is saved', { login, status: err.status, code: err.code, ambiguous: Boolean(err.ambiguous) });
           return stay(why);
         }
-        failedAt.set(login, now0);
+        failedAt.set(keyOf(login), now0);
         console.warn('grokLogin: refresh not completed', { login, message: err?.name === 'TimeoutError' ? 'timed out' : String(err?.message ?? err).split('\n')[0].slice(0, 120) });
         return stay('and the console could not refresh it just now');
       }
@@ -213,10 +214,10 @@ export function createGrokLogin({ userSettings = null, sessions = () => [], fetc
         console.error('grokLogin: the refreshed login could not be saved, the saved one is out of date', { login, message: err?.shown ? err.message : 'the store refused' });
         // xAI has rotated the token, so the one still saved is spent: never sent again until a different login is saved.
         const why = 'and the console could not save its refresh, which used up the saved login: save a new one';
-        refused.set(login, { digest, why });
+        refused.set(keyOf(login), { digest, why });
         return stay(why);
       }
-      failedAt.delete(login);
+      failedAt.delete(keyOf(login));
       console.log('grokLogin: login refreshed', { login, expiresAt: renewed.expires_at });
       return { saved: next, state: 'refreshed', why: null };
     });
@@ -245,6 +246,6 @@ export function createGrokLogin({ userSettings = null, sessions = () => [], fetc
     /** What `status` last said of this login, if it did lately: for a view that cannot wait. */
     cached: (login) => { const k = seen.get(String(login).toLowerCase()); return k && now() - k.at < 5 * 60_000 ? k.value : null; },
     // A new login was saved, or removed: what was known of the old one no longer holds.
-    forget: (login) => { refused.delete(login); failedAt.delete(login); seen.delete(String(login).toLowerCase()); },
+    forget: (login) => { refused.delete(keyOf(login)); failedAt.delete(keyOf(login)); seen.delete(String(login).toLowerCase()); },
   };
 }
