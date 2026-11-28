@@ -29,6 +29,9 @@
 //                                     except a sign-in already saved when that default shipped, or found in the
 //                                     secret store without a save on My settings since
 //   GET  /api/my/reviews              who reviews my pull requests, and the choices this console can run for me
+//                                     and the model each reviewer runs on (`models`, `modelDefaults`)
+//   POST /api/my/reviews              {"models": {"claude": "sonnet", "codex": "gpt-5.5"}} alone sets the models each reviewer runs on
+//                                     ("" or a missing reviewer is its default); with a choice it sets both
 //   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|"claude+grok"|…|null}   null is every
 //                                     reviewer that can run, and accepts that default for someone still on the
 //                                     previous one; any reviewers joined with + (shared/agents.cjs, reviewersOf)
@@ -2824,9 +2827,9 @@ export function createHandler({
 
   /** My settings' Reviews card: who reviews my pull requests, and what this console can run for me (reviewAgents.mjs). */
   async function myReviewsView(login) {
-    if (!reviewAgents) return { available: Object.fromEntries(agentsRegistry.REVIEW_AGENT_IDS.map((id) => [id, false])), best: 'none', choice: null };
+    if (!reviewAgents) return { available: Object.fromEntries(agentsRegistry.REVIEW_AGENT_IDS.map((id) => [id, false])), best: 'none', choice: null, models: {}, modelDefaults: agentsRegistry.REVIEW_DEFAULT_MODELS, claudeModels: agentsRegistry.REVIEW_CLAUDE_MODELS };
     const { available, own, ownWhy, best, expanded } = await reviewAgents.options(login);
-    return { available, own, ownWhy, best, expanded, choice: userSettings?.reviewAgents(login) ?? null };
+    return { available, own, ownWhy, best, expanded, choice: userSettings?.reviewAgents(login) ?? null, models: userSettings?.reviewModels?.(login) ?? {}, modelDefaults: agentsRegistry.REVIEW_DEFAULT_MODELS, claudeModels: agentsRegistry.REVIEW_CLAUDE_MODELS };
   }
 
   // `woodshed review start`: the console's review of one of the person's own open pull requests, now (fleet.mjs,
@@ -2860,7 +2863,12 @@ export function createHandler({
       return reply(res, 400, { error: err.message });
     }
     try {
-      userSettings.setReviewAgents(login, body?.choice ?? null);
+      // Either half alone: a body with only `models` leaves who reviews as it is, and one with only `choice` leaves the models.
+      const hasModels = body && typeof body === 'object' && Object.hasOwn(body, 'models');
+      // Both halves are checked before either is kept, so a refused body changes nothing.
+      if (hasModels) userSettings.checkReviewModels(body.models);
+      if (!hasModels || (body && Object.hasOwn(body, 'choice'))) userSettings.setReviewAgents(login, body?.choice ?? null);
+      if (hasModels) userSettings.setReviewModels(login, body.models);
     } catch (err) {
       if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
       throw err;

@@ -181,6 +181,61 @@
     return preset ?? ids.join('+');
   }
 
+  /**
+   * The model each reviewer runs on when its author picked none: Claude Code's `opus`, as reviews always ran. The others
+   * run on their own default (no entry), which each agent's own sign-in decides.
+   */
+  const REVIEW_DEFAULT_MODELS = Object.freeze({ claude: 'opus' });
+  /** What a review's Claude Code may be told with `--model`: the same list New session offers. */
+  const REVIEW_CLAUDE_MODELS = Object.freeze(['opus', 'sonnet', 'haiku', 'fable']);
+
+  // The start of a known kind of key, and the look of any other: a long run of letters and digits in mixed case, which no
+  // model name is. Not the whole of shared/secretLike.mjs (an ES module, and this file is also the browser's): the console
+  // checks a pick against that as well (userSettings.mjs).
+  function looksLikeSecret(part) {
+    return /^(?:gh[pousr]_|github_pat_|glpat-|sk-|sk_|rk_|xai-|gsk_|hf_|npm_|pplx-|AIza|AKIA|ASIA|xox[a-z]-|xapp-|xoxe\.|wsc_|wt_)/i.test(part)
+      || (part.length >= 32 && /^[A-Za-z0-9_]+$/.test(part) && /[a-z]/.test(part) && /[A-Z]/.test(part) && /\d/.test(part));
+  }
+
+  /** @returns {boolean}  whether `model` is one a review of this reviewer may run on (never empty: that is no pick) */
+  function reviewModelOk(id, model) {
+    if (!REVIEW_AGENT_IDS.includes(id) || typeof model !== 'string' || !model) return false;
+    // A model name is never a credential: one pasted into the box by mistake is refused, never kept or logged.
+    // Each part of `provider/model` is checked, as OpenCode's pick has the model after a slash.
+    if (model.split('/').some(looksLikeSecret)) return false;
+    if (id === 'claude') return REVIEW_CLAUDE_MODELS.includes(model);
+    // A review runs OpenCode on one provider's key (OPENCODE_REVIEW_PROVIDERS), spelt as review.sh compares it.
+    if (id === 'opencode' && !OPENCODE_REVIEW_PROVIDERS.includes(model.split('/')[0])) return false;
+    return modelShapeOk(id, model);
+  }
+
+  /**
+   * The picks in `models` a review may use, in the registry's order: a reviewer's id and a model it takes. Anything else
+   * (an unknown reviewer, an empty or misshapen model) is left out, so the result is safe to put on a command line.
+   * @param {unknown} models  `{claude: 'sonnet', codex: 'gpt-5'}`
+   * @returns {Record<string, string>}
+   */
+  function reviewModelsOf(models) {
+    if (!models || typeof models !== 'object' || Array.isArray(models)) return {};
+    return Object.fromEntries(REVIEW_AGENT_IDS.filter((id) => Object.hasOwn(models, id) && reviewModelOk(id, models[id])).map((id) => [id, models[id]]));
+  }
+
+  /** The picks as one line, `claude=sonnet codex=gpt-5`, the form REVIEW_MODELS takes; empty for none. */
+  function reviewModelsText(models) {
+    return Object.entries(reviewModelsOf(models)).map(([id, model]) => `${id}=${model}`).join(' ');
+  }
+
+  /** The picks of a line typed as `claude=sonnet,codex=gpt-5` (or spaces), or null when any word is not one. */
+  function parseReviewModels(text) {
+    const out = {};
+    for (const word of String(text).split(/[\s,]+/).filter(Boolean)) {
+      const [id, model, ...more] = word.split('=');
+      if (more.length || !reviewModelOk(id, model) || Object.hasOwn(out, id)) return null;
+      out[id] = model;
+    }
+    return reviewModelsOf(out);
+  }
+
   /** Every name tmux or hc gives the agent's program, whichever agent it is. */
   const PROCESS_NAMES = Object.freeze([...new Set(AGENT_IDS.flatMap((id) => AGENTS[id].processNames))]);
 
@@ -283,5 +338,5 @@
     return require('node:crypto').createHash('sha256').update(canonical).digest('hex');
   }
 
-  return { AGENTS, AGENT_IDS, RANKS, modeForStartedSession, OWN_SIGN_IN_AGENTS, OWN_ONLY_AGENTS, REVIEW_AGENT_IDS, OPENCODE_REVIEW_PROVIDERS, REVIEW_PRESETS, reviewersOf, reviewChoiceOf, PROCESS_NAMES, isAgent, agent, agentOfSession, modelShapeOk, checkSignIn, signInDigest };
+  return { AGENTS, AGENT_IDS, RANKS, modeForStartedSession, OWN_SIGN_IN_AGENTS, OWN_ONLY_AGENTS, REVIEW_AGENT_IDS, OPENCODE_REVIEW_PROVIDERS, REVIEW_PRESETS, reviewersOf, reviewChoiceOf, REVIEW_DEFAULT_MODELS, REVIEW_CLAUDE_MODELS, reviewModelOk, reviewModelsOf, reviewModelsText, parseReviewModels, PROCESS_NAMES, isAgent, agent, agentOfSession, modelShapeOk, checkSignIn, signInDigest };
 });

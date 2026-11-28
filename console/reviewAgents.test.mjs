@@ -28,9 +28,10 @@ const AGENT_SIGN_INS = {
   },
 };
 
-function setup({ team = { claude: true, codex: true }, claudeOwn = [], codexOwn = [], agentOwn = {}, choices = {}, legacy = [], keysFail = false, agentAuthFails = false } = {}) {
+function setup({ team = { claude: true, codex: true }, claudeOwn = [], codexOwn = [], agentOwn = {}, choices = {}, legacy = [], keysFail = false, agentAuthFails = false, models = {} } = {}) {
   const userSettings = {
     reviewAgents: (login) => choices[login] ?? null,
+    reviewModels: (login) => models[login] ?? {},
     usesOwnTokenForShared: (login) => claudeOwn.includes(login),
     usesOwnCodexForReviews: (login) => codexOwn.includes(login),
     codexAuth: async (login) => SIGN_INS[login] ?? null,
@@ -221,6 +222,16 @@ test('an author\'s Grok Build or OpenCode sign-in that could not be read is said
   const r = await agents.forReview({ login: 'gil' });
   assert.deepEqual([r.agents, r.keysUnread], [[], true]);
   assert.match(r.why, /the author's Grok Build sign-in could not be read: Secrets Manager timed out/);
+});
+
+test('a review carries the author\'s model picks for the reviewers that run, and none for a default', async () => {
+  const agents = setup({ team: { claude: true, codex: true }, choices: { ana: 'claude+codex' }, models: { ana: { claude: 'sonnet', codex: 'gpt-5.5' }, bo: { claude: 'haiku' } } });
+  assert.deepEqual((await agents.forReview({ login: 'ana' })).models, { claude: 'sonnet', codex: 'gpt-5.5' });
+  assert.deepEqual((await agents.forReview({ login: 'bo' })).models, { claude: 'haiku' }, 'Codex has no pick, so it runs on its default');
+  assert.equal('models' in (await agents.forReview({ login: 'cy' })), false, 'no picks, no models');
+  assert.equal('models' in (await agents.forReview({ login: null })), false, 'nobody\'s own pick counts for a review with no login');
+  const codexOnly = setup({ team: { claude: true, codex: true }, choices: { ana: 'codex' }, models: { ana: { claude: 'sonnet', codex: 'gpt-5.5' } } });
+  assert.deepEqual((await codexOnly.forReview({ login: 'ana' })).models, { codex: 'gpt-5.5' }, 'a pick for a reviewer that does not run is left out');
 });
 
 test('an expired Grok login is refreshed before Grok Build is left out of a review, and says why when it cannot be', async () => {

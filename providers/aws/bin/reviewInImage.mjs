@@ -15,6 +15,7 @@
 // each agent took a turn after its tool call, and the proxy refused none of their bodies:
 //
 //   node woodshed/providers/aws/bin/reviewInImage.mjs <image> [pull request number]
+//   IN_IMAGE_MODELS=grok=grok-build,opencode=anthropic/claude-sonnet-4-5 IN_IMAGE_BRANCH_REVIEW_SH=1 node … (model picks; this checkout's review.sh)
 //
 // Needs Docker, and `gh` on this computer to read the pull request's branch and commit, here. The container runs the pull
 // request's code and the reviewers read what anyone who can push to it wrote, so it is handed no GitHub credential of
@@ -37,6 +38,7 @@ import { sessionOverrides } from '../ecsLauncher.mjs';
 import { createFleet } from '../../../console/fleet.mjs';
 import { createSessionApi } from '../../../console/sessionApi.mjs';
 import { createReviewAgentProxy, isReviewAgentPath, reviewAgentTokenOf } from '../../../console/reviewAgentProxy.mjs';
+import agentsRegistry from '../../../shared/agents.cjs';
 import { envValue } from '../../../shared/envNames.mjs';
 import { taskDefinitionEnv } from './askInImageEnv.mjs';
 import { modelStandIn } from './modelStandIn.mjs';
@@ -65,6 +67,11 @@ const SIGN_INS = {
   opencode: JSON.stringify({ [OPENCODE_PROVIDER]: { type: 'api', key: OPENCODE_KEY } }),
 };
 const GH_TOKEN = process.env.IN_IMAGE_GH_TOKEN || null;
+// The author's model picks (REVIEW_MODELS, as `grok=grok-build,opencode=anthropic/claude-sonnet-4-5`), which the review passes
+// to each reviewer's --model, and IN_IMAGE_BRANCH_REVIEW_SH=1 to run this checkout's session/review.sh in place of the one
+// the image was built with, for a change to it that no image has yet.
+const MODELS = agentsRegistry.parseReviewModels(process.env.IN_IMAGE_MODELS || '') ?? (() => { console.error('IN_IMAGE_MODELS must be reviewer=model words, such as grok=grok-build'); process.exit(2); })();
+const BRANCH_REVIEW_SH = process.env.IN_IMAGE_BRANCH_REVIEW_SH === '1';
 // With no token, the start's `gh pr checkout <n> --force` by git from the pull ref; anything else to the image's gh,
 // which holds only the placeholder.
 const STAND_IN_GH = `#!/bin/bash
@@ -108,7 +115,7 @@ async function reviewEnv() {
     kind: 'pr', number: Number(NUMBER), title: 'Review: reviewInImage', startedBy: AUTHOR, trigger: 'review', branch: pull.headRefName,
     review: {
       base: pull.baseRefName, sha: pull.headRefOid, heading: '## Claude review', author: null, check: null, commentId: null,
-      agents: ['grok', 'opencode'], ownSignIns: { grok: { login: AUTHOR, via: GROK_VIA }, opencode: { login: AUTHOR, provider: OPENCODE_PROVIDER } },
+      agents: ['grok', 'opencode'], ...(Object.keys(MODELS).length ? { models: MODELS } : {}), ownSignIns: { grok: { login: AUTHOR, via: GROK_VIA }, opencode: { login: AUTHOR, provider: OPENCODE_PROVIDER } },
     },
   });
   return { fleet, overrides: sessionOverrides(started[0]) };
@@ -192,6 +199,7 @@ try {
     fs.writeFileSync(standIn, STAND_IN_GH, { mode: 0o755 });
     docker('cp', standIn, `${CONTAINER}:/usr/local/sbin/gh`);
   }
+  if (BRANCH_REVIEW_SH) docker('cp', path.join(import.meta.dirname, '../../../session/review.sh'), `${CONTAINER}:/opt/woodshed/session/review.sh`);
   fs.rmSync(dir, { recursive: true });
   docker('start', CONTAINER);
   console.log(`--- container log (review session ${overrides.find((o) => o.name === 'SESSION_ID')?.value} of #${NUMBER})`);
@@ -223,6 +231,7 @@ try {
     'the review started in review mode': /mode: review|SESSION_MODE=review|Review of pull request/.test(logOf() + pane),
     'grok started in review mode': /Grok Build reviews on the author's own sign-in/.test(pane),
     'opencode started in review mode': new RegExp(`OpenCode reviews on the author's own ${OPENCODE_PROVIDER} key`).test(pane),
+    ...Object.fromEntries(['grok', 'opencode'].filter((id) => MODELS[id]).map((id) => [`${id} was run on the model picked, ${MODELS[id]}`, pane.includes(`${id === 'grok' ? 'Grok Build' : 'OpenCode'} reviews on the model the author picked`)])),
     'every call reached the console\'s proxy with the session\'s token alone': proxyCalls.length > 0 && proxyCalls.every((c) => c.sessionToken),
     'grok\'s first model call reached the console\'s proxy': proxyCalls.some((c) => c.url.startsWith('/grok/v1/')),
     [`the proxy sent grok's calls on with the made-up ${GROK_VIA === 'login' ? 'login, to the login\'s upstream' : 'xAI key'}`]: grokCalls.length > 0 && grokCalls.every((c) => c.grokKey),

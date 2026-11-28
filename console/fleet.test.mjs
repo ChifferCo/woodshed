@@ -3247,6 +3247,18 @@ test('a review runs whom its author chose, and says so on the pull request', asy
   assert.match(codex.calls.comments[0].body, /Reviewing\*\* with Codex in/);
 });
 
+test('the models an author picked reach the review session as REVIEW_MODELS, and none picked sets nothing', async () => {
+  const picked = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['claude', 'codex'], models: { claude: 'sonnet', codex: 'gpt-5.5' }, why: null }) } });
+  await picked.fleet.reviewOnTag({ number: 7 });
+  assert.deepEqual(picked.fleet.sessions()[0].review.models, { claude: 'sonnet', codex: 'gpt-5.5' });
+  await picked.fleet.tick();
+  assert.equal(picked.calls.started[0].env.REVIEW_MODELS, 'claude=sonnet codex=gpt-5.5');
+  const none = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['claude'], why: null }) } });
+  await none.fleet.reviewOnTag({ number: 7 });
+  await none.fleet.tick();
+  assert.equal(none.calls.started[0].env.REVIEW_MODELS, undefined, 'a reviewer\'s default is the session\'s to apply');
+});
+
 test('a review on its author\'s Grok Build and OpenCode sign-ins records whose they are, and the session gets none of them', async (t) => {
   const lines = [];
   t.mock.method(console, 'log', (...args) => lines.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')));

@@ -109,7 +109,7 @@ function listen(handler) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runReview(t, { committed = {}, origin = 'https://github.com/Acme/widgets.git', agents = null, claude = FAKE_CLAUDE, codex = FAKE_CODEX, grok = FAKE_GROK, opencode = FAKE_OPENCODE, provider = null, via = null, account = null, codexMinutes = null, relay = null } = {}) {
+async function runReview(t, { committed = {}, origin = 'https://github.com/Acme/widgets.git', agents = null, claude = FAKE_CLAUDE, codex = FAKE_CODEX, grok = FAKE_GROK, opencode = FAKE_OPENCODE, provider = null, via = null, account = null, codexMinutes = null, relay = null, models = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-sh-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const sessionDir = path.join(dir, 'session');
@@ -153,7 +153,7 @@ async function runReview(t, { committed = {}, origin = 'https://github.com/Acme/
     SESSION_ID: '0a1b2c3d', SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`, REVIEW_SCRIPT: REVIEW_MJS,
     REVIEW_RUNNING: path.join(dir, 'running'), REVIEW_AUTHOR: 'rev[bot]', GIT_ALLOW_PROTOCOL: 'file',
   };
-  for (const k of ["REVIEW_AGENTS", "REVIEW_CODEX_AUTH", "REVIEW_CODEX_ACCOUNT", "REVIEW_CODEX_MINUTES", "REVIEW_OPENCODE_PROVIDER"]) delete env[k];
+  for (const k of ["REVIEW_AGENTS", "REVIEW_CODEX_AUTH", "REVIEW_CODEX_ACCOUNT", "REVIEW_CODEX_MINUTES", "REVIEW_OPENCODE_PROVIDER", "REVIEW_MODELS"]) delete env[k];
   delete env.GITHUB_REPOSITORY;
   delete env.WOODSHED_CODEX_AUTH;
   delete env.CODEX_HOME;
@@ -163,6 +163,7 @@ async function runReview(t, { committed = {}, origin = 'https://github.com/Acme/
   if (provider) env.REVIEW_OPENCODE_PROVIDER = provider;
   env.CODEX_SEEN = seen;
   if (agents) env.REVIEW_AGENTS = agents;
+  if (models) env.REVIEW_MODELS = models;
   if (via) env.REVIEW_CODEX_AUTH = via;
   if (account) env.REVIEW_CODEX_ACCOUNT = account;
   env.REVIEW_CHATGPT_RELAY = relay ?? path.join(HERE, 'chatgptRelay.mjs');
@@ -357,6 +358,48 @@ test('OpenCode alone on the author\'s OpenAI key, and none at all with no provid
   const none = await runReview(t, { agents: 'claude opencode' });
   assert.match(none.output, /OpenCode has no provider to review on, so it does not review/);
   assert.deepEqual(none.reports.find((r) => r.path === '/review-report').body.agents, ['claude']);
+});
+
+// Fakes that keep the arguments they were run with, and approve, for the model picks.
+const LOGGING = (prompt) => `#!/bin/bash
+line=$(basename "$0"); for a in "$@"; do [ "\${#a}" -lt 80 ] && line="$line $a" || line="$line <prompt>"; done; printf '%s \\n' "$line" >> "$ARGS_LOG"
+prompt=${prompt}
+dir=$(printf '%s' "$prompt" | grep -o '[^ \`]*/context\\.md' | head -1 | sed 's#/context\\.md$##')
+echo APPROVE > "$dir/verdict.txt"; echo ok > "$dir/summary.md"; printf 'LOW\\nDocs.\\n' > "$dir/merge-risk.md"
+[ "$WOODSHED_CODEX_AUTH" = key ] || true
+`;
+
+test('the models an author picked are passed to each reviewer, and a reviewer with none runs on its default', async (t) => {
+  const log = path.join(os.tmpdir(), `review-args-${process.pid}-${Date.now()}`);
+  t.after(() => fs.rmSync(log, { force: true }));
+  process.env.ARGS_LOG = log;
+  t.after(() => { delete process.env.ARGS_LOG; });
+  const claude = LOGGING('$4').replace('[ "$WOODSHED_CODEX_AUTH" = key ] || true', "echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false}'");
+  const codex = LOGGING('${@: -1}');
+  const grok = LOGGING('$2');
+  const opencode = LOGGING('${@: -1}');
+  const run = await runReview(t, { agents: 'claude codex grok opencode', via: 'key', provider: 'openai', claude, codex, grok, opencode, models: 'claude=sonnet codex=gpt-5.5 grok=grok-4:beta opencode=openai/ft:gpt-5:acme' });
+  const seen = fs.readFileSync(log, 'utf8');
+  assert.match(run.output, /Grok Build reviews on the model the author picked/);
+  assert.doesNotMatch(run.output, /grok-4:beta|gpt-5\.5|ft:gpt-5/, 'the pane never shows a pick');
+  assert.match(seen, /^claude --model sonnet -p <prompt> /m);
+  assert.match(seen, /^codex exec --model gpt-5\.5 /m);
+  assert.match(seen, /^grok -p <prompt> --model grok-4:beta /m, 'the exact model, colon and all');
+  assert.match(seen, /^opencode run --pure --auto --model openai\/ft:gpt-5:acme /m);
+});
+
+test('with no picks Claude Code runs on opus as before, and a pick that is not a model name, or not OpenCode\'s provider, is ignored', async (t) => {
+  const log = path.join(os.tmpdir(), `review-args-${process.pid}-${Date.now()}-b`);
+  t.after(() => fs.rmSync(log, { force: true }));
+  process.env.ARGS_LOG = log;
+  t.after(() => { delete process.env.ARGS_LOG; });
+  const claude = LOGGING('$4').replace('[ "$WOODSHED_CODEX_AUTH" = key ] || true', "echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false}'");
+  const opencode = LOGGING('${@: -1}');
+  const out = await runReview(t, { agents: 'claude opencode', provider: 'openai', claude, opencode, models: 'claude=$(touch${IFS}x) opencode=anthropic/claude-sonnet-4-5' });
+  const seen = fs.readFileSync(log, 'utf8');
+  assert.match(seen, /^claude --model opus -p /m);
+  assert.doesNotMatch(seen.split('\n').find((l) => l.startsWith('opencode')), /--model/);
+  assert.match(out.output, /not on openai/);
 });
 
 test('a refusal from the console reaches the pane, naming the reviewer', async (t) => {
