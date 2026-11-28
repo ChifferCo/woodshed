@@ -23,6 +23,13 @@ test('the dev console\'s review session opens with its analysis, every file of i
   assert.deepEqual(placed, changed, 'the analysis places exactly the files the change has');
   for (const d of status.review.decisions) for (const f of d.files) assert.ok(changed.includes(f), f);
 
+  const { code: mapCode, body: map } = await get('/reviews/claude-beadfeed/map');
+  assert.equal(mapCode, 200);
+  assert.equal(map.ok, true);
+  assert.equal(map.changedFiles, changed.length);
+  assert.ok(map.totalFiles > changed.length, 'the map includes unchanged codebase modules alongside the diff');
+  assert.ok(map.moduleEdges.length > 0, 'cross-module imports are extracted');
+
   const other = await fetch(`http://127.0.0.1:${review.port}/status`);
   assert.equal(other.status, 404);
 });
