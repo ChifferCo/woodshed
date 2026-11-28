@@ -12,7 +12,7 @@ function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 }
 
-const KEYS = ['terminal', 'reviews', 'codex-reviews', 'grok-reviews', 'opencode-reviews', 'claude-token-shared', 'default-repo', 'github-name', 'github-email'];
+const KEYS = ['terminal', 'reviews', 'review-models', 'codex-reviews', 'grok-reviews', 'opencode-reviews', 'claude-token-shared', 'default-repo', 'github-name', 'github-email'];
 
 // A console with the real My settings (userSettings.mjs) over a secret store that keeps nothing: mia-dev has a Claude
 // token saved and GitHub connected, octocat has neither. A command line token for each.
@@ -84,7 +84,7 @@ test('GET /api/cli/config answers its person\'s choices, exactly these keys and 
   const mine = await c.call('/api/cli/config');
   assert.equal(mine.status, 200);
   assert.deepEqual(mine.body, {
-    terminal: 'tmux', reviews: 'default', 'codex-reviews': 'off', 'grok-reviews': 'off', 'opencode-reviews': 'off', 'claude-token-shared': 'on', 'default-repo': 'app',
+    terminal: 'tmux', reviews: 'default', 'review-models': 'default', 'codex-reviews': 'off', 'grok-reviews': 'off', 'opencode-reviews': 'off', 'claude-token-shared': 'on', 'default-repo': 'app',
     'github-name': 'Mia Dev', 'github-email': 'mia@example.com',
   });
   const theirs = await c.call('/api/cli/config', { token: c.tokens.octocat });
@@ -112,6 +112,12 @@ test('a config write runs the page\'s own route and checks, and answers with the
 
   assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { choice: 'codex' } })).body.reviews, 'codex');
   assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { choice: null } })).body.reviews, 'default');
+  const models = await c.call('/api/my/reviews', { method: 'POST', body: { models: { claude: 'sonnet', codex: 'gpt-5.5' } } });
+  assert.deepEqual([models.status, models.body['review-models'], models.body.reviews], [200, 'claude=sonnet codex=gpt-5.5', 'default'], 'models alone leave the choice as it was');
+  assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { choice: 'codex' } })).body['review-models'], 'claude=sonnet codex=gpt-5.5', 'and a choice alone leaves the models');
+  assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { models: { claude: 'gpt-5' } } })).status, 400);
+  assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { models: {} } })).body['review-models'], 'default');
+  await c.call('/api/my/reviews', { method: 'POST', body: { choice: null } });
   assert.equal((await c.call('/api/my/claude-token/shared', { method: 'POST', body: { on: false } })).body['claude-token-shared'], 'off');
   const noSignIn = await c.call('/api/my/codex-auth/reviews', { method: 'POST', body: { on: true } });
   assert.deepEqual(noSignIn, { status: 409, body: { error: 'save your Codex sign-in first' } });

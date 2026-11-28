@@ -3423,3 +3423,15 @@ These had an older prefix until the project became Woodshed; the old names still
 (`../docs/reference.md`, "Renamed variables", which also has the two that were renamed otherwise).
 
 Tests: `node --test woodshed/console/*.test.mjs`.
+
+## Review models
+
+A person picks the model each reviewer runs on, on My settings' Reviews card (a Model column beside each reviewer) or with
+`woodshed config set review-models claude=sonnet,codex=gpt-5.5`. Picks are kept with their settings (`userSettings.mjs`,
+`reviewModels`; `POST /api/my/reviews` with `{"models": {…}}`, which leaves who reviews as it is) and checked by
+`shared/agents.cjs` (`reviewModelOk`: Claude Code takes opus, sonnet, haiku or fable; the others a model name; OpenCode's
+is `provider/model`). When a review starts, `reviewAgents.forReview` hands the picks of the reviewers that run to the
+fleet, which keeps them on the review and sets `REVIEW_MODELS` (`claude=sonnet codex=gpt-5.5`, in `PER_SESSION_ENV`).
+`session/review.sh` passes each to its reviewer's `--model`. A reviewer with no pick runs on its default: Claude Code on
+`opus`, as reviews always did, the others on their own agent's. An OpenCode pick from a provider other than the one
+its review runs on is ignored, with a line in the pane. The project file's `pullRequests.review` does not set models.

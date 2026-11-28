@@ -10,4 +10,8 @@ Codex, Grok Build, OpenCode): several on is all of them reviewing, all off is no
 - A pick saves at once, like a switch, and says so in the card's `form-note`. No Save button.
 - An option that cannot be chosen now is a disabled radio, and its row says what it needs in `meta` under the name,
   with the name in `sub`. Never hide the row: the person sees what turning it on would take.
+- An optional last column holds one control a row may have beside its on/off, such as the model a reviewer runs on:
+  a native `select` (a short fixed list) or a text input (`.field`, `mono` for a name typed), left-aligned, 11.5rem
+  wide (`.onoff-model`), with an `aria-label` naming its row. It saves at once like a radio. An empty one means the
+  row's default, which its placeholder or first option says.
 - Use it for two to four rows. One thing on or off is a switch (`toggle-row`); several exclusive choices are a select.

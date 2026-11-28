@@ -79,7 +79,7 @@ test('config list and get print the person\'s choices, and --json gives every ke
   const json = await c.run(['config', 'list', '--json']);
   assert.deepEqual(json.lines, [{
     console: c.origin,
-    config: { terminal: 'tmux', reviews: 'default', 'codex-reviews': 'off', 'grok-reviews': 'off', 'opencode-reviews': 'off', 'claude-token-shared': 'on', 'default-repo': 'app', 'github-name': 'Mia Dev', 'github-email': 'mia@example.com' },
+    config: { terminal: 'tmux', reviews: 'default', 'review-models': 'default', 'codex-reviews': 'off', 'grok-reviews': 'off', 'opencode-reviews': 'off', 'claude-token-shared': 'on', 'default-repo': 'app', 'github-name': 'Mia Dev', 'github-email': 'mia@example.com' },
   }]);
   assert.deepEqual(Object.keys(json.lines[0].config), Object.keys(CONFIG_KEYS));
 
@@ -103,6 +103,16 @@ test('config set changes a choice through the page\'s route, and says when it re
   const reviews = await c.run(['config', 'set', 'reviews', 'default', '--json']);
   assert.equal(reviews.lines[0].value, 'default');
   assert.equal(c.userSettings.reviewAgents('mia-dev'), null, 'default is the console\'s null: the most there is');
+
+  const picked = await c.run(['config', 'set', 'review-models', 'claude=sonnet,codex=gpt-5.5']);
+  assert.equal(picked.out, 'review-models is claude=sonnet codex=gpt-5.5. It applies to the next review.\n', picked.err);
+  assert.deepEqual(c.userSettings.reviewModels('mia-dev'), { claude: 'sonnet', codex: 'gpt-5.5' });
+  assert.equal(c.userSettings.reviewAgents('mia-dev'), null, 'the reviewer choice is as it was');
+  const badModel = await c.run(['config', 'set', 'review-models', 'claude=gpt-5']);
+  assert.equal(badModel.code, EXIT.refused, badModel.err);
+  assert.match(badModel.err, /Claude Code's review model must be one of/);
+  assert.equal((await c.run(['config', 'set', 'review-models', 'default', '--json'])).lines[0].value, 'default');
+  assert.deepEqual(c.userSettings.reviewModels('mia-dev'), {});
 
   assert.equal((await c.run(['config', 'set', 'claude-token-shared', 'off'])).out, 'claude-token-shared is off. It applies to each shared session you start or resume from now on; running ones keep theirs.\n');
   assert.equal(c.userSettings.usesOwnTokenForShared('mia-dev'), false);
@@ -150,7 +160,7 @@ test('an unknown key, a bad value or a secret exits 3 and says what is valid, an
   const c = await consoleFor(t);
   const unknown = await c.run(['config', 'set', 'colour', 'blue']);
   assert.equal(unknown.code, EXIT.refused);
-  assert.match(unknown.err, /not a config key\. Keys: terminal, reviews, codex-reviews, grok-reviews, opencode-reviews, claude-token-shared, default-repo, github-name, github-email/);
+  assert.match(unknown.err, /not a config key\. Keys: terminal, reviews, review-models, codex-reviews, grok-reviews, opencode-reviews, claude-token-shared, default-repo, github-name, github-email/);
 
   const terminal = await c.run(['config', 'set', 'terminal', 'screen', '--json']);
   assert.equal(terminal.code, EXIT.refused);

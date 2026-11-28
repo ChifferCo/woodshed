@@ -1,21 +1,23 @@
-<!-- @dsCard group="Settings" height=200 subtitle="Off and On for a few things at once, as radios in a grid" -->
+<!-- @dsCard group="Settings" height=220 subtitle="Off and On for a few things at once, as radios in a grid" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@300..900&family=Red+Hat+Mono:wght@300..700&display=swap">
 <style>
  body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
- table{border-collapse:collapse;font-size:14px;width:100%;max-width:520px}
+ table{border-collapse:collapse;font-size:14px;width:100%;max-width:640px}
  th,td{padding:8px 12px;border-bottom:1px solid var(--line-soft);text-align:center}
  thead th{font-size:12px;font-weight:600;color:var(--label);border-bottom-color:var(--line)}
  tbody th{text-align:left;font-weight:400;padding-left:0}
  tbody tr:last-child>*{border-bottom:0}
- input{width:16px;height:16px;margin:0;accent-color:var(--green)}
+ input[type=radio]{width:16px;height:16px;margin:0;accent-color:var(--green)}
+ .m{font:inherit;font-size:13px;padding:8px 10px;border:1px solid #b9b9b9;border-radius:4px;background:var(--ground);color:var(--ink);width:11.5rem;max-width:100%}
+ th:last-child,td:last-child{text-align:left}
  .name{display:block;font-weight:600;color:var(--ink)}
  .off .name{color:var(--sub)}
  .note{display:block;margin-top:2px;font-size:12.5px;color:var(--meta)}
 </style>
 <table>
- <thead><tr><th></th><th>Off</th><th>On</th></tr></thead>
+ <thead><tr><th></th><th>Off</th><th>On</th><th>Model</th></tr></thead>
  <tbody>
-  <tr><th><span class="name">Claude Code</span></th><td><input type="radio" name="a"></td><td><input type="radio" name="a" checked></td></tr>
-  <tr class="off"><th><span class="name">Codex</span><span class="note">Needs a Codex sign-in above, or the team's OpenAI key.</span></th><td><input type="radio" name="b" checked></td><td><input type="radio" name="b" disabled></td></tr>
+  <tr><th><span class="name">Claude Code</span></th><td><input type="radio" name="a"></td><td><input type="radio" name="a" checked></td><td><select class="m" aria-label="Claude Code model"><option>Default (opus)</option><option>sonnet</option></select></td></tr>
+  <tr class="off"><th><span class="name">Codex</span><span class="note">Needs a Codex sign-in above, or the team's OpenAI key.</span></th><td><input type="radio" name="b" checked></td><td><input type="radio" name="b" disabled></td><td><input class="m" type="text" placeholder="its default" aria-label="Codex model"></td></tr>
  </tbody>
 </table>

@@ -795,6 +795,29 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     return act({ card: 'reviews', note: reviewStatus, done, call: async () => { rememberReviews(await W.postJson('/api/my/reviews', { choice })); } });
   }
 
+  // Which model each reviewer runs on: `models` is your own picks, and a reviewer with none runs on its default
+  // (`modelDefaults`: Claude Code's opus, the others' own). Saved at once; it replaces your picks as a whole.
+  function saveReviewModels(models) {
+    return act({ card: 'reviews', note: reviewStatus, done: 'Saved. It applies to the next review.', call: async () => { rememberReviews(await W.postJson('/api/my/reviews', { models })); } });
+  }
+  function modelControl(id, label) {
+    const picks = reviews.models ?? {};
+    const change = (value) => saveReviewModels({ ...picks, [id]: value.trim() });
+    const aria = `${label} model`;
+    if (id === 'claude') {
+      const fallback = reviews.modelDefaults?.claude ?? 'opus';
+      return h('select', { class: 'field onoff-model', 'aria-label': aria, disabled: busy.has('reviews'), onchange: (e) => change(e.target.value) },
+        h('option', { value: '', selected: !picks.claude }, `Default (${fallback})`),
+        ...(reviews.claudeModels ?? []).map((m) => h('option', { value: m, selected: picks.claude === m }, m)));
+    }
+    const input = h('input', {
+      class: 'field mono onoff-model', type: 'text', value: picks[id] ?? '', placeholder: A.agent(id).modelHint || 'its default', 'aria-label': aria,
+      maxlength: '100', autocomplete: 'off', spellcheck: 'false', disabled: busy.has('reviews'),
+      onchange: () => { if (input.value.trim() !== (picks[id] ?? '')) change(input.value); },
+    });
+    return input;
+  }
+
   function reviewsCard() {
     if (!reviews) return null;
     const { available, best, choice, ownWhy = {}, expanded = true } = reviews;
@@ -840,13 +863,14 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       : !names.length ? 'No code review of' : names.length === 2 ? `${listed} both review` : names.length > 2 ? `${listed} all review` : `${listed} reviews`;
     const keptNote = 'This is the default from before Grok Build and OpenCode joined it. Include every reviewer that can run, and each one whose sign-in or team key can take part. A choice that can no longer run stays on Claude Code and Codex until you do.';
     return row({ id: 'my-reviews', title: 'Reviews of my pull requests', pill: h('span', { class: choice ? 'pill is-ok' : 'pill' }, choice ? 'Your own' : widened ? 'Default' : 'As before'), value: `${who} the pull requests you open` },
-      h('p', { class: 'sub' }, 'Who reviews a pull request you open, in repos that review with Woodshed sessions. With several on, the strictest verdict wins, so it is approved only when all of them approve. With all off, there is no code review, and the Slack post and QA go on without one. Grok Build and OpenCode review only on your own sign-in, which the console adds to their calls: it never enters the review.'),
+      h('p', { class: 'sub' }, 'Who reviews a pull request you open, in repos that review with Woodshed sessions. With several on, the strictest verdict wins, so it is approved only when all of them approve. With all off, there is no code review, and the Slack post and QA go on without one. Grok Build and OpenCode review only on your own sign-in, which the console adds to their calls: it never enters the review. Model picks the one each runs on; empty is its default (Claude Code on opus), and OpenCode takes provider/model.'),
       h('table', { class: 'onoff-grid' },
-        h('thead', null, h('tr', null, h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Reviewer')), h('th', { scope: 'col' }, 'Off'), h('th', { scope: 'col' }, 'On'))),
+        h('thead', null, h('tr', null, h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Reviewer')), h('th', { scope: 'col' }, 'Off'), h('th', { scope: 'col' }, 'On'), h('th', { scope: 'col' }, 'Model'))),
         h('tbody', null, rows.map(([agent, label, needs]) => h('tr', { class: available[agent] ? null : 'is-unavailable' },
           h('th', { scope: 'row' }, h('span', { class: 'onoff-name' }, label), available[agent] ? null : h('span', { class: 'onoff-note' }, needs)),
           h('td', null, radio(agent, label, false)),
-          h('td', null, radio(agent, label, true)))))),
+          h('td', null, radio(agent, label, true)),
+          h('td', null, modelControl(agent, label)))))),
       h('p', { class: 'form-note' }, choice
         ? (nothingElse ? 'None of what you chose can run now, and nothing else can, so there is no code review.'
           : noneLeft && !widened && best === 'none' ? 'None of what you chose can run now. Claude Code and Codex cannot either, so there is no code review until you include every reviewer that can run.'

@@ -8,6 +8,18 @@
 
 import { printable } from './sessions.mjs';
 
+// `default` is every reviewer's own; else `claude=sonnet,codex=gpt-5.5`, sent as the console's models object. A word that
+// is not reviewer=model is sent as it is, for the console to refuse as it does the page's (it never echoes a value back).
+function reviewModelsBody(value) {
+  if (value === 'default') return {};
+  const models = {};
+  for (const word of String(value).split(/[\s,]+/).filter(Boolean)) {
+    const at = word.indexOf('=');
+    models[at < 0 ? word : word.slice(0, at)] = at < 0 ? '' : word.slice(at + 1);
+  }
+  return models;
+}
+
 export const CONFIG_UNAVAILABLE = 'config-unavailable';
 
 // Each key, the route that sets it, what it sends, and what it says after a change that does not reach a running
@@ -25,6 +37,14 @@ export const CONFIG_KEYS = Object.freeze({
     about: 'who reviews your pull requests; default is every reviewer that can run here, Grok Build and OpenCode included when their sign-in is on for reviews, and reviewers joined with + (claude+grok) are your own choice. A sign-in saved before that default, or found in the secret store without a save on My settings since, stays out until this is set to default',
     path: '/api/my/reviews',
     body: (value) => ({ choice: value === 'default' ? null : value }),
+    after: 'It applies to the next review.',
+  },
+  'review-models': {
+    values: null,
+    hint: 'default, or reviewer=model words such as claude=sonnet,codex=gpt-5.5',
+    about: 'the model each reviewer runs on in reviews of your pull requests; a reviewer you name no model for runs on its default (Claude Code on opus, the others on their own). Claude Code takes opus, sonnet, haiku or fable; the others a model name their sign-in has, OpenCode as provider/model',
+    path: '/api/my/reviews',
+    body: (value) => ({ models: reviewModelsBody(value) }),
     after: 'It applies to the next review.',
   },
   'codex-reviews': {

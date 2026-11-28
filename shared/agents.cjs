@@ -154,6 +154,47 @@
     return preset ?? ids.join('+');
   }
 
+  /**
+   * The model each reviewer runs on when its author picked none: Claude Code's `opus`, as reviews always ran. The others
+   * run on their own default (no entry), which each agent's own sign-in decides.
+   */
+  const REVIEW_DEFAULT_MODELS = Object.freeze({ claude: 'opus' });
+  /** What a review's Claude Code may be told with `--model`: the same list New session offers. */
+  const REVIEW_CLAUDE_MODELS = Object.freeze(['opus', 'sonnet', 'haiku', 'fable']);
+
+  /** @returns {boolean}  whether `model` is one a review of this reviewer may run on (never empty: that is no pick) */
+  function reviewModelOk(id, model) {
+    if (!REVIEW_AGENT_IDS.includes(id) || typeof model !== 'string' || !model) return false;
+    return id === 'claude' ? REVIEW_CLAUDE_MODELS.includes(model) : modelShapeOk(id, model);
+  }
+
+  /**
+   * The picks in `models` a review may use, in the registry's order: a reviewer's id and a model it takes. Anything else
+   * (an unknown reviewer, an empty or misshapen model) is left out, so the result is safe to put on a command line.
+   * @param {unknown} models  `{claude: 'sonnet', codex: 'gpt-5'}`
+   * @returns {Record<string, string>}
+   */
+  function reviewModelsOf(models) {
+    if (!models || typeof models !== 'object' || Array.isArray(models)) return {};
+    return Object.fromEntries(REVIEW_AGENT_IDS.filter((id) => Object.hasOwn(models, id) && reviewModelOk(id, models[id])).map((id) => [id, models[id]]));
+  }
+
+  /** The picks as one line, `claude=sonnet codex=gpt-5`, the form REVIEW_MODELS takes; empty for none. */
+  function reviewModelsText(models) {
+    return Object.entries(reviewModelsOf(models)).map(([id, model]) => `${id}=${model}`).join(' ');
+  }
+
+  /** The picks of a line typed as `claude=sonnet,codex=gpt-5` (or spaces), or null when any word is not one. */
+  function parseReviewModels(text) {
+    const out = {};
+    for (const word of String(text).split(/[\s,]+/).filter(Boolean)) {
+      const [id, model, ...more] = word.split('=');
+      if (more.length || !reviewModelOk(id, model) || Object.hasOwn(out, id)) return null;
+      out[id] = model;
+    }
+    return reviewModelsOf(out);
+  }
+
   /** Every name tmux or hc gives the agent's program, whichever agent it is. */
   const PROCESS_NAMES = Object.freeze([...new Set(AGENT_IDS.flatMap((id) => AGENTS[id].processNames))]);
 
@@ -249,5 +290,5 @@
     return require('node:crypto').createHash('sha256').update(canonical).digest('hex');
   }
 
-  return { AGENTS, AGENT_IDS, RANKS, modeForStartedSession, OWN_SIGN_IN_AGENTS, REVIEW_AGENT_IDS, OPENCODE_REVIEW_PROVIDERS, REVIEW_PRESETS, reviewersOf, reviewChoiceOf, PROCESS_NAMES, isAgent, agent, agentOfSession, modelShapeOk, checkSignIn, signInDigest };
+  return { AGENTS, AGENT_IDS, RANKS, modeForStartedSession, OWN_SIGN_IN_AGENTS, REVIEW_AGENT_IDS, OPENCODE_REVIEW_PROVIDERS, REVIEW_PRESETS, reviewersOf, reviewChoiceOf, REVIEW_DEFAULT_MODELS, REVIEW_CLAUDE_MODELS, reviewModelOk, reviewModelsOf, reviewModelsText, parseReviewModels, PROCESS_NAMES, isAgent, agent, agentOfSession, modelShapeOk, checkSignIn, signInDigest };
 });

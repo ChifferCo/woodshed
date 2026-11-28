@@ -565,3 +565,23 @@ test('a dotfile\'s own lines are kept as tmux\'s are, and refused with the line 
   await settings.removeAll('mia');
   assert.equal(secrets.values.size, 0, 'Remove deletes them with the rest');
 });
+
+test('the model each reviewer runs on is kept per person, checked, and replaced as a whole', () => {
+  const store = { state: {}, save() {} };
+  const settings = createUserSettings({ store, secrets: fakeSecrets() });
+  assert.deepEqual(settings.reviewModels('mia'), {}, 'none saved: every reviewer\'s default');
+  settings.setReviewModels('mia', { codex: 'gpt-5.5', claude: 'sonnet', grok: '' });
+  assert.deepEqual(settings.reviewModels('mia'), { claude: 'sonnet', codex: 'gpt-5.5' });
+  assert.deepEqual(settings.view('mia').reviewModels, { claude: 'sonnet', codex: 'gpt-5.5' });
+  assert.deepEqual(settings.reviewModels('joel'), {}, 'each person\'s own');
+  assert.throws(() => settings.setReviewModels('mia', { claude: 'gpt-5' }), /Claude Code's review model must be one of opus, sonnet, haiku, fable/);
+  assert.throws(() => settings.setReviewModels('mia', { codex: 'a b' }), (err) => err.shown && err.status === 400);
+  assert.throws(() => settings.setReviewModels('mia', { nobody: 'x' }), /not a reviewer/);
+  assert.throws(() => settings.setReviewModels('mia', ['claude']), /models must be an object/);
+  assert.deepEqual(settings.reviewModels('mia'), { claude: 'sonnet', codex: 'gpt-5.5' }, 'a refused save changes nothing');
+  settings.setReviewModels('mia', {});
+  assert.deepEqual(settings.reviewModels('mia'), {}, 'an empty object is every default again');
+  settings.setReviewAgents('mia', 'codex');
+  settings.setReviewModels('mia', { claude: 'haiku' });
+  assert.equal(settings.reviewAgents('mia'), 'codex', 'picking models leaves who reviews alone');
+});

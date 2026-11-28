@@ -96,3 +96,20 @@ test('each agent places every mode it offers on one scale, and a started session
   assert.equal(agents.modeForStartedSession('codex', 'default', 'opencode'), 'acceptEdits');
   assert.equal(agents.modeForStartedSession('opencode', 'toString', 'claude'), 'plan', 'a name off the object is no mode');
 });
+
+test('review models: Claude Code takes its named models, the others a model name, and nothing else is kept', () => {
+  assert.equal(agents.reviewModelOk('claude', 'sonnet'), true);
+  assert.equal(agents.reviewModelOk('claude', 'gpt-5'), false);
+  assert.equal(agents.reviewModelOk('codex', 'gpt-5.5'), true);
+  assert.equal(agents.reviewModelOk('opencode', 'openai/gpt-5'), true);
+  assert.equal(agents.reviewModelOk('codex', 'gpt 5; rm -rf'), false, 'never a space or a shell character');
+  assert.equal(agents.reviewModelOk('codex', ''), false, 'empty is no pick');
+  assert.equal(agents.reviewModelOk('nobody', 'x'), false);
+  assert.deepEqual(agents.reviewModelsOf({ codex: 'gpt-5.5', claude: 'opus', grok: 'bad model', other: 'x', __proto__: { opencode: 'a/b' } }), { claude: 'opus', codex: 'gpt-5.5' }, 'in the registry\'s order, the misshapen and unknown left out');
+  assert.deepEqual(agents.reviewModelsOf(['claude']), {});
+  assert.equal(agents.reviewModelsText({ codex: 'gpt-5.5', claude: 'sonnet' }), 'claude=sonnet codex=gpt-5.5');
+  assert.deepEqual(agents.parseReviewModels('claude=sonnet, codex=gpt-5.5'), { claude: 'sonnet', codex: 'gpt-5.5' });
+  assert.equal(agents.parseReviewModels('claude=sonnet,claude=opus'), null);
+  assert.equal(agents.parseReviewModels('claude'), null);
+  assert.deepEqual(agents.REVIEW_DEFAULT_MODELS, { claude: 'opus' });
+});

@@ -285,6 +285,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
       ownAgentForReviews: Object.fromEntries(agents.OWN_SIGN_IN_AGENTS.filter((id) => agents.agent(id).reviews)
         .map((id) => [id, usesOwnAgentForReviews(login, id)])),
       reviewAgents: reviewChoice(record?.reviewAgents),
+      reviewModels: agents.reviewModelsOf(record?.reviewModels),
       // False while a Grok Build or OpenCode sign-in saved before the wider default is still kept out of it.
       expandedReviewDefault: usesExpandedReviewDefault(login),
       terminal: terminal(login),
@@ -612,6 +613,33 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     console.log('userSettings: reviews of my pull requests', { login, choice: saved ?? 'every reviewer that can run', ...(accepted ? { accepted: true } : {}) });
   }
 
+  /**
+   * The model each reviewer of this person's pull requests runs on (reviewAgents.mjs): `{claude: 'sonnet'}`, a pick for
+   * the reviewers named and the reviewer's own default for the rest. Replaces what was saved; `{}` is every default.
+   * @throws {Error}  shown on the page, for a reviewer that does not review or a model it does not take
+   */
+  function setReviewModels(login, models) {
+    if (!models || typeof models !== 'object' || Array.isArray(models)) throw Object.assign(new Error('models must be an object of reviewer to model'), { shown: true, status: 400 });
+    const picks = {};
+    for (const [id, model] of Object.entries(models)) {
+      if (model === '' || model === null) continue;
+      if (!agents.REVIEW_AGENT_IDS.includes(id)) throw Object.assign(new Error(`${id} is not a reviewer (${agents.REVIEW_AGENT_IDS.join(', ')})`), { shown: true, status: 400 });
+      if (!agents.reviewModelOk(id, model)) {
+        const takes = id === 'claude' ? `one of ${agents.REVIEW_CLAUDE_MODELS.join(', ')}` : `a model name such as ${agents.agent(id).modelHint || 'gpt-5.5'}`;
+        throw Object.assign(new Error(`${agents.agent(id).product}'s review model must be ${takes}`), { shown: true, status: 400 });
+      }
+      picks[id] = model;
+    }
+    const saved = agents.reviewModelsOf(picks);
+    touch(login, { reviewModels: saved });
+    console.log('userSettings: review models', { login, models: agents.reviewModelsText(saved) || 'every default' });
+  }
+
+  /** @returns {Record<string, string>}  the person's own picks, none for a reviewer left to its default */
+  function reviewModels(login) {
+    return agents.reviewModelsOf(recordFor(login)?.reviewModels);
+  }
+
   /** @returns {string|null}  the person's saved choice, or null for the default */
   function reviewAgents(login) {
     return reviewChoice(recordFor(login)?.reviewAgents);
@@ -683,7 +711,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, agentAuthTurn, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setOwnAgentForReviews, usesOwnAgentForReviews, setReviewAgents, reviewAgents, usesExpandedReviewDefault, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, agentAuthTurn, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setOwnAgentForReviews, usesOwnAgentForReviews, setReviewAgents, reviewAgents, setReviewModels, reviewModels, usesExpandedReviewDefault, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }
