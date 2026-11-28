@@ -3081,7 +3081,7 @@ export function createFleet({
       await postReviewEnded(session, project, why ? `the session wrote no verdict (${why.replace(/[;\s]+$/, '')})` : 'the session wrote no verdict');
     } else if (!comment && session.review.runningPosted && session.review.commentId) {
       console.log('fleet: review wrote no comment, its running comment closed', { id: session.id, number: session.number, conclusion });
-      await postReviewComment(session, gh, reviewDoneComment({ conclusion, tier: mergeRisk?.tier ?? null }));
+      await postReviewComment(session, gh, reviewDoneComment({ conclusion, tier: mergeRisk?.tier ?? null, leftOut: session.review.leftOut }));
     }
     const held = hold && ours ? { sha, heading, summary, inlineComments, resolved } : null;
     // `posted`: GitHub took the verdict (or the console holds it for QA), which an ask for the same head stands on.
@@ -3266,7 +3266,7 @@ export function createFleet({
   async function postReviewEnded(session, project, reason) {
     // Only a run that posted its own running comment: an older run's comment id may hold an earlier review.
     if (!session.review.runningPosted || !session.review.commentId) return;
-    await postReviewComment(session, githubOf(project), reviewEndedComment({ reason, sessionUrl: await qaSessionUrl(session, project) }));
+    await postReviewComment(session, githubOf(project), reviewEndedComment({ reason, sessionUrl: await qaSessionUrl(session, project), leftOut: session.review.leftOut }));
   }
 
   async function postReviewComment(session, gh, body) {

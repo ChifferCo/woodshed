@@ -70,9 +70,9 @@ export function reviewRunningComment({ sessionUrl, agents = ['claude'], leftOut 
  * @param {{reason: string, sessionUrl: string|null}} args
  * @returns {string}  the review's comment when its session ended without a review
  */
-export function reviewEndedComment({ reason, sessionUrl }) {
+export function reviewEndedComment({ reason, sessionUrl, leftOut = null }) {
   const where = sessionUrl ? ` ([session](${sessionUrl}))` : '';
-  return `⚠️ **The review did not finish**${where}: ${codeSpan(reason)}. A new commit starts another.\n`;
+  return `⚠️ **The review did not finish**${where}: ${codeSpan(reason)}. A new commit starts another.${leftOutNote(leftOut) ? ` ${leftOutNote(leftOut)}` : ''}\n`;
 }
 
 /** The reason quotes what the session met, a project file's unknown key among it, so it goes in as code: a link, an
@@ -88,33 +88,22 @@ function codeSpan(text) {
  * @param {{conclusion: string, tier: string|null}} args
  * @returns {string}  the review's comment when it reported a verdict but wrote no comment of its own
  */
-export function reviewDoneComment({ conclusion, tier }) {
+export function reviewDoneComment({ conclusion, tier, leftOut = null }) {
   const verdict = { APPROVE: 'approved', REQUEST_CHANGES: 'changes requested', COMMENT: 'commented, no verdict' }[conclusion] ?? 'finished';
-  return `**Review finished**: ${verdict}${tier ? `, merge risk ${tier}` : ''}. Details in the review.\n`;
+  return `**Review finished**: ${verdict}${tier ? `, merge risk ${tier}` : ''}. Details in the review.${leftOutNote(leftOut) ? ` ${leftOutNote(leftOut)}` : ''}\n`;
 }
 
-// Why a reviewer the author chose was left out, by the code the console gave it (reviewAgents.mjs): fixed sentences
-// only, so nothing from a log or a credential reaches the pull request. An unknown code says nothing of why.
-const LEFT_OUT_WHY = {
-  off: 'you have not turned its sign-in on for reviews',
-  none: 'you have no sign-in saved for it',
-  'no-token': 'your saved sign-in has no token',
-  expired: 'your saved login has expired',
-  'no-expiry': 'your saved login does not say when it expires',
-  unsendable: 'your saved sign-in has a token that cannot be sent',
-  'no-key': 'this console has nothing to run it on',
-  unread: 'your saved sign-in could not be read',
-};
-
+// Which reviewers the author chose were left out, and nothing of why: the pull request may be public, and why is the
+// state of the author's own sign-in. The reason stays in the console's log and on the author's My settings.
 /**
  * @param {{agent: string, code: string}[]|null|undefined} leftOut  from the review session's record
- * @returns {string}  a note for the review, one sentence for each reviewer the author chose and the console left out, or ''
+ * @returns {string}  a note for the review, a fixed sentence for each reviewer the author chose and the console left out, or ''
  */
 export function leftOutNote(leftOut) {
   if (!Array.isArray(leftOut)) return '';
   return leftOut
     .filter((l) => agentsRegistry.REVIEW_AGENT_IDS.includes(l?.agent))
-    .map((l) => `${productOf(l.agent)} was left out${LEFT_OUT_WHY[l.code] ? `: ${LEFT_OUT_WHY[l.code]}` : ''}.`)
+    .map((l) => `${productOf(l.agent)} was left out of this review. The author can see why on My settings.`)
     .join(' ');
 }
 
