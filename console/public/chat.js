@@ -190,7 +190,10 @@
     }
 
     function fit() {
+      // A thread at its foot stays there as the box grows over it, so its last line is not hidden.
+      const stick = nearFoot();
       W.fitField(field, 240, [scroller]);
+      if (stick) scroller.scrollTop = scroller.scrollHeight;
     }
 
     // Enter sends and Shift+Enter makes a new line, on a keyboard; a phone's Return is a new line, and its Send sends.
