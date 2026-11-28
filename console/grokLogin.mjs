@@ -26,7 +26,10 @@ import agents from '../shared/agents.cjs';
 // A login ending within this is refreshed: a review runs for minutes, and each call of it asks again.
 const MARGIN_MS = 10 * 60_000;
 const RETRY_MS = 60_000;
-const TIMEOUT_MS = 8_000;
+// Discovery and the token call each, so a session's read of its login (15 s at its start) waits at most about 10 s.
+const TIMEOUT_MS = 5_000;
+// Errors that mean the token call never left this machine: the token is unspent, so it is safe to send again.
+const NOT_SENT = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH']);
 const MAX_BYTES = 256 * 1024;
 const ISSUER_HOSTS = ['auth.x.ai'];
 
@@ -118,13 +121,20 @@ export function createGrokLogin({ userSettings = null, sessions = () => [], fetc
     const clientId = typeof entry.oidc_client_id === 'string' && entry.oidc_client_id ? entry.oidc_client_id : scopeClient;
     if (!clientId) throw new Error('the login names no client');
     const endpoint = await tokenEndpoint(issuer);
-    const answer = await fetchImpl(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
-      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: entry.refresh_token, client_id: clientId }).toString(),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-      redirect: 'error',
-    });
+    let answer;
+    try {
+      answer = await fetchImpl(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+        body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: entry.refresh_token, client_id: clientId }).toString(),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        redirect: 'error',
+      });
+    } catch (err) {
+      // No answer to a call that may have been sent: xAI may have rotated the token, so the same one is never sent again.
+      const code = err?.cause?.code ?? err?.code;
+      throw Object.assign(new Error('no answer to the token call'), NOT_SENT.has(code) ? {} : { terminal: true, ambiguous: true });
+    }
     let body = null;
     try {
       body = JSON.parse(await read(answer));
@@ -178,8 +188,8 @@ export function createGrokLogin({ userSettings = null, sessions = () => [], fetc
       } catch (err) {
         if (err.terminal) {
           refused.set(login, digest);
-          console.warn('grokLogin: xAI refused the refresh, the login is not tried again until a new one is saved', { login, status: err.status, code: err.code });
-          return stay('and xAI refused to refresh it: save a new one');
+          console.warn('grokLogin: xAI refused the refresh, the login is not tried again until a new one is saved', { login, status: err.status, code: err.code, ambiguous: Boolean(err.ambiguous) });
+          return stay(err.ambiguous ? 'and the console cannot tell whether xAI took its refresh: save a new one' : 'and xAI refused to refresh it: save a new one');
         }
         failedAt.set(login, now0);
         console.warn('grokLogin: refresh not completed', { login, message: err?.name === 'TimeoutError' ? 'timed out' : String(err?.message ?? err).split('\n')[0].slice(0, 120) });

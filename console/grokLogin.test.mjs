@@ -158,11 +158,11 @@ test('xAI refusing the refresh is final for that login: it is not tried again un
   assert.equal(fetch.calls.filter((c) => c.method === 'POST').length, 2);
 });
 
-test('xAI not answering leaves the login as it is and is tried again after a minute', async (t) => {
+test('a token call that never left this machine leaves the login as it is and is tried again after a minute', async (t) => {
   const lines = capture(t);
   const us = store(login());
   let at = NOW;
-  const down = xai({ token: new Error('connect ECONNREFUSED') });
+  const down = xai({ token: Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } }) });
   const grok = createGrokLogin({ userSettings: us, fetch: down, now: () => at });
   assert.equal((await grok.fresh('lou')).state, 'expired');
   assert.equal(us.saved, login());
@@ -242,4 +242,20 @@ test('status is read from the store at most every 30 s, and forget drops it', as
   assert.equal(reads, 2);
   grok.forget('lou');
   assert.equal(grok.cached('lou'), null);
+});
+
+test('a token call that may have been sent and got no answer is never sent again: xAI may have rotated the token', async (t) => {
+  const lines = capture(t);
+  const us = store(login());
+  const timeout = xai({ token: Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }) });
+  let at = NOW;
+  const grok = createGrokLogin({ userSettings: us, fetch: timeout, now: () => at });
+  const first = await grok.fresh('lou');
+  assert.equal(first.state, 'expired');
+  assert.match(first.why, /cannot tell whether xAI took its refresh: save a new one/);
+  at += 10 * 60_000;
+  await grok.fresh('lou');
+  assert.equal(timeout.calls.filter((c) => c.method === 'POST').length, 1, 'not even after a while');
+  assert.ok(lines.some((l) => l.includes('"ambiguous":true')));
+  noTokensIn(lines);
 });

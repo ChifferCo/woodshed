@@ -1492,7 +1492,7 @@ Grok Build and OpenCode review the same way, on the author's own sign-in alone, 
   running, xAI refused the refresh, the console could not reach xAI, or the login holds no refresh token). A session
   that starts meanwhile is in the fleet before it asks for the login, and its read waits for the turn, so it is given
   the refreshed one. xAI refusing a refresh (a 4xx but 408 and 429) is not tried again until a new login is saved,
-  since sending a rotated token again can end its whole family; xAI not answering is tried again after a minute. The
+  since sending a rotated token again can end its whole family; xAI not reached before the call was sent is tried again after a minute, but a call that may have been sent and got no answer (a timeout) is treated as refused, since xAI may have rotated the token; each call waits at most 5 s, so a session's read of its login waits at most about 10 s. The
   refresh keeps every other field of `auth.json`, and nothing of it, no token, is logged.
 - **OpenCode** reviews only on an API key (`{type: 'api'}`) of Anthropic or OpenAI, the first of those the author's
   `auth.json` has (`OPENCODE_REVIEW_PROVIDERS` in shared/agents.cjs), and the session gets `REVIEW_OPENCODE_PROVIDER`.
