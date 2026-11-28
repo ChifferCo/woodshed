@@ -148,7 +148,11 @@ export function createGrokLogin({ userSettings = null, sessions = () => [], fetc
       throw Object.assign(new Error(`xAI answered ${answer.status}`), { status: answer.status });
     }
     const seconds = Number(body?.expires_in);
-    if (typeof body?.access_token !== 'string' || !body.access_token || !Number.isFinite(seconds) || seconds <= 0) throw new Error('the answer holds no access token');
+    // A success xAI sent that holds no readable token (the body was cut off, or timed out): it has rotated the token, so
+    // the same one is never sent again.
+    if (typeof body?.access_token !== 'string' || !body.access_token || !Number.isFinite(seconds) || seconds <= 0) {
+      throw Object.assign(new Error('the answer holds no access token'), { terminal: true, ambiguous: true });
+    }
     return {
       key: body.access_token,
       // Rotated; one that is not sent back leaves the old, which is all there is.

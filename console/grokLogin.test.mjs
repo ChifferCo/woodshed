@@ -259,3 +259,18 @@ test('a token call that may have been sent and got no answer is never sent again
   assert.ok(lines.some((l) => l.includes('"ambiguous":true')));
   noTokensIn(lines);
 });
+
+test('a success whose body cannot be read, or holds no token, is ambiguous too: the token was rotated and is never sent again', async (t) => {
+  capture(t);
+  for (const text of [async () => { throw new Error('body timed out'); }, async () => '{"token_type":"Bearer"}', async () => '{"access_to']) {
+    const good = xai();
+    let posts = 0;
+    const fetch = async (url, init) => (init?.method === 'POST' ? (posts += 1, { ok: true, status: 200, text }) : good(url, init));
+    let at = NOW;
+    const grok = createGrokLogin({ userSettings: store(login()), fetch, now: () => at });
+    assert.match((await grok.fresh('lou')).why, /cannot tell whether xAI took its refresh/);
+    at += 10 * 60_000;
+    await grok.fresh('lou');
+    assert.equal(posts, 1);
+  }
+});
