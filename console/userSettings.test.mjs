@@ -593,6 +593,8 @@ test('a credential pasted into a review model box is refused and never logged', 
   const pat = `ghp_${'a'.repeat(36)}`;
   assert.throws(() => settings.setReviewModels('mia', { codex: pat }), (err) => err.shown && !err.message.includes('ghp_'));
   assert.throws(() => settings.setReviewModels('mia', { codex: 'sk-ant-made-up-0123456789' }), /model must be/);
+  assert.throws(() => settings.setReviewModels('mia', { opencode: `openai/glpat-${'a1'.repeat(10)}` }), /model must be/);
+  assert.throws(() => settings.setReviewModels('mia', { grok: `AIza${'aB1'.repeat(11)}` }), /model must be/);
   settings.setReviewModels('mia', { codex: 'gpt-5.5' });
   assert.ok(lines.some((l) => l.includes('review models') && l.includes('"reviewers":["codex"]')));
   assert.ok(!lines.join('').includes('gpt-5.5') && !lines.join('').includes(pat), 'the log names reviewers, never a model');

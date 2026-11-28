@@ -162,12 +162,20 @@
   /** What a review's Claude Code may be told with `--model`: the same list New session offers. */
   const REVIEW_CLAUDE_MODELS = Object.freeze(['opus', 'sonnet', 'haiku', 'fable']);
 
+  // The start of a known kind of key, and the look of any other: a long run of letters and digits in mixed case, which no
+  // model name is. Not the whole of shared/secretLike.mjs (an ES module, and this file is also the browser's): the console
+  // checks a pick against that as well (userSettings.mjs).
+  function looksLikeSecret(part) {
+    return /^(?:gh[pousr]_|github_pat_|glpat-|sk-|sk_|rk_|xai-|gsk_|hf_|npm_|pplx-|AIza|AKIA|ASIA|xox[a-z]-|wsc_|wt_)/i.test(part)
+      || (part.length >= 32 && /^[A-Za-z0-9_]+$/.test(part) && /[a-z]/.test(part) && /[A-Z]/.test(part) && /\d/.test(part));
+  }
+
   /** @returns {boolean}  whether `model` is one a review of this reviewer may run on (never empty: that is no pick) */
   function reviewModelOk(id, model) {
     if (!REVIEW_AGENT_IDS.includes(id) || typeof model !== 'string' || !model) return false;
     // A model name is never a credential: one pasted into the box by mistake is refused, never kept or logged.
     // Each part of `provider/model` is checked, as OpenCode's pick has the model after a slash.
-    if (model.split('/').some((part) => /^(?:gh[pousr]_|github_pat_|sk-|xai-|AKIA|ASIA|xox[a-z]-)/i.test(part))) return false;
+    if (model.split('/').some(looksLikeSecret)) return false;
     return id === 'claude' ? REVIEW_CLAUDE_MODELS.includes(model) : modelShapeOk(id, model);
   }
 

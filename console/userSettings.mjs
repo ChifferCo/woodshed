@@ -26,6 +26,7 @@ import logins from './public/logins.cjs';
 import { DOTFILES, dotfileProblem } from '../shared/dotfiles.mjs';
 import { SETTINGS, settingProblem } from './consoleSettings.mjs';
 import agents from '../shared/agents.cjs';
+import { secretContent } from '../shared/secretLike.mjs';
 const { loginKey } = logins;
 
 // Who may review a person's pull requests, as reviewAgents.mjs reads it: a preset's name, or reviewers joined with `+`
@@ -633,7 +634,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     for (const [id, model] of Object.entries(models)) {
       if (model === '' || model === null) continue;
       if (!agents.REVIEW_AGENT_IDS.includes(id)) throw Object.assign(new Error(`a review model is for one of ${agents.REVIEW_AGENT_IDS.join(', ')}`), { shown: true, status: 400 });
-      if (!agents.reviewModelOk(id, model)) {
+      if (!agents.reviewModelOk(id, model) || String(model).split('/').some((part) => secretContent(part))) {
         const takes = id === 'claude' ? `one of ${agents.REVIEW_CLAUDE_MODELS.join(', ')}` : `a model name such as ${agents.agent(id).modelHint || 'gpt-5.5'}`;
         throw Object.assign(new Error(`${agents.agent(id).product}'s review model must be ${takes}`), { shown: true, status: 400 });
       }
