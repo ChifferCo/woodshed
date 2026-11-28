@@ -970,9 +970,12 @@ card is offered with one of them (`/api/my`'s `agents.antigravity`):
   `countTokens`, and the model list): never the Files API, cached contents, tuned models or batches, or a key in the
   query. Every call is read first, as JSON, and one that names something stored under the team's key (a `fileData` part,
   a `cachedContent`, a file search store) is refused, since a model call that names one by its resource name would read it
-  under the team's project whoever stored it. A session that has seen production data reaches Google only through it, and
-  its calls are also refused when they ask Google to reach out (grounding with Google Search, the URL context tool), as
-  the Anthropic proxy refuses Anthropic's. A lockdown cuts a call from the moment it is authorized, a body still arriving
+  under the team's project whoever stored it. A session that has seen production data is locked down for good (`fleet.isLocked`
+  stays true once it is tainted), and the proxy then refuses every Gemini call it makes with a 403 (`refused, not an
+  Antigravity session`): an Antigravity session cannot go on after its first relayed production call, and an Antigravity agent
+  beside another is stopped by the lockdown. That 403 is expected, not a fault. The check of a tainted session's calls for what
+  asks Google to reach out (grounding with Google Search, the URL context tool, as the Anthropic proxy refuses Anthropic's) stays as
+  a second guard, for a console whose `isLocked` is not the fleet's. A lockdown cuts a call from the moment it is authorized, a body still arriving
   included (`geminiProxy: calls cut at the lockdown`), and each call's access and lock state are asked again with the whole
   call in hand, just before it goes: nothing of a call that was on its way when the lockdown began reaches Google. The bodies held at once are bounded for the whole console (256 MiB, `MAX_INFLIGHT_BYTES`; 64 MiB for one call): past it a call gets a 503 with `Retry-After`, which agy retries, and what a call held is given back whatever ends it.
 - **The owner's own Google login**, their Antigravity plan (Free, Pro or Ultra), saved on My settings as
