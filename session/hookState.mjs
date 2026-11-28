@@ -2,12 +2,13 @@
 // doing from claude itself rather than from what its terminal draws. Grok Build runs it too, from the image's policy
 // file (/etc/grok/requirements.toml, session/grokRequirements.toml), the only hooks it runs in a session: the same
 // events in camelCase (`hookEventName`, `notificationType`, `subagentType`; docs.x.ai/build/features/hooks), and a StopCancelled for a turn
-// cut short, which claude never fires.
+// cut short, which claude never fires. Antigravity CLI runs it as `hookState.mjs agy` from ~/.gemini/config/hooks.json
+// (session/antigravitySetup.sh): its own events, in camelCase too (stateForAgyHook), and it wants a JSON answer.
 //
 // Each firing writes the state to STATE_FILE; statusd reads it on every /status. A file, not a socket: it outlives
 // a statusd restart, and a hook that finds nobody listening loses nothing.
 //
-// It must print nothing. What a UserPromptSubmit hook writes to stdout is added to claude's context.
+// It must print nothing (except for agy, above). What a UserPromptSubmit hook writes to stdout is added to claude's context.
 //
 // Pressing Esc fires no hook at all, mid-turn or on a dialog (measured on Claude Code 2.1.311), so a turn cut short
 // is read from the transcript's `[Request interrupted by user` record instead: see claudeState in statusd.mjs.
@@ -68,6 +69,32 @@ export function stateForHook(payload) {
   return STATE_BY_EVENT[event] ?? null;
 }
 
+/**
+ * Antigravity CLI's hooks (measured with agy 1.5.18, ~/.gemini/config/hooks.json). It fires none as it opens: SessionStart
+ * comes with the first message of a conversation, before its first model call, so every event of a turn means working
+ * until its Stop. A turn cut short with Esc fires nothing at all (a PreInvocation stays the last firing), so its state is
+ * read from the pane over this one (agentState.mjs, antigravityState).
+ * @param {any} payload  the hook's stdin, parsed
+ * @returns {'working'|'done'|null}
+ */
+export function stateForAgyHook(payload) {
+  switch (payload?.hookEventName) {
+    case 'SessionStart': case 'PreInvocation': case 'PreToolUse': case 'PostToolUse': return 'working';
+    case 'Stop': return 'done';
+    // After each model call, tools included: another call or the Stop follows.
+    default: return null;
+  }
+}
+
+/**
+ * What an agy hook answers on stdout. A PreToolUse hook that prints nothing useful decides the call: `{}` denied it, and
+ * `{"decision": "allow"}` leaves it to the next hook and agy's own policy, which is what a hook that only watches must say
+ * (measured: a command still asks in default mode, and runs with --dangerously-skip-permissions). Every other event takes `{}`.
+ */
+export function agyAnswer(payload) {
+  return payload?.hookEventName === 'PreToolUse' ? { decision: 'allow' } : {};
+}
+
 function runningSubagents(payload) {
   const tasks = Array.isArray(payload?.background_tasks) ? payload.background_tasks : [];
   return tasks.filter((t) => t?.type === 'subagent' && t?.status === 'running').length;
@@ -100,6 +127,18 @@ function main() {
   try {
     payload = JSON.parse(fs.readFileSync(0, 'utf8'));
   } catch {
+    return;
+  }
+  if (process.argv[2] === 'agy') {
+    // Its answer first: whatever goes wrong after it must not leave agy waiting, or change a decision.
+    process.stdout.write(JSON.stringify(agyAnswer(payload)));
+    const state = stateForAgyHook(payload);
+    if (!state) return;
+    const transcript = typeof payload.transcriptPath === 'string' ? payload.transcriptPath.slice(0, 1000) : null;
+    const conversation = typeof payload.conversationId === 'string' ? payload.conversationId.slice(0, 80) : null;
+    const tmp = `${STATE_FILE}.${process.pid}`;
+    fs.writeFileSync(tmp, JSON.stringify({ state, event: payload.hookEventName, at: Date.now(), shells: 0, transcript, conversation }));
+    fs.renameSync(tmp, STATE_FILE);
     return;
   }
   // A pull request opened from another clone or on another repo, which statusd would not find (openedPulls.mjs). A

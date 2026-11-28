@@ -19,6 +19,7 @@
 //                        for that agent, and 409 with none saved
 //   *    /anthropic/...  claude's calls to Anthropic, the real credential added here (anthropicProxy.mjs)
 //   *    /openai/...     a Codex session's calls to OpenAI on the team key, added here (openaiProxy.mjs)
+//   *    /gemini/...     an Antigravity session's calls to the Gemini API on the team key, added here (geminiProxy.mjs)
 //   *    /grok/..., /opencode/...   a review's Grok Build and OpenCode calls, on its author's own sign-in, added here
 //                         (reviewAgentProxy.mjs)
 //   POST /codex-auth     a Codex session's refreshed ~/.codex/auth.json, kept for its owner's next session
@@ -87,6 +88,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { isAnthropicPath, proxyCredential } from './anthropicProxy.mjs';
 import { isMcpPath } from './mcpRelay.mjs';
 import { bearerOf, isOpenAiPath } from './openaiProxy.mjs';
+import { isGeminiPath, keyOf as geminiKeyOf } from './geminiProxy.mjs';
 import { isReviewAgentPath, reviewAgentTokenOf } from './reviewAgentProxy.mjs';
 import { MAX_ANSWER_CHARS, MAX_ISSUE_BODY_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
@@ -136,6 +138,7 @@ export function sessionTokenOf(req) {
   // The MCP relay takes the session token as a bearer, as every other route does.
   if (isMcpPath(pathname)) return /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? null;
   if (isOpenAiPath(pathname)) return bearerOf(req.headers);
+  if (isGeminiPath(pathname)) return geminiKeyOf(req.headers);
   if (isReviewAgentPath(pathname)) return reviewAgentTokenOf(req.headers);
   return /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? null;
 }
@@ -180,7 +183,7 @@ export function sessionForToken(given, sessions) {
  * @returns {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<void>}
  */
 export function createSessionApi({
-  fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null,
+  fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null, gemini = null,
   reviewAgentProxy = null, attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null, sessionStarts = null,
   ownerTokenRepos = null, mcpRelay = null, egress = null,
 }) {
@@ -220,6 +223,7 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
+    if (gemini?.isProxyPath(pathname)) return gemini.handle(req, res, sessionForToken(geminiKeyOf(req.headers), fleet.sessions()), (session) => fleet.isLocked?.(session));
     if (reviewAgentProxy?.isProxyPath(pathname)) return reviewAgentProxy.handle(req, res, sessionForToken(reviewAgentTokenOf(req.headers), fleet.sessions()), (session) => fleet.isLocked?.(session));
     if (isMcpPath(pathname)) {
       if (!mcpRelay) {
@@ -237,7 +241,7 @@ export function createSessionApi({
       console.warn('sessionApi: request refused, no active session has that token', { pathname, from: req.socket.remoteAddress });
       return reply(res, 401, { error: 'unauthorized' });
     }
-    if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, repoSettings, { planOnly: req.headers[PLAN_ONLY_HEADER] === '1' });
+    if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, repoSettings, { planOnly: req.headers[PLAN_ONLY_HEADER] === '1', fleet });
     if (pathname === '/repo-settings') return repoSettingsReply(req, res, session, repoSettings);
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings, fleet);
     if (pathname === '/agent-auth') return agentAuthReply(req, res, session, userSettings, fleet);
@@ -372,7 +376,7 @@ async function repoSettingsReply(req, res, session, repoSettings) {
 
 // The owner's settings and no one else's: the session is found by its own token, and its owner was fixed when
 // the console created it.
-async function settingsReply(res, session, userSettings, databases, repoSettings, { planOnly = false } = {}) {
+async function settingsReply(res, session, userSettings, databases, repoSettings, { planOnly = false, fleet = null } = {}) {
   // A review session has no databases; it asks /settings only for the plan it runs on.
   if (isReview(session)) {
     const onPlan = Boolean(await starterToken(session, userSettings));
@@ -381,17 +385,29 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
   }
   if (!session.owner) return sharedSettingsReply(res, session, databases, userSettings, { planOnly });
   const codex = session.options?.agent === 'codex';
-  // Grok Build and OpenCode run on their owner's own sign-in, and on nothing else (shared/agents.cjs).
+  // Grok Build and OpenCode run on their owner's own sign-in, and on nothing else (shared/agents.cjs). Antigravity runs on
+  // it when they saved one, and otherwise on the team's Gemini key through /gemini (`signIn.optional`): the answer then has
+  // no `agentAuth`, which is how the session knows.
   const own = agents.OWN_SIGN_IN_AGENTS.includes(session.options?.agent) ? agents.agent(session.options.agent) : null;
   // Read in the sign-in's turn, so a refresh by the console (grokLogin.mjs) is done, or not begun, when it is handed out.
-  const agentAuth = own && userSettings
+  let agentAuth = own && userSettings
     ? await (userSettings.agentAuthTurn ? userSettings.agentAuthTurn(session.owner, own.id, ({ read }) => read()) : userSettings.agentAuth(session.owner, own.id))
     : null;
-  if (own && !agentAuth) {
+  // The first answer of a run decides which personal credentials the run holds. A run that started on the team's key (an
+  // Antigravity CLI, a Codex) or without a Claude token is not handed one saved after: the repo's code in the container holds
+  // the session's token and could ask for it. Only an answer that succeeded decides (it is recorded below, with the reply).
+  const prior = session.credentialsGiven ?? null;
+  const withheld = (what, value) => {
+    if (!prior || prior[what] || !value) return value;
+    console.warn(`sessionApi: a ${what} sign-in saved since is not handed out, this run started without it`, { sessionId: session.id, owner: session.owner });
+    return null;
+  };
+  agentAuth = withheld('agent', agentAuth);
+  if (own && !agentAuth && !own.signIn.optional) {
     console.warn(`sessionApi: no ${own.product} sign-in for the owner`, { sessionId: session.id, owner: session.owner, agent: own.id });
     return reply(res, 409, { error: `@${session.owner} has no ${own.product} sign-in saved on My settings` });
   }
-  const claudeToken = userSettings && !own ? await userSettings.claudeToken(session.owner) : null;
+  const claudeToken = withheld('claude', userSettings && !own ? await userSettings.claudeToken(session.owner) : null);
   if (!claudeToken && !codex && !own) {
     console.warn('sessionApi: no Claude token for the owner', { sessionId: session.id, owner: session.owner });
     return reply(res, 409, { error: `@${session.owner} has no Claude token saved on My settings` });
@@ -421,12 +437,15 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
     terminal: userSettings.terminal?.(session.owner) ?? 'tmux',
   });
   // A Codex session runs on its owner's own sign-in when they saved one, and otherwise on the team's key through /openai.
-  const codexAuth = codex ? await userSettings.codexAuth(session.owner) : null;
+  const codexAuth = codex ? withheld('codex', await userSettings.codexAuth(session.owner)) : null;
   if (codex) console.log('sessionApi: Codex sign-in decided', { sessionId: session.id, owner: session.owner, own: Boolean(codexAuth) });
   // What the owner picked on My settings for their agent's terminal (session/agentPane.mjs): a private session's alone.
   const terminal = userSettings.terminal?.(session.owner) ?? 'tmux';
-  if (own) console.log(`sessionApi: ${own.product} sign-in handed out`, { sessionId: session.id, owner: session.owner, agent: own.id, apiKey: !agentAuth.startsWith('{') });
-  return reply(res, 200, { files, ownFiles, git: userSettings.gitIdentity(session.owner), database, claudeToken, terminal, ...(codex ? { codexAuth } : {}), ...(own ? { agentAuth } : {}) });
+  if (own && agentAuth) console.log(`sessionApi: ${own.product} sign-in handed out`, { sessionId: session.id, owner: session.owner, agent: own.id, apiKey: !agentAuth.startsWith('{') });
+  else if (own) console.log(`sessionApi: ${own.product} runs on the team key, the owner saved no sign-in`, { sessionId: session.id, owner: session.owner, agent: own.id });
+  // What this answer hands out is what the run holds from now on (fleet.rememberCredentials: the first one stands).
+  fleet?.rememberCredentials?.(session, { claude: Boolean(claudeToken), codex: Boolean(codexAuth), agent: Boolean(agentAuth) });
+  return reply(res, 200, { files, ownFiles, git: userSettings.gitIdentity(session.owner), database, claudeToken, terminal, ...(codex ? { codexAuth } : {}), ...(agentAuth ? { agentAuth } : {}) });
 }
 
 // Whether the login a session sends back was refreshed before the saved one: a refresh token rotates, so the older is dead.

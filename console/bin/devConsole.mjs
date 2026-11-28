@@ -18,7 +18,7 @@
 // DEV_CONSOLE_SESSION_APP=1, in a session (SESSION_ID set), also answers under the session's app name,
 // `<SESSION_ID>.<SESSION_APP_DOMAIN>`, as Woodshed's own app does behind the console's app proxy (scripts/devConsoleApp.sh).
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -674,6 +674,17 @@ if (webhookPort) {
   ];
   fs.writeFileSync(path.join(stateDir, 'webhookEvents.jsonl'), made.map((e) => `${JSON.stringify(e)}\n`).join(''), { mode: 0o600 });
 }
+// DEV_CONSOLE_TEAM_GEMINI=1: a made-up team Gemini key saved as `gemini-api-key` in a local secret store, so New session offers
+// Antigravity CLI on the team's key as a console with that secret saved does. The console reads the key from its secret store
+// alone, never from the session env file (which every session would get). It is no key: nothing here calls Google.
+function devTeamGemini(dir, secretEnv) {
+  const env = secretEnv ?? devSecrets(dir);
+  const put = spawnSync(process.execPath, [new URL('../../providers/local/bin/secret.mjs', import.meta.url).pathname, 'put', 'gemini-api-key'],
+    { input: 'AIza-made-up-dev-key-not-real', env: { ...process.env, ...env }, encoding: 'utf8' });
+  if (put.status !== 0) throw new Error(`could not save the made-up team Gemini key: ${put.stderr || put.stdout}`);
+  return { env: secretEnv ? {} : env };
+}
+const teamGeminiDev = process.env.DEV_CONSOLE_TEAM_GEMINI === '1' ? devTeamGemini(stateDir, repoSettingsDev?.env) : null;
 let child = null;
 function startConsole() {
   child = spawn(process.execPath, [server], {
@@ -695,6 +706,7 @@ function startConsole() {
       ...(process.env.DEV_CONSOLE_NO_REPO === '1' ? {}
         : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
       ...repoSettingsDev?.env,
+      ...teamGeminiDev?.env,
       // DEV_CONSOLE_HOMES_DIR keeps saved Claude homes in that folder (providers/local/homeStore.mjs), as the console's
       // own at `_sessions/<id>/claude-home.tar.gz`, for Console settings' Sessions holding data. Without it, in the state
       // folder, which goes with the run.

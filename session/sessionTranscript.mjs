@@ -2,7 +2,8 @@
 // agent's screen, and its scrollback holds only what came since the browser attached, as terminal output. The
 // agent's own record of the conversation has it all: claude's transcript (~/.claude/projects/<repo>/<id>.jsonl),
 // codex's rollout ($CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl), Grok Build's session log
-// (~/.grok/sessions/<cwd, URL-encoded>/<id>/updates.jsonl) and OpenCode's database (~/.local/share/opencode/opencode.db).
+// (~/.grok/sessions/<cwd, URL-encoded>/<id>/updates.jsonl), OpenCode's database (~/.local/share/opencode/opencode.db) and Antigravity CLI's
+// transcript_full.jsonl (~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/).
 // Each is read from its end and shaped the same way: what the person asked, what the agent said, and a line for each
 // tool it ran, marked `error` when the run failed.
 // An edit carries what it changed, a small bounded diff (transcriptDiff.mjs), for the Chat to show each turn's changes.
@@ -472,6 +473,100 @@ export function parseGrokUpdates(text, { partial = false, root } = {}) {
   return entries.filter((e) => e.role === 'tool' || e.text);
 }
 
+// ---- Antigravity CLI: the conversation's transcript_full.jsonl, in its brain folder
+// (~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs/), one JSON step a line: USER_INPUT (the
+// message, in <USER_REQUEST> tags among its metadata), PLANNER_RESPONSE (the model's words, or `tool_calls`), and a step
+// after each tool call with `status` DONE, ERROR (refused or failed: `error` says why) or INVALID. Measured with agy 1.5.18.
+// transcript.jsonl beside it is the same with each argument JSON-encoded a second time ("\"ls\""), which is undone here.
+
+const AGY_REQUEST = /<USER_REQUEST>\n?([\s\S]*?)\n?<\/USER_REQUEST>/;
+const AGY_PATH_KEYS = ['Path', 'AbsolutePath', 'TargetFile', 'SearchPath', 'DirectoryPath'];
+
+// An argument as the model gave it: transcript.jsonl keeps each value as JSON text.
+function agyArg(value) {
+  if (typeof value !== 'string' || !/^["[{]/.test(value)) return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function agyToolLine(args) {
+  for (const key of ['CommandLine', ...AGY_PATH_KEYS, 'Url', 'query', 'Query', 'Pattern', 'toolSummary', 'Prompt']) {
+    const value = args[key];
+    if (typeof value === 'string' && value.trim()) return value.split('\n')[0].slice(0, 300);
+  }
+  return '';
+}
+
+// What an edit changed, from the arguments the model gave: edit_file's Target and Replacement, write_file's Content.
+function agyDiffs(name, args, root) {
+  if (name === 'edit_file' && typeof args.Path === 'string' && typeof args.Target === 'string' && typeof args.Replacement === 'string') {
+    const diff = textDiff(args.Path, args.Target, args.Replacement, { root });
+    return diff ? [diff] : null;
+  }
+  if (name === 'write_file' && typeof args.Path === 'string' && typeof args.Content === 'string' && !args.Append && !args.Overwrite) {
+    const diff = textDiff(args.Path, null, args.Content, { root });
+    return diff ? [diff] : null;
+  }
+  return null;
+}
+
+/**
+ * @param {string} text  the end of an agy transcript_full.jsonl
+ * @param {{partial?: boolean, root?: string, planPrefix?: boolean}} [opts]  planPrefix: the session runs in plan mode,
+ *   where agy writes `/plan ` before each message: the person's own words are what is shown
+ * @returns {Entry[]}
+ */
+export function parseAntigravityTranscript(text, { partial = false, root, planPrefix = false } = {}) {
+  const entries = [];
+  // The tool entries still waiting for their result step, oldest first.
+  const waiting = [];
+  for (const r of records(text, partial)) {
+    const at = typeof r?.created_at === 'string' ? r.created_at : null;
+    if (r?.type === 'USER_INPUT') {
+      let said = typeof r.content === 'string' ? (AGY_REQUEST.exec(r.content)?.[1] ?? r.content.split('<ADDITIONAL_METADATA>')[0]) : '';
+      if (planPrefix) said = said.replace(/^\/plan /, '');
+      said = said.trim();
+      if (said) entries.push({ role: 'user', text: cut(said), at });
+    } else if (r?.type === 'PLANNER_RESPONSE') {
+      if (typeof r.content === 'string' && r.content.trim()) entries.push({ role: 'assistant', text: cut(r.content.trim()), at });
+      for (const call of Array.isArray(r.tool_calls) ? r.tool_calls : []) {
+        if (typeof call?.name !== 'string') continue;
+        const args = Object.fromEntries(Object.entries(call.args && typeof call.args === 'object' ? call.args : {}).map(([k, v]) => [k, agyArg(v)]));
+        const entry = { role: 'tool', tool: call.name.slice(0, 60), text: agyToolLine(args), at };
+        const diffs = agyDiffs(call.name, args, root);
+        if (diffs) entry.diffs = diffs;
+        entries.push(entry);
+        waiting.push(entry);
+      }
+    } else if (r?.source === 'MODEL' && waiting.length) {
+      const entry = waiting.shift();
+      if (r.status === 'ERROR' || r.status === 'INVALID') {
+        entry.error = true;
+        delete entry.diffs;
+      }
+    }
+  }
+  return entries;
+}
+
+/**
+ * The transcript an agy conversation writes, from the hook state its own hooks left (hookState.mjs agy): the path agy named,
+ * checked to be where it keeps one (never a path a hook's payload could make up), and its `transcript_full.jsonl`.
+ * @param {{transcript?: string|null}|null} hook
+ * @returns {string|null}  null before agy's first message
+ */
+export function antigravityRecord(hook, home = os.homedir()) {
+  const named = typeof hook?.transcript === 'string' ? hook.transcript : '';
+  const brain = path.join(home, '.gemini', 'antigravity-cli', 'brain') + path.sep;
+  const rest = named.startsWith(brain) ? named.slice(brain.length) : '';
+  return /^[0-9a-f-]{36}\/\.system_generated\/logs\/transcript(_full)?\.jsonl$/.test(rest)
+    ? path.join(brain, rest.replace(/transcript\.jsonl$/, 'transcript_full.jsonl'))
+    : null;
+}
+
 /** @returns {string}  a folder name as Grok Build makes one from a path (Rust's urlencoding::encode) */
 export function grokFolderName(dir) {
   return [...Buffer.from(String(dir), 'utf8')].map((b) => {
@@ -716,7 +811,7 @@ async function newestRollout(codexHome, skip = null) {
  * @param {{agent: string, claudeDir: string, codexHome: string, home?: string, root?: string,
  *          limit?: number, since?: number, writtenFrom?: number, resume?: string|null, skip?: Set<string>|null,
  *          file?: string|null}} opts
- *   agent: claude, codex, grok or opencode (shared/agents.cjs). claudeDir: claude's transcript folder for the repo. home:
+ *   agent: claude, codex, grok, opencode or antigravity (shared/agents.cjs). claudeDir: claude's transcript folder for the repo. home:
  *   the home the other agents keep theirs in. root: the repo, which edits' paths are given relative to, and whose conversations are read.
  *   since: the writtenAt of the caller's last answer. writtenFrom, resume: which of claude's are this session's
  *   (ownClaudeTranscript). skip: the session's other agents' records (agents.mjs): claude's by name, codex's by path.
@@ -725,7 +820,7 @@ async function newestRollout(codexHome, skip = null) {
  *   partial: older entries were left out, by the read or by the limit. unchanged: the newest record is still the
  *   one written at `since`, so the caller's entries stand
  */
-export async function readSessionTranscript({ agent, claudeDir, codexHome, home = os.homedir(), grokHome = path.join(home, '.grok'), opencodeDb = openCodeDb(home), conversation, root, limit = MAX_ENTRIES, since = null, writtenFrom = 0, resume = null, skip = null, file }) {
+export async function readSessionTranscript({ agent, claudeDir, codexHome, home = os.homedir(), grokHome = path.join(home, '.grok'), opencodeDb = openCodeDb(home), conversation, root, limit = MAX_ENTRIES, since = null, writtenFrom = 0, resume = null, skip = null, file, planPrefix = false }) {
   const max = Math.max(1, Math.min(MAX_ENTRIES, Math.trunc(Number(limit)) || MAX_ENTRIES));
   if (agent === 'opencode') {
     const read = await readOpenCode({ dbFile: opencodeDb, root, since });
@@ -733,6 +828,8 @@ export async function readSessionTranscript({ agent, claudeDir, codexHome, home 
     if (read.unchanged) return { agent, unchanged: true, writtenAt: read.writtenAt };
     return { agent, entries: capDiffs(read.entries.slice(-max)), partial: read.partial || read.entries.length > max, writtenAt: read.writtenAt };
   }
+  // agy's record is the one its own hooks named (statusd, agents.mjs): none until its first message.
+  if (agent === 'antigravity' && file === undefined) return { agent, entries: [], partial: false, writtenAt: null };
   const newest = file !== undefined ? await fileStat(file)
     : agent === 'codex' ? await newestRollout(codexHome, skip)
       : agent === 'grok' ? await newestGrokUpdates(grokHome, root, { skip, conversation })
@@ -754,8 +851,8 @@ export async function readSessionTranscript({ agent, claudeDir, codexHome, home 
   } else {
     ({ text, partial } = await tail(newest.file, newest.stat.size));
   }
-  const parse = { codex: parseCodexRollout, grok: parseGrokUpdates }[agent] ?? parseClaudeTranscript;
-  const all = parse(text, { partial, root });
+  const parse = { codex: parseCodexRollout, grok: parseGrokUpdates, antigravity: parseAntigravityTranscript }[agent] ?? parseClaudeTranscript;
+  const all = parse(text, { partial, root, planPrefix });
   return {
     agent,
     // The newest edits keep their hunks within the answer's bound; older ones their files and counts.

@@ -19,7 +19,7 @@ export function isSessionVariable(name) {
 // The console's own secrets (console/secrets.mjs, secretSpecs), which no session is handed: an install secret of one
 // of these names would be. Terraform's install_secrets repeats it.
 export const CONSOLE_SECRETS = Object.freeze([
-  'anthropic-api-key', 'openai-api-key', 'github-app-key', 'github-app-client-secret', 'github-reviewer-app-key', 'github-webhook-secret',
+  'anthropic-api-key', 'openai-api-key', 'gemini-api-key', 'github-app-key', 'github-app-client-secret', 'github-reviewer-app-key', 'github-webhook-secret',
   'slack-bot-token', 'slack-signing-secret',
 ]);
 

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
-import { MAX_DECOMPRESSED_BYTES, MAX_TEXT, grokFolderName, openCodeDb, ownClaudeTranscript, parseClaudeTranscript, parseCodexRollout, parseGrokUpdates, readSessionTranscript } from './sessionTranscript.mjs';
+import { MAX_DECOMPRESSED_BYTES, MAX_TEXT, antigravityRecord, grokFolderName, openCodeDb, ownClaudeTranscript, parseClaudeTranscript, parseAntigravityTranscript, parseCodexRollout, parseGrokUpdates, readSessionTranscript } from './sessionTranscript.mjs';
 
 const line = (o) => JSON.stringify(o);
 const at = '2026-11-12T10:00:00.000Z';
@@ -523,4 +523,70 @@ test('an OpenCode conversation is read from its database: words, tools, failures
   assert.equal((await readSessionTranscript({ agent: 'opencode', home, root: '/work/app', since: t + 50 })).unchanged, true);
   assert.deepEqual((await readSessionTranscript({ agent: 'opencode', home, root: '/elsewhere' })).entries, []);
   assert.deepEqual((await readSessionTranscript({ agent: 'opencode', home: fs.mkdtempSync(path.join(os.tmpdir(), 'oc-none-')), root: '/work/app' })).entries, []);
+});
+
+// Antigravity CLI's transcript_full.jsonl, written by agy 1.5.18 against a stand-in model: a command it ran (after an
+// approval), an edit, and a write its permission rules refused (shared/__fixtures__/transcript-agy-full.jsonl).
+test('an agy transcript keeps what was asked, said and run, an edit with its diff and a refused write as an error', () => {
+  const entries = parseAntigravityTranscript(fixture('transcript-agy-full.jsonl'), { root: '/work/repo' });
+  assert.deepEqual(entries.map((e) => [e.role, e.tool ?? null, e.text, e.error ?? false]), [
+    ['user', null, 'go', false],
+    ['tool', 'run_command', 'echo hello-agy', false],
+    ['assistant', null, 'Done. The stand-in model finished.', false],
+    ['user', null, 'second', false],
+    ['user', null, 'do it', false],
+    ['tool', 'edit_file', '/work/repo/existing.txt', false],
+    ['assistant', null, 'Done. The stand-in model finished.', false],
+    ['user', null, '/plan do it', false],
+    ['tool', 'write_file', '/work/repo/new-file3.txt', true],
+    ['assistant', null, 'Done. The stand-in model finished.', false],
+  ]);
+  assert.equal(entries[0].at, '2026-11-28T06:00:53Z');
+  assert.equal(entries[5].diffs[0].path, 'existing.txt');
+  assert.deepEqual(entries[5].diffs[0].hunks[0].lines, ['-hello', '+howdy']);
+  // The refused write changed nothing, so it shows no diff.
+  assert.equal(entries[8].diffs, undefined);
+  // In plan mode agy writes /plan before each message: the person's words are what Chat matches its bubbles by.
+  assert.equal(parseAntigravityTranscript(fixture('transcript-agy-full.jsonl'), { planPrefix: true }).find((e) => e.text === 'do it' && e.at.endsWith('05:59:09Z')).role, 'user');
+});
+
+test('transcript.jsonl, whose arguments are JSON text, reads the same tool lines', () => {
+  const entries = parseAntigravityTranscript(fixture('transcript-agy.jsonl'));
+  assert.deepEqual(entries.filter((e) => e.role === 'tool').map((e) => [e.tool, e.text]), [['run_command', 'echo hello-agy']]);
+});
+
+test('a write_file creates a file, an append or an overwrite shows none, and a result in error clears a diff', () => {
+  const step = (call, result) => [
+    line({ type: 'PLANNER_RESPONSE', source: 'MODEL', created_at: at, tool_calls: [call] }),
+    line({ type: 'GENERIC', source: 'MODEL', status: result, created_at: at }),
+  ].join('\n');
+  const created = parseAntigravityTranscript(step({ name: 'write_file', args: { Path: '/work/app/a.txt', Content: 'x\ny\n' } }, 'DONE'), { root: '/work/app' });
+  assert.deepEqual(created[0].diffs[0].hunks[0].lines, ['+x', '+y']);
+  assert.equal(parseAntigravityTranscript(step({ name: 'write_file', args: { Path: '/work/app/a.txt', Content: 'x', Append: true } }, 'DONE'))[0].diffs, undefined);
+  const invalid = parseAntigravityTranscript(step({ name: 'write_file', args: { Path: '/work/app/a.txt', Content: 'x' } }, 'INVALID'));
+  assert.equal(invalid[0].error, true);
+  assert.equal(invalid[0].diffs, undefined);
+});
+
+test('the Chat reads the record the agent\'s hooks named, and nothing before there is one', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-transcript-'));
+  const file = path.join(dir, 'transcript_full.jsonl');
+  fs.writeFileSync(file, fixture('transcript-agy-full.jsonl'));
+  const read = await readSessionTranscript({ agent: 'antigravity', root: '/work/repo', file });
+  assert.equal(read.entries.length, 10);
+  assert.equal((await readSessionTranscript({ agent: 'antigravity', root: '/work/repo', file, since: read.writtenAt })).unchanged, true);
+  assert.deepEqual(await readSessionTranscript({ agent: 'antigravity', root: '/work/repo' }), { agent: 'antigravity', entries: [], partial: false, writtenAt: null });
+  assert.deepEqual((await readSessionTranscript({ agent: 'antigravity', root: '/work/repo', file: path.join(dir, 'none.jsonl') })).entries, []);
+});
+
+test('the transcript a hook names is read only from agy\'s own brain folder, and as its transcript_full.jsonl', () => {
+  const home = '/home/node';
+  const id = '23af8bc5-836e-4660-b87c-a649091d8ba1';
+  const logs = `${home}/.gemini/antigravity-cli/brain/${id}/.system_generated/logs`;
+  assert.equal(antigravityRecord({ transcript: `${logs}/transcript_full.jsonl` }, home), `${logs}/transcript_full.jsonl`);
+  assert.equal(antigravityRecord({ transcript: `${logs}/transcript.jsonl` }, home), `${logs}/transcript_full.jsonl`);
+  for (const transcript of [`${home}/.ssh/id_rsa`, `${logs}/../../../../../.ssh/id_rsa`, `${logs}/transcript_full.jsonl.bak`, `/tmp/brain/${id}/.system_generated/logs/transcript_full.jsonl`, `${home}/.gemini/antigravity-cli/brain/not-an-id/.system_generated/logs/transcript_full.jsonl`, null, 42]) {
+    assert.equal(antigravityRecord({ transcript }, home), null, String(transcript));
+  }
+  assert.equal(antigravityRecord(null, home), null);
 });

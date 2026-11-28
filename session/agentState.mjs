@@ -7,6 +7,8 @@
 //   grok    Grok Build's own hooks (hookState.mjs, which it runs from /etc/grok/requirements.toml), its pane for an
 //           approval and until the first hook, and whether its program runs at all
 //   opencode  its pane alone (paneStates.mjs), and whether its program runs
+//   antigravity  its pane first, and its own hooks (hookState.mjs agy) where the pane says nothing: a turn ended with Esc
+//           fires no hook, so a hook's `working` is no better than the screen that shows its prompt again
 //   qa      the QA run's marker file: the run is a script, not an agent
 //   herdr   for an agent run in Herdr (its owner's Agent terminal on My settings): the status herdr-core keeps for its
 //           terminal (`hc get claude`), the agent's own word in an OSC 7501 record (claude sends them; codex 0.167
@@ -115,6 +117,20 @@ export function opencodeState(input) {
   return input.agentOpen ? { state: 'done', source: 'pane' } : notOpen(input);
 }
 
+/**
+ * Antigravity CLI: its screen says what it does (an approval, a turn running, its prompt), and its hooks say it where the
+ * screen cannot be read. Never the other way round: Esc ends a turn with no hook, leaving the last one `working`.
+ * @param {StateInput} input
+ * @returns {Reading}
+ */
+export function antigravityState(input) {
+  if (input.agentOpen === false) return notOpen(input);
+  const pane = classifyAgentPane('antigravity', input.paneText);
+  if (pane) return { state: pane, source: 'pane' };
+  if (input.hook?.state && input.hook.at >= input.startedAt) return { state: input.hook.state, source: 'hook' };
+  return input.agentOpen ? { state: 'done', source: 'pane' } : notOpen(input);
+}
+
 /** @param {StateInput} input @returns {Reading} */
 export function qaState({ qaRunning }) {
   return { state: qaRunning ? 'working' : 'done', source: 'qa' };
@@ -152,7 +168,7 @@ export function withHerdr(herdr, own) {
   return (WEIGHT[own.state] ?? 0) > WEIGHT[herdr.state] ? own : herdr;
 }
 
-const READERS = { claude: claudeState, codex: codexState, grok: grokState, opencode: opencodeState };
+const READERS = { claude: claudeState, codex: codexState, grok: grokState, opencode: opencodeState, antigravity: antigravityState };
 
 /**
  * The reader for this session's agent.

@@ -76,6 +76,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   const { open, row, line, group, howTo } = window.WoodshedSettingsRows.create({ render });
 
   function change(path, body, done, working) {
+    maskAgain(tokenInput);
     return act({
       card: 'token', note: status, working, done, call: async () => {
         me = await W.postJson(path, body);
@@ -84,6 +85,30 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
         loadReviews();
       },
     });
+  }
+
+  // A sign-in file pasted into a card (Codex, Grok Build, OpenCode, Antigravity CLI) goes in a masked field with Show beside it, as
+  // the design system's secret field says, and is always empty when drawn: its refresh token is never on the screen for
+  // someone beside the person, or in a screenshot, until they ask. A password field keeps one line, which a file pasted
+  // with its line breaks still is: JSON reads the same without them.
+  function pastedSecret(id, placeholder) {
+    return h('input', { id, type: 'password', class: 'field mono', autocomplete: 'new-password', spellcheck: 'false', autocapitalize: 'off', placeholder });
+  }
+  // A field left on Show is masked again as its save is sent, as the secret field says (it is not a form, so the Save button
+  // does it): the paste is not on the screen while the request is made, or after the console refused it. Its Show button says Show.
+  function maskAgain(input) {
+    input.type = 'password';
+    for (const button of document.querySelectorAll(`button[aria-controls="${input.id}"]`)) button.replaceWith(revealButtonFor(input));
+  }
+  function revealButtonFor(input) {
+    const shown = input.type === 'text';
+    return h('button', {
+      type: 'button', class: 'btn btn-plain', 'aria-pressed': String(shown), 'aria-controls': input.id,
+      onclick: (e) => {
+        input.type = shown ? 'password' : 'text';
+        e.currentTarget.replaceWith(revealButtonFor(input));
+      },
+    }, shown ? 'Hide' : 'Show');
   }
 
   // Shows what was pasted, to check it before Save. It is the person's own paste: a saved token is never sent back.
@@ -101,10 +126,11 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   const codexStatus = h('p', { class: 'form-note', role: 'status' });
 
   function codexChange(path, body, done, working) {
-    return act({ card: 'codex', note: codexStatus, working, done, call: async () => { me = await W.postJson(path, body); codexInput.value = ''; loadReviews(); } });
+    maskAgain(codexInput);
+    return act({ card: 'codex', note: codexStatus, working, done, call: async () => { me = await W.postJson(path, body); codexInput.value = ''; codexInput.type = 'password'; loadReviews(); } });
   }
 
-  const codexInput = h('textarea', { id: 'codex-auth', class: 'field mono', rows: '3', autocomplete: 'off', spellcheck: 'false', placeholder: 'sk-… or the contents of ~/.codex/auth.json' });
+  const codexInput = pastedSecret('codex-auth', 'sk-… or the contents of ~/.codex/auth.json');
 
   function codexCard() {
     const set = me.codexAuth?.set;
@@ -129,6 +155,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       codexInput,
       h('div', { class: 'set-actions' },
         h('button', { type: 'button', class: 'btn btn-open', disabled: !me.available || busy.has('codex'), onclick: () => codexChange('/api/my/codex-auth', { value: codexInput.value }, 'Saved. Your next Codex session uses it.') }, 'Save'),
+        revealButtonFor(codexInput),
         set && h('button', {
           type: 'button', class: 'btn btn-quiet', disabled: busy.has('codex'), onclick: () => {
             if (window.confirm('Remove your Codex sign-in? Codex sessions then run on the team key, if there is one.')) codexChange('/api/my/codex-auth/remove', {}, 'Removed.', 'Removing…');
@@ -143,13 +170,12 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   // users/<login>/<agent>-auth and handed to that person's own My Woodshed sessions alone. One card each, from the
   // registry's words. Their boxes and notes are made once and kept across draws, as Codex's are.
   const A = window.WoodshedAgents;
-  const agentInputs = Object.fromEntries(A.OWN_SIGN_IN_AGENTS.map((id) => [id, h('textarea', {
-    id: `${id}-auth`, class: 'field mono', rows: '3', autocomplete: 'off', spellcheck: 'false', placeholder: A.agent(id).signIn.placeholder,
-  })]));
+  const agentInputs = Object.fromEntries(A.OWN_SIGN_IN_AGENTS.map((id) => [id, pastedSecret(`${id}-auth`, A.agent(id).signIn.placeholder)]));
   const agentStatus = Object.fromEntries(A.OWN_SIGN_IN_AGENTS.map((id) => [id, h('p', { class: 'form-note', role: 'status' })]));
 
   function agentChange(id, path, body, done, working) {
-    return act({ card: id, note: agentStatus[id], working, done, call: async () => { me = await W.postJson(path, body); agentInputs[id].value = ''; loadReviews(); } });
+    maskAgain(agentInputs[id]);
+    return act({ card: id, note: agentStatus[id], working, done, call: async () => { me = await W.postJson(path, body); agentInputs[id].value = ''; agentInputs[id].type = 'password'; loadReviews(); } });
   }
 
   // Whether reviews of your pull requests may run this agent on your sign-in. On once a sign-in is saved here, unless
@@ -191,23 +217,30 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     const ended = set && saved.state === 'expired';
     const pill = ended ? h('span', { class: 'pill is-warn' }, 'Expired for reviews')
       : set ? h('span', { class: 'pill is-ok' }, `Saved ${W.when(saved.savedAt)}`) : h('span', { class: 'pill' }, 'Not set');
+    // An agent with a team credential too (Antigravity) runs on that with no sign-in saved: a sign-in here is the plan to use.
+    const optional = Boolean(a.signIn.optional);
     const how = [
       steps(...a.signIn.steps, { text: `Paste it below and press Save.${a.signIn.rotates ? ` A login ${a.product} refreshes is saved back when a session stops.` : ''}` }),
     ];
     return row({
       id, title: a.product, pill,
       value: ended ? `${(saved.why ?? 'Your saved login has expired').replace(/^the author's/, 'Your').replace(/the author's/g, 'yours')}. Reviews leave ${a.name} out until it is refreshed.`
-        : set ? `Your own sign-in, for ${a.name} sessions${a.reviews && me.ownAgentForReviews?.[id] ? ' and reviews of your pull requests' : ''}` :`Save ${a.signIn.kinds}, and New session offers ${a.name}`,
+        : set ? `Your own sign-in, for ${a.name} sessions${a.reviews && me.ownAgentForReviews?.[id] ? ' and reviews of your pull requests' : ''}`
+          : optional ? `Save ${a.signIn.kinds} to use your own plan. Without one, ${a.name} runs on the team\u2019s key`
+            : `Save ${a.signIn.kinds}, and New session offers ${a.name}`,
     },
-      h('p', { class: 'sub' }, `${a.name} runs only on your sign-in, in your My Woodshed sessions. Never in a shared session.`),
+      h('p', { class: 'sub' }, optional
+        ? `${a.name} runs on your own sign-in when you save one here, which is your plan, and otherwise on the team\u2019s key through the console, when it has one. In your My Woodshed sessions only: never in a shared session.`
+        : `${a.name} runs only on your sign-in, in your My Woodshed sessions. Never in a shared session.`),
       set ? howTo('How to get a sign-in', how) : how,
       h('label', { class: 'field-label', for: `${id}-auth` }, h('span', null, set ? 'Replace the sign-in' : 'Paste your sign-in')),
       agentInputs[id],
       h('div', { class: 'set-actions' },
         h('button', { type: 'button', class: 'btn btn-open', disabled: !me.available || busy.has(id), onclick: () => agentChange(id, `/api/my/agent-auth/${id}`, { value: agentInputs[id].value }, `Saved. Your next ${a.name} session uses it.`) }, 'Save'),
+        revealButtonFor(agentInputs[id]),
         set && h('button', {
           type: 'button', class: 'btn btn-quiet', disabled: busy.has(id), onclick: () => {
-            if (window.confirm(`Remove your ${a.product} sign-in? New ${a.name} sessions are refused until you save one again.`)) agentChange(id, `/api/my/agent-auth/${id}/remove`, {}, 'Removed.', 'Removing…');
+            if (window.confirm(optional ? `Remove your ${a.product} sign-in? New ${a.name} sessions run on the team\u2019s key until you save one again.` : `Remove your ${a.product} sign-in? New ${a.name} sessions are refused until you save one again.`)) agentChange(id, `/api/my/agent-auth/${id}/remove`, {}, 'Removed.', 'Removing…');
           },
         }, 'Remove')),
       agentReviewsSwitch(id),

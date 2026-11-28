@@ -2,10 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
-import { stateForHook, runningShells } from './hookState.mjs';
+import { agyAnswer, stateForAgyHook, stateForHook, runningShells } from './hookState.mjs';
 
 const run = promisify(execFile);
 
@@ -102,4 +105,45 @@ test('Grok Build\'s camelCase hooks read the same: a turn, an approval, an inter
   assert.equal(grok('PreToolUse', { subagentType: 'explore' }), null);
   // claude's idle reminder still says nothing new.
   assert.equal(stateForHook({ hook_event_name: 'Notification', notification_type: 'idle_prompt' }), null);
+});
+
+// agy 1.5.18's hooks (~/.gemini/config/hooks.json), in the order a turn with one command fired them, measured against a
+// stand-in model: none as it opens, SessionStart with the first message, then each model call and tool.
+test('agy\'s hooks: every event of a turn is working, its Stop is done, and the model call\'s end says nothing', () => {
+  const agy = (hookEventName) => stateForAgyHook({ hookEventName, conversationId: 'c', workspacePaths: ['/work/app'] });
+  assert.equal(agy('SessionStart'), 'working');
+  assert.equal(agy('PreInvocation'), 'working');
+  assert.equal(agy('PreToolUse'), 'working');
+  assert.equal(agy('PostToolUse'), 'working');
+  // It fires after each model call, tools included: another call, or the Stop, follows.
+  assert.equal(agy('PostInvocation'), null);
+  assert.equal(agy('Stop'), 'done');
+  assert.equal(agy('Notification'), null);
+});
+
+test('agy\'s hook answers allow to a tool call and {} to the rest, never the {} that denies one', () => {
+  assert.deepEqual(agyAnswer({ hookEventName: 'PreToolUse' }), { decision: 'allow' });
+  for (const hookEventName of ['SessionStart', 'PreInvocation', 'PostInvocation', 'Stop', 'PostToolUse']) assert.deepEqual(agyAnswer({ hookEventName }), {}, hookEventName);
+});
+
+test('run for agy, the hook answers on stdout and records the state and the transcript it names', async () => {
+  const script = fileURLToPath(new URL('./hookState.mjs', import.meta.url));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hook-'));
+  const stateFile = path.join(dir, 'state.json');
+  const fire = async (payload) => {
+    const child = run('node', [script, 'agy'], { env: { PATH: process.env.PATH, WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_OPENED_PULLS_FILE: path.join(dir, 'pulls.json') } });
+    child.child.stdin.end(JSON.stringify(payload));
+    return (await child).stdout;
+  };
+  const conversationId = '23af8bc5-836e-4660-b87c-a649091d8ba1';
+  const transcriptPath = `/home/node/.gemini/antigravity-cli/brain/${conversationId}/.system_generated/logs/transcript_full.jsonl`;
+  assert.equal(await fire({ hookEventName: 'PreToolUse', conversationId, transcriptPath, toolCall: { name: 'run_command', args: {} } }), '{"decision":"allow"}');
+  const written = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  assert.deepEqual([written.state, written.event, written.transcript, written.conversation], ['working', 'PreToolUse', transcriptPath, conversationId]);
+  assert.equal(await fire({ hookEventName: 'Stop', conversationId, transcriptPath, terminationReason: 'NO_TOOL_CALL' }), '{}');
+  assert.equal(JSON.parse(fs.readFileSync(stateFile, 'utf8')).state, 'done');
+  // An event that says nothing leaves the file as it was, and still answers.
+  assert.equal(await fire({ hookEventName: 'PostInvocation', conversationId }), '{}');
+  assert.equal(JSON.parse(fs.readFileSync(stateFile, 'utf8')).state, 'done');
+  fs.rmSync(dir, { recursive: true, force: true });
 });

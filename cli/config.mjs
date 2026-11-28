@@ -106,7 +106,7 @@ export const CONFIG_KEYS = Object.freeze({
 
 // What people may reach for that is, or holds, a secret: refused with a pointer to My settings, never sent.
 const SECRET_KEYS = new Set([
-  'claude-token', 'token', 'anthropic-api-key', 'codex-auth', 'codex-sign-in', 'codex', 'openai-api-key',
+  'claude-token', 'token', 'anthropic-api-key', 'codex-auth', 'codex-sign-in', 'codex', 'openai-api-key', 'gemini-api-key',
   'tmux-conf', 'tmux', 'env', 'env-files', 'files', 'own-files', 'instructions', 'repo-settings', 'tunnel-token',
 ]);
 

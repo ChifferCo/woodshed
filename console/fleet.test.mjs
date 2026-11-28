@@ -126,6 +126,11 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
       isMember: (login) => (memberList ?? writers).some((e) => e.toLowerCase() === String(login).toLowerCase()),
     },
     statusd: (session, method, path, opts) => {
+      // A test's own answer to a status read, or a refusal of it.
+      if (path === '/status' && fail.statusFor) {
+        const answer = fail.statusFor();
+        return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
+      }
       if (path === '/send' && fail.send) return Promise.reject(Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } }));
       if (path === '/send' && fail.sendTyped) return Promise.reject(Object.assign(new Error('statusd /send answered 409'), { status: 409, body: { why: 'prompt-open', typed: true } }));
       // A test's own answer for one send: an error to refuse it with, or a promise to wait on before it goes.
@@ -1390,6 +1395,37 @@ test('Resume starts a stopped private session again on its branch, reopening cla
   assert.equal(fresh.extraAgents, null);
   assert.equal(fresh.agents, null);
   assert.equal(calls.started.at(-1).env.RESUME_SESSION, undefined);
+  // And what the last run's first /settings answer handed out, and whether startup code of the repo's ran, start again.
+  await fleet.stop(fresh, 'stopped from the console');
+  fleet.rememberCredentials(fresh, { claude: false, codex: false, agent: false });
+  fresh.startupCodeRuns = true;
+  await fleet.resumePrivate({ owner: 'joel', id: fresh.id });
+  assert.equal(fresh.credentialsGiven, null);
+  assert.equal(fresh.startupCodeRuns, null);
+});
+
+test('the first /settings answer of a run stands, and startup code is asked of statusd now and kept once seen', async () => {
+  const { fleet, fail } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Go' });
+  const first = { claude: true, codex: false, agent: false };
+  assert.deepEqual(fleet.rememberCredentials(session, first), first);
+  assert.deepEqual(fleet.rememberCredentials(session, { claude: true, codex: true, agent: true }), first, 'a later answer does not change what the run holds');
+  assert.deepEqual(session.credentialsGiven, first);
+
+  // Asked of the session's statusd, not read from the last poll.
+  fail.statusFor = () => ({ state: 'done' });
+  assert.equal(await fleet.readStartupCode(session), false);
+  assert.equal(session.startupCodeRuns ?? null, null);
+  fail.statusFor = () => ({ state: 'done', startupCodeRuns: true });
+  assert.equal(await fleet.readStartupCode(session), true);
+  assert.equal(session.startupCodeRuns, true, 'kept on the record');
+  // Once seen it is not asked again, so a statusd that stops answering does not lift it.
+  fail.statusFor = () => new Error('statusd did not answer');
+  assert.equal(await fleet.readStartupCode(session), true);
+  // A session never seen to run it, and statusd not answering: the error is the caller's, who sends nothing.
+  const other = await fleet.startPrivate({ owner: 'joel', prompt: 'Other' });
+  await assert.rejects(fleet.readStartupCode(other), /did not answer/);
+  assert.equal(other.startupCodeRuns ?? null, null);
 });
 
 test('New session in the background answers while the container is still coming up, and logs a launch that breaks', async () => {

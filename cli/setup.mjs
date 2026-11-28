@@ -59,7 +59,7 @@ const REVIEW_CHOICES = ['none', 'claude', 'codex', 'both', 'default'];
 // Any reviewers joined with + are a choice too (claude+grok), as My settings saves one and the console checks it.
 const isReviewChoice = (value) => REVIEW_CHOICES.includes(value) || agents.reviewersOf(value) !== null;
 const REVIEW_CHOICES_TEXT = `${REVIEW_CHOICES.join(', ')}, or reviewers joined with + (claude+grok)`;
-const OWN_SIGN_IN_FLAGS = agents.OWN_SIGN_IN_AGENTS.map((id) => `--${id}-sign-in`);
+const OWN_SIGN_IN_FLAGS = agents.OWN_ONLY_AGENTS.map((id) => `--${id}-sign-in`);
 const TERMINAL_CHOICES = CONFIG_KEYS.terminal.values;
 const AGENT_NAMES = { claude: 'Claude Code', codex: 'Codex' };
 // How to connect each, as My settings' own rows say it (console/public/mySettings.js): what to run in a terminal of the
@@ -88,7 +88,7 @@ export const SETUP_STEPS = [
   { key: 'login', title: 'Sign in' },
   { key: 'repos', title: 'Repos' },
   { key: 'agent', title: 'Claude Code and Codex' },
-  { key: 'own-agents', title: `${agents.OWN_SIGN_IN_AGENTS.map((id) => agents.agent(id).product).join(' and ')} (optional)` },
+  { key: 'own-agents', title: `${agents.OWN_ONLY_AGENTS.map((id) => agents.agent(id).product).join(' and ')} (optional)` },
   { key: 'repo-review', title: 'Review on your repos', also: ['review-choice', 'reviews'] },
   { key: 'pr-reviews', title: 'Reviews of your open pull requests' },
   { key: 'terminal', title: 'Agent terminal (optional)', also: ['herdr-watch'] },
@@ -483,9 +483,9 @@ export async function setupCommand(args, ctx) {
   // reads it here only to check it, says which file goes to which console, and asks first, and asks again before
   // replacing one saved already. Without a terminal it sends only with --<agent>-sign-in.
   begin('own-agents');
-  const ownAgents = agents.OWN_SIGN_IN_AGENTS.filter((id) => typeof signIns?.[id] === 'boolean' || opts[`--${id}-sign-in`]);
+  const ownAgents = agents.OWN_ONLY_AGENTS.filter((id) => typeof signIns?.[id] === 'boolean' || opts[`--${id}-sign-in`]);
   if (!ownAgents.length) {
-    report('own-agents', 'skipped', `This console does not run ${agents.OWN_SIGN_IN_AGENTS.map((id) => agents.agent(id).product).join(' or ')} sessions.`);
+    report('own-agents', 'skipped', `This console does not run ${agents.OWN_ONLY_AGENTS.map((id) => agents.agent(id).product).join(' or ')} sessions.`);
   }
   for (const id of ownAgents) {
     const { product, signIn } = agents.agent(id);

@@ -1,0 +1,24 @@
+#!/bin/bash
+# agy (Antigravity CLI), on the credential the entrypoint chose (configureAntigravityPane). A session on
+# its owner's own Google login has it in ~/.gemini already and calls Google directly. Any other holds only its
+# SESSION_TOKEN: agy reaches the Gemini API through the console's proxy (console/geminiProxy.mjs), which swaps it for the
+# team's key. The token is agy's `GEMINI_API_KEY`, which agy needs `"modelProvider": "gemini"` in its settings to read: that
+# is in the settings file this run is given (`--settings`, session/antigravitySettings.mjs), not in ~/.gemini.
+#
+# The commands agy runs, and the hooks and MCP servers it starts, inherit it: it is the session's own token, which every
+# process of the session can read anyway. Never the team's key, which only the console holds.
+set -euo pipefail
+
+real=${WOODSHED_REAL_AGY:-/usr/local/bin/agy}
+# Never updating itself: the image pins its version (its updater only runs with this exactly `true`, measured with 1.5.18).
+export AGY_CLI_DISABLE_AUTO_UPDATE=true
+# A login in a file Woodshed can save and send back, never in a keyring.
+export AGY_CLI_FORCE_FILE_TOKEN_STORAGE=true
+if [ "${WOODSHED_AGY_AUTH:-}" = key ]; then
+  export GEMINI_API_KEY=$SESSION_TOKEN
+  export GOOGLE_GEMINI_BASE_URL=$WOODSHED_CONSOLE_URL/gemini
+else
+  # The owner's own login: no key of anyone's, and no other address for the model.
+  unset GEMINI_API_KEY GOOGLE_GEMINI_BASE_URL
+fi
+exec "$real" "$@"

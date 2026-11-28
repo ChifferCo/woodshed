@@ -5,21 +5,25 @@ import test from 'node:test';
 const require = createRequire(import.meta.url);
 const agents = require('./agents.cjs');
 
-test('every agent is listed, Claude Code first, and only the new two need an own sign-in', () => {
-  assert.deepEqual(agents.AGENT_IDS, ['claude', 'codex', 'grok', 'opencode']);
-  assert.deepEqual(agents.OWN_SIGN_IN_AGENTS, ['grok', 'opencode']);
+test('every agent is listed, Claude Code first, and only Grok Build and OpenCode need an own sign-in', () => {
+  assert.deepEqual(agents.AGENT_IDS, ['claude', 'codex', 'grok', 'opencode', 'antigravity']);
+  assert.deepEqual(agents.OWN_SIGN_IN_AGENTS, ['grok', 'opencode', 'antigravity']);
+  assert.deepEqual(agents.OWN_ONLY_AGENTS, ['grok', 'opencode']);
   assert.deepEqual(agents.REVIEW_AGENT_IDS, ['claude', 'codex', 'grok', 'opencode']);
   for (const id of agents.AGENT_IDS) {
     const a = agents.agent(id);
     assert.equal(a.id, id);
     assert.ok(a.processNames.includes(a.command), `${id}: its command is one of its process names`);
-    // Every agent reviews: the two on no team credential only on the author's own sign-in, which the console's proxy adds
-    // (console/reviewAgentProxy.mjs), never handed to the review.
-    assert.equal(a.reviews, true);
-    assert.equal(Boolean(a.signIn), !a.teamCredential);
+    // The agents on no team credential review only on the author's own sign-in, which the console's proxy adds
+    // (console/reviewAgentProxy.mjs), never handed to the review. Antigravity does not review.
+    assert.equal(a.reviews, id !== 'antigravity');
+    // An agent with no team credential has an own sign-in; one with both says so: the sign-in is `optional`.
+    assert.equal(Boolean(a.signIn) && !a.signIn.optional, !a.teamCredential);
     assert.ok(a.permissionModes.includes('auto'));
   }
-  assert.ok(agents.PROCESS_NAMES.includes('grok') && agents.PROCESS_NAMES.includes('opencode'));
+  assert.equal(agents.agent('antigravity').teamCredential, true);
+  assert.equal(agents.agent('antigravity').signIn.optional, true);
+  assert.ok(agents.PROCESS_NAMES.includes('grok') && agents.PROCESS_NAMES.includes('opencode') && agents.PROCESS_NAMES.includes('agy'));
   // tmux names a pane's command after the process, which Linux cuts at 15 characters.
   assert.ok(agents.PROCESS_NAMES.every((n) => n.length <= 15));
 });
@@ -95,6 +99,25 @@ test('each agent places every mode it offers on one scale, and a started session
   assert.equal(agents.modeForStartedSession('claude', 'default', 'codex'), 'plan');
   assert.equal(agents.modeForStartedSession('codex', 'default', 'opencode'), 'acceptEdits');
   assert.equal(agents.modeForStartedSession('opencode', 'toString', 'claude'), 'plan', 'a name off the object is no mode');
+});
+
+test('an Antigravity CLI login is the file agy saves, kept whole, and it does not rotate', () => {
+  const login = { token: { access_token: 'ya29.test', token_type: 'Bearer', refresh_token: '1//test-refresh', expiry: '2026-12-01T00:00:00Z', expires_in: 3599 }, auth_method: 'consumer', id_token_email: 'someone@example.test' };
+  const text = JSON.stringify(login);
+  assert.equal(agents.checkSignIn('antigravity', text), text);
+  assert.equal(agents.checkSignIn('antigravity', `  ${JSON.stringify(login, null, 2)}\n`), text, 'whatever its spacing');
+  // Only a refresh token lasts, so a file with none is refused, and so is another agent's file or a key.
+  for (const bad of ['', 'AIza-a-gemini-key', '{}', '[]', '{"token":{}}', '{"token":{"refresh_token":""}}', '{"token":"x"}', '{"scope":{"key":"x","refresh_token":"y"}}', '{"openai":{"type":"api","key":"x"}}']) {
+    assert.throws(() => agents.checkSignIn('antigravity', bad), (e) => e.shown === true, JSON.stringify(bad));
+  }
+  assert.throws(() => agents.checkSignIn('antigravity', 'x'.repeat(20_001)), /too long/);
+  // agy refreshes the access token itself and rewrites the file with the same refresh token (measured with agy 1.5.18),
+  // so no session sends a refresh back, and the console's /agent-auth route refuses the agent.
+  assert.equal(agents.agent('antigravity').signIn.rotates, false);
+  assert.equal(agents.agent('grok').signIn.rotates && agents.agent('opencode').signIn.rotates, true);
+  // Grok Build's and OpenCode's files are not an Antigravity login, and an Antigravity login is neither of theirs.
+  assert.throws(() => agents.checkSignIn('grok', text), (e) => e.shown === true);
+  assert.throws(() => agents.checkSignIn('opencode', text), (e) => e.shown === true);
 });
 
 test('review models: Claude Code takes its named models, the others a model name, and nothing else is kept', () => {

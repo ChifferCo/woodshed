@@ -467,7 +467,7 @@ export function sessionSignInsOf(userSettings) {
   return async (login) => {
     await userSettings?.refresh?.(login);
     const view = userSettings?.view(login);
-    const own = Object.fromEntries(agents.OWN_SIGN_IN_AGENTS.map((id) => [id, view?.agentAuth?.[id]?.set === true]));
+    const own = Object.fromEntries(agents.OWN_ONLY_AGENTS.map((id) => [id, view?.agentAuth?.[id]?.set === true]));
     return { claude: view?.claudeToken?.set === true, codex: view?.codexAuth?.set === true, ...own };
   };
 }

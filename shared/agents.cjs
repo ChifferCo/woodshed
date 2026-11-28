@@ -1,9 +1,11 @@
-// The agents a session can run, in one place: Claude Code, Codex, Grok Build and OpenCode. One file for
+// The agents a session can run, in one place: Claude Code, Codex, Grok Build, OpenCode and Antigravity CLI. One file for
 // the console (imported), its pages (served as /static/agents.cjs, a script that sets `WoodshedAgents`), the command line
 // and the session image (/opt/woodshed/shared), so each names, offers and checks the same agents the same way.
 //
-// Claude Code and Codex are the two the console can run on a team's credential, through its own proxies
-// (anthropicProxy.mjs, openaiProxy.mjs). The two others run only on their owner's own sign-in, saved on My settings as
+// Claude Code, Codex and Antigravity CLI are the three the console can run on a team's credential, through its own proxies
+// (anthropicProxy.mjs, openaiProxy.mjs, geminiProxy.mjs). Antigravity may also run on its owner's own Google login (their
+// Pro or Ultra plan), saved like the two below; it is the one agent with both, so its `signIn` is `optional`. Grok Build
+// and OpenCode run only on their owner's own sign-in, saved on My settings as
 // `users/<login>/<agent>-auth` and handed to that person's private sessions alone (sessionApi.mjs, /settings): never to a
 // shared session, a question from Slack, a QA run or a review, which hold no one's sign-in. A review of a person's own
 // pull request may still run them on that person's sign-in (console/reviewAgents.mjs), as Codex's does: the console's
@@ -18,8 +20,9 @@
   /**
    * @typedef {{text: string, command?: string}} Step
    * @typedef {{secret: string, label: string, placeholder: string, steps: Step[], maxChars: number, rotates: boolean,
-   *   kinds: string}} SignIn
-   *   secret: the name under `users/<login>/`. rotates: the agent refreshes a login and its refresh token works once, so a
+   *   kinds: string, optional?: boolean}} SignIn
+   *   secret: the name under `users/<login>/`. optional: the agent also has a team credential, so a session with no
+   *   sign-in saved runs on that instead of being refused. rotates: the agent refreshes a login and its refresh token works once, so a
    *   session sends the refreshed one back at stop (sessionApi.mjs, /agent-auth). kinds: what the card says it takes.
    * @typedef {{id: string, name: string, product: string, command: string, processNames: string[], quit: string,
    *   teamCredential: boolean, signIn: SignIn|null, permissionModes: string[], modeRanks: Record<string, number>,
@@ -110,12 +113,36 @@
       efforts: ['', 'low', 'medium', 'high', 'max'], modelHint: 'anthropic/claude-sonnet-4-5', modelRe: PROVIDER_MODEL, reviews: true,
       usageUrl: null, docsUrl: 'https://opencode.ai/docs',
     },
+    antigravity: {
+      id: 'antigravity', name: 'Antigravity', product: 'Antigravity CLI', command: 'agy', processNames: ['agy'], quit: '/exit',
+      // The team's Gemini API key through the console's proxy (geminiProxy.mjs), or the owner's own Google login, which is
+      // their Antigravity plan (Free, Pro or Ultra) and is used in place of the key when they saved one.
+      teamCredential: true,
+      signIn: {
+        // Not `rotates`: agy refreshes the access token itself and rewrites the file, and its refresh token stays the same
+        // (measured with agy 1.5.18), so the copy saved here keeps working and no session sends a refresh back.
+        secret: 'antigravity-auth', label: 'Antigravity CLI', placeholder: 'the contents of ~/.gemini/antigravity-cli/antigravity-oauth-token', maxChars: 20_000, rotates: false, optional: true,
+        kinds: 'the Google login file agy saves',
+        steps: [
+          { text: 'Sign in with Google on your laptop. Without this setting agy keeps the login in your operating system\u2019s keyring, which has no file to copy:', command: 'AGY_CLI_FORCE_FILE_TOKEN_STORAGE=true agy' },
+          { text: 'Choose Google OAuth, finish in the browser, and quit. Copy the saved login without printing it. On Linux, use wl-copy or xclip -selection clipboard from the same file:', command: 'pbcopy < ~/.gemini/antigravity-cli/antigravity-oauth-token' },
+        ],
+      },
+      permissionModes: ['auto', 'acceptEdits', 'plan', 'default'],
+      // agy's own --mode accept-edits and plan, --dangerously-skip-permissions for auto (the container is the sandbox, as
+      // for codex), and its own policy, which asks before a command, for default (session/entrypoint.sh: antigravityFlags).
+      modeRanks: { plan: RANKS.readOnly, default: RANKS.asksFirst, acceptEdits: RANKS.edits, auto: RANKS.everything },
+      efforts: ['', 'low', 'medium', 'high', 'xhigh', 'max'], modelHint: 'gemini-3.1-pro-low', modelRe: MODEL_NAME, reviews: false,
+      usageUrl: 'https://antigravity.google/', docsUrl: 'https://antigravity.google/docs/cli/reference/',
+    },
   };
 
   /** Every agent's id, Claude Code first: the order menus offer them in. */
   const AGENT_IDS = Object.freeze(Object.keys(AGENTS));
-  /** The agents that run only on their owner's own sign-in. */
+  /** The agents with an own sign-in saved on My settings, whether or not they also have a team credential. */
   const OWN_SIGN_IN_AGENTS = Object.freeze(AGENT_IDS.filter((id) => AGENTS[id].signIn));
+  /** The agents that run on their owner's own sign-in alone: a session of one with none saved is refused. */
+  const OWN_ONLY_AGENTS = Object.freeze(OWN_SIGN_IN_AGENTS.filter((id) => !AGENTS[id].signIn.optional));
   /** The agents that may review a pull request, in the order a review's comment names them. */
   const REVIEW_AGENT_IDS = Object.freeze(AGENT_IDS.filter((id) => AGENTS[id].reviews));
   /**
@@ -271,11 +298,18 @@
       // zsh ends output with no final newline in a `%`, which a copy of `cat …auth.json` takes along.
       json = JSON.parse(text.replace(/\}\s*%$/, '}'));
     } catch {
-      throw fail(id === 'grok' ? 'paste an xAI API key (xai-…) or the contents of ~/.grok/auth.json' : 'paste the contents of ~/.local/share/opencode/auth.json');
+      throw fail(id === 'grok' ? 'paste an xAI API key (xai-…) or the contents of ~/.grok/auth.json'
+        : id === 'antigravity' ? 'paste the contents of ~/.gemini/antigravity-cli/antigravity-oauth-token' : 'paste the contents of ~/.local/share/opencode/auth.json');
     }
     if (typeof json !== 'object' || json === null || Array.isArray(json) || !Object.keys(json).length) throw fail(`that holds no ${a.product} sign-in: paste the whole auth.json`);
     const entries = Object.values(json);
-    if (id === 'grok') {
+    if (id === 'antigravity') {
+      // agy's own file: the Google login as {token: {access_token, refresh_token, expiry, …}, auth_method, id_token_email}. The
+      // refresh token is what lasts; the access token is refreshed by agy itself.
+      if (!json.token || typeof json.token !== 'object' || typeof json.token.refresh_token !== 'string' || !json.token.refresh_token) {
+        throw fail('that is not an Antigravity CLI login: sign in with AGY_CLI_FORCE_FILE_TOKEN_STORAGE=true agy, then paste ~/.gemini/antigravity-cli/antigravity-oauth-token');
+      }
+    } else if (id === 'grok') {
       // A map of scope to login: each with the token Grok calls with (`key`), and a refresh token for a login.
       if (!entries.every((e) => e && typeof e === 'object' && typeof e.key === 'string' && e.key)) {
         throw fail('that is not a Grok Build auth.json: run grok login, then paste ~/.grok/auth.json');
@@ -304,5 +338,5 @@
     return require('node:crypto').createHash('sha256').update(canonical).digest('hex');
   }
 
-  return { AGENTS, AGENT_IDS, RANKS, modeForStartedSession, OWN_SIGN_IN_AGENTS, REVIEW_AGENT_IDS, OPENCODE_REVIEW_PROVIDERS, REVIEW_PRESETS, reviewersOf, reviewChoiceOf, REVIEW_DEFAULT_MODELS, REVIEW_CLAUDE_MODELS, reviewModelOk, reviewModelsOf, reviewModelsText, parseReviewModels, PROCESS_NAMES, isAgent, agent, agentOfSession, modelShapeOk, checkSignIn, signInDigest };
+  return { AGENTS, AGENT_IDS, RANKS, modeForStartedSession, OWN_SIGN_IN_AGENTS, OWN_ONLY_AGENTS, REVIEW_AGENT_IDS, OPENCODE_REVIEW_PROVIDERS, REVIEW_PRESETS, reviewersOf, reviewChoiceOf, REVIEW_DEFAULT_MODELS, REVIEW_CLAUDE_MODELS, reviewModelOk, reviewModelsOf, reviewModelsText, parseReviewModels, PROCESS_NAMES, isAgent, agent, agentOfSession, modelShapeOk, checkSignIn, signInDigest };
 });

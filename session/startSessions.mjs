@@ -3,7 +3,7 @@
 // (console/sessionStarts.mjs). It reads the session's start token from the file the entrypoint wrote (keepStartToken),
 // which nothing's environment holds.
 //
-//   woodshed-session new [--separate] [--branch B] [--repo R] [--name N] [--agent claude|codex|grok|opencode] [--model M] [--effort E]
+//   woodshed-session new [--separate] [--branch B] [--repo R] [--name N] [--agent claude|codex|grok|opencode|antigravity] [--model M] [--effort E]
 //                        (--prompt-file F | "prompt" | - for stdin)
 //   woodshed-session list [--all] [--json]
 //   woodshed-session get <id> [--json]
@@ -43,7 +43,7 @@ Commands:
       --repo <project>   another of the console's repos, by its project name (default: this session's)
       --name <name>      its name on the console (default: named from the prompt)
       --separate         work of its own, not a piece of this session's: at the top of the rail, and not in list
-      --agent claude|codex|grok|opencode, --model <model>, --effort <effort>
+      --agent claude|codex|grok|opencode|antigravity, --model <model>, --effort <effort>
                          (Grok Build and OpenCode only once your person saved their sign-in for it on My settings)
   list                   the sessions this session started, with their state, branch, pull request and link
       --all              every private session of your person's, whoever started it

@@ -1,0 +1,40 @@
+
+      ▄▀▀▄        Antigravity CLI 1.5.18
+     ▀▀▀▀▀▀       Gemini API key
+    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)
+   ▄▀▀    ▀▀▄     /work/repo
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+> please do it
+
+● Edited 1 file (existing.txt) (ctrl+o to expand)
+
+Pending edit
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/work/repo/existing.txt  +1 -1
+  1  -  hello
+  1  +  howdy
+
+  shift+tab to auto-approve file edits
+Accept this file edit?
+> 1. Yes, accept this change
+  2. No, reject this change
+
+  ↑/↓ Navigate · f full diff
+esc to cancel                                                                                                           Gemini 3.1 Pro · low
+
+
+
+
+
+
+
+
+
+
+
+
+
+

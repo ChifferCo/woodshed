@@ -2127,7 +2127,7 @@
       : s.trigger === 'my-woodshed' ? 'from My Woodshed' : s.trigger === 'slack' ? 'with a question in Slack'
         : s.trigger === 'qa' ? 'with the QA label, to test the pull request' : 'from the console';
     const own = window.WoodshedAgents.agent(W.agentOf(s));
-    const claude = own.signIn ? `Your own ${own.product} sign-in` : W.agentOf(s) === 'codex' ? 'Your Codex sign-in, or the team\'s OpenAI key without one' : W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
+    const claude = own.signIn?.optional ? `Your own ${own.product} sign-in, or the team\'s Gemini key without one` : own.signIn ? `Your own ${own.product} sign-in` : W.agentOf(s) === 'codex' ? 'Your Codex sign-in, or the team\'s OpenAI key without one' : W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
     const row = (term, value) => value && [h('dt', null, term), h('dd', null, value)];
     return h('dl', { class: 'card-menu-dl' },
       row('Branch', s.branch),

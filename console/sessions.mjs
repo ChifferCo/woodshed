@@ -422,6 +422,13 @@ export function runsCodex(session) {
   return session.options?.agent === 'codex' || (Boolean(session.owner) && !session.taintedAt && (session.extraAgents ?? []).includes('codex'));
 }
 
+/** Whether the session runs Antigravity CLI: an Antigravity session, or a private one whose owner started an Antigravity agent
+ * in it (fleet.allowAgent): the team's Gemini key (geminiProxy.mjs) is for it as for an Antigravity session. Never once the
+ * session has seen production data, for an agent started beside another. */
+export function runsAntigravity(session) {
+  return session.options?.agent === 'antigravity' || (Boolean(session.owner) && !session.taintedAt && (session.extraAgents ?? []).includes('antigravity'));
+}
+
 const AGENT_STATES = new Set(['starting', 'working', 'needs-you', 'done', 'not-running']);
 const MESSAGE_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 const AGENT_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -597,6 +604,9 @@ export function statusUpdate(session, status, nowIso, { repos = [] } = {}) {
     app: APP_STATES.has(status.app) ? status.app : null,
     // The agents a person started beside its own, for the page's switch over Chat and TUI.
     agents: agentsFrom(status.agents),
+    // Startup code of the repo's runs in the container (an Antigravity CLI on a checkout that ships hooks, MCP servers or
+    // plugins): once seen it stays for the run, and the console sends no personal sign-in of the owner's into the session.
+    startupCodeRuns: status.startupCodeRuns === true ? true : session.startupCodeRuns ?? null,
     // Claude's own id for the conversation, which Resume hands back to `claude --resume`.
     claudeSession: CLAUDE_SESSION_RE.test(status.claudeSession ?? '') ? status.claudeSession : session.claudeSession ?? null,
     appServers: appServersFrom(status.appServers),

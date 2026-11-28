@@ -1,4 +1,4 @@
-// The agents a person starts beside a session's own (statusd's /agents): another Claude, Codex, Grok Build or OpenCode, with the model,
+// The agents a person starts beside a session's own (statusd's /agents): another Claude, Codex, Grok Build, OpenCode or Antigravity CLI, with the model,
 // effort and permission mode they pick, in the same checkout, each in a terminal of its own (`agent-2`, `agent-3`, ...)
 // next to the session's `claude`: a tmux session, or where the session's agent runs in Herdr (its owner's Agent
 // terminal, agentPane.mjs), a Herdr terminal on the session's own core, which the owner's Herdr shows beside it. The page's Chat and TUI tabs switch between them: Chat reads each one's own record
@@ -12,6 +12,7 @@
 //           the one $CODEX_HOME
 //   grok    its own named conversation and hook state file
 //   opencode  a SQLite database of its own
+//   antigravity  its own hook state file, which names the conversation's transcript_full.jsonl
 // The session's own agent never reads theirs as its own: statusd skips every record one of these claimed (claimed()).
 //
 // Only in a private coding session, never once the session is tainted: they are not reopened on the console's proxy as
@@ -24,10 +25,11 @@ import path from 'node:path';
 
 import registry from '../shared/agents.cjs';
 import { hcPane, tmuxPane } from './agentPane.mjs';
-import { claudeState, codexState, grokState, opencodeState, herdrState, lastInterruptAt, openToolCalls, paneState, withHerdr } from './agentState.mjs';
+import { antigravityState, claudeState, codexState, grokState, opencodeState, herdrState, lastInterruptAt, openToolCalls, paneState, withHerdr } from './agentState.mjs';
 import { Refusal, answerApproval, answerQuestions, composerEmpty, composerText, draftInBox, readPrompt, typeMessage, typingSteps } from './panePrompt.mjs';
 import { createPaneLock } from './paneLock.mjs';
-import { readSessionTranscript } from './sessionTranscript.mjs';
+import { modeFlags, runSettings } from './antigravitySettings.mjs';
+import { antigravityRecord, readSessionTranscript } from './sessionTranscript.mjs';
 
 // Beside the session's own: four agents at most in one container, each in its own terminal.
 export const MAX_EXTRA_AGENTS = 3;
@@ -35,7 +37,7 @@ export const AGENTS = registry.AGENT_IDS;
 // What New session offers (console/sessions.mjs sessionOptions checks a start against the same), and what goes into a
 // shell line: a model or an effort is a name, never anything a shell reads.
 export const NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-export const PERMISSION_MODES = { claude: ['auto', 'acceptEdits', 'plan', 'default'], codex: ['auto', 'plan', 'default'], grok: registry.agent('grok').permissionModes, opencode: registry.agent('opencode').permissionModes };
+export const PERMISSION_MODES = { claude: ['auto', 'acceptEdits', 'plan', 'default'], codex: ['auto', 'plan', 'default'], grok: registry.agent('grok').permissionModes, opencode: registry.agent('opencode').permissionModes, antigravity: registry.agent('antigravity').permissionModes };
 export const MAX_PROMPT_CHARS = 8000;
 // The ids, as tmux names their sessions and the TUI tab's URL names them (woodshed-attach checks the same).
 export const AGENT_ID_RE = /^agent-[2-9]$/;
@@ -50,13 +52,13 @@ const KEEP_IDS = 20;
 
 /**
  * What a start asks for, checked: the agent, its model, effort and permission mode, and the first message.
- * @returns {{agent: 'claude'|'codex'|'grok'|'opencode', model: string, effort: string, permissionMode: string, prompt: string}}
+ * @returns {{agent: 'claude'|'codex'|'grok'|'opencode'|'antigravity', model: string, effort: string, permissionMode: string, prompt: string}}
  * @throws {Error & {status: 400}}
  */
 export function startOptions(body) {
   const bad = (message) => Object.assign(new Error(message), { status: 400 });
   const agent = body?.agent ?? 'claude';
-  if (!AGENTS.includes(agent)) throw bad('agent must be claude, codex, grok or opencode');
+  if (!AGENTS.includes(agent)) throw bad('agent must be claude, codex, grok, opencode or antigravity');
   const name = (value, what) => {
     if (value === undefined || value === null || value === '') return '';
     if (typeof value !== 'string' || !NAME_RE.test(value)) throw bad(`${what} is not one a session takes`);
@@ -82,8 +84,9 @@ export function startOptions(body) {
  * @param {{agent: string, model: string, effort: string, permissionMode: string}} options
  * @param {{bin: string, claudeFlags: string, conversation: string|null, uploadsDir: string, promptFile: string|null}} where
  */
-export function commandLine({ agent, model, effort, permissionMode }, { bin, claudeFlags = '', conversation = null, uploadsDir, promptFile = null, proxiedGrok = false }) {
-  const parts = [path.join(bin, agent)];
+export function commandLine({ agent, model, effort, permissionMode }, { bin, claudeFlags = '', conversation = null, uploadsDir, promptFile = null, proxiedGrok = false, agySettings = null }) {
+  // The wrapper in session/bin is named for the agent's command (agy for antigravity).
+  const parts = [path.join(bin, registry.agent(agent).command)];
   if (agent === 'claude') {
     // The session's own flags (claudeFlags in entrypoint.sh, written with no model, effort or mode): its hooks, rules,
     // MCP servers and plugins.
@@ -97,6 +100,11 @@ export function commandLine({ agent, model, effort, permissionMode }, { bin, cla
     if (proxiedGrok) parts.push('--no-memory', '--disable-web-search', '--disallowed-tools', 'x_search');
     if (permissionMode === 'auto') parts.push('--always-approve');
     if (permissionMode === 'acceptEdits' || permissionMode === 'plan') parts.push('--permission-mode', permissionMode);
+    if (model) parts.push('--model', model);
+    if (effort) parts.push('--effort', effort);
+  } else if (agent === 'antigravity') {
+    // As antigravityFlags in entrypoint.sh: the settings file of this run makes the mode and picks the credential.
+    parts.push('--settings', agySettings, '--add-dir', uploadsDir, ...modeFlags(permissionMode));
     if (model) parts.push('--model', model);
     if (effort) parts.push('--effort', effort);
   } else if (agent === 'opencode') {
@@ -115,6 +123,7 @@ export function commandLine({ agent, model, effort, permissionMode }, { bin, cla
   if (promptFile) {
     const message = `"$(cat ${promptFile})"`;
     if (agent === 'opencode') parts.push(`--prompt=${message}`);
+    else if (agent === 'antigravity') parts.push(`--prompt-interactive=${message}`);
     else parts.push('--', message);
   }
   return parts.join(' ');
@@ -171,7 +180,7 @@ export async function openRollout(shellPid, codexHome, { descendants = descendan
  *   agents too (statusd's WOODSHED_TERMINAL)
  */
 export function createAgents({
-  run, repoDir, bin, claudeDir, codexHome, claudeFlagsFile, codexReady, claudeEnv = async () => ({ env: {} }), codexEnv = async () => ({ env: {} }), grokEnv, opencodeEnv, stateDir = '/tmp', uploadsDir = '/tmp/uploads',
+  run, repoDir, bin, claudeDir, codexHome, claudeFlagsFile, codexReady, claudeEnv = async () => ({ env: {} }), codexEnv = async () => ({ env: {} }), grokEnv, opencodeEnv, antigravityEnv, stateDir = '/tmp', uploadsDir = '/tmp/uploads',
   tainted = () => false, now = Date.now, openRollout: findRollout = openRollout, log = console, terminal = 'tmux', hcBin = 'hc',
 }) {
   // Where an agent runs: its tmux session, or its Herdr terminal. Either is made with a shell in the checkout, the agent
@@ -280,6 +289,10 @@ export function createAgents({
       return { ...withHerdr(herdr, opencodeState({ paneText: pane, agentOpen, now: now(), startedAt: a.startedAt })), pane, hook: null };
     }
     const hook = await readJson(a.stateFile);
+    if (a.agent === 'antigravity') {
+      const agentOpen = await a.io.agentRunning().catch(() => null);
+      return { ...withHerdr(herdr, antigravityState({ paneText: pane, hook, agentOpen, now: now(), startedAt: a.startedAt })), pane, hook };
+    }
     if (a.agent === 'grok') {
       const agentOpen = await a.io.agentRunning().catch(() => null);
       const reading = grokState({ paneText: pane, hook, agentOpen, now: now(), startedAt: a.startedAt });
@@ -424,12 +437,28 @@ export function createAgents({
     await fs.rm(stateFile, { force: true });
     if (promptFile) await fs.writeFile(promptFile, `${options.prompt}\n`, { mode: 0o600 });
     const conversation = ['claude', 'grok'].includes(options.agent) ? randomUUID() : null;
-    const line = commandLine(options, { bin, claudeFlags, conversation, uploadsDir, promptFile, proxiedGrok: Boolean(env.GROK_MODELS_BASE_URL) });
+    // An agy's settings are its own: its permission mode, and the team's key or the owner's login (antigravitySettings.mjs).
+    const agySettings = options.agent === 'antigravity' ? path.join(stateDir, `woodshed-${id}-agy-settings.json`) : null;
+    if (agySettings) {
+      await fs.writeFile(agySettings, `${JSON.stringify(runSettings({ mode: options.permissionMode, team: env.WOODSHED_AGY_AUTH === 'key', repoDir }))}\n`, { mode: 0o600 });
+      const was = cleanup;
+      cleanup = async () => {
+        await fs.rm(agySettings, { force: true });
+        await was?.();
+      };
+    }
+    const line = commandLine(options, { bin, claudeFlags, conversation, uploadsDir, promptFile, proxiedGrok: Boolean(env.GROK_MODELS_BASE_URL), agySettings });
     // Its own terminal, its hooks pointed at its own state file. A tmux one is kept after the agent exits, as the
     // session's is.
     const agentEnv = { WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_AGENT_ID: id, ...env };
     if (tainted()) throw Object.assign(new Error('this session has seen production data: no other agent starts in it'), { status: 409 });
-    await terms.make(id, agentEnv);
+    try {
+      await terms.make(id, agentEnv);
+    } catch (err) {
+      // What was written for it before its terminal came up goes too (its prompt file stays, as it always has).
+      if (agySettings) await fs.rm(agySettings, { force: true });
+      throw err;
+    }
     const a = {
       id, ...options, conversation, stateFile, cleanup, grokHome: env.GROK_HOME, opencodeDb: env.OPENCODE_DB, startedAt: now(), io: terms.io(id, options.agent), lock: createPaneLock(),
       held: [], delivered: [], refused: [], leftInBox: null, lastSent: null, lastState: null, rollout: null, rolloutAt: 0,
@@ -465,6 +494,10 @@ export function createAgents({
     } else if (options.agent === 'grok') {
       if (!grokEnv) throw Object.assign(new Error('grok is not set up in this session'), { status: 409 });
       ({ env, undo = null } = await grokEnv(body?.grokProxy));
+    } else if (options.agent === 'antigravity') {
+      if (!antigravityEnv) throw Object.assign(new Error('Antigravity CLI is not set up in this session'), { status: 409 });
+      // The owner's own Google login, which the console sends with the start and never as part of what it checks.
+      ({ env, undo = null } = await antigravityEnv(typeof body?.antigravityAuth === 'string' && body.antigravityAuth.trim() ? body.antigravityAuth : null));
     } else if (options.agent === 'opencode') {
       if (!opencodeEnv) throw Object.assign(new Error('OpenCode is not set up in this session'), { status: 409 });
       ({ env, undo, cleanup } = await opencodeEnv(options));
@@ -531,11 +564,13 @@ export function createAgents({
     async transcript(id, { limit, since } = {}) {
       const a = find(id);
       const file = a.agent === 'codex' ? await rolloutOf(a)
-        : a.agent === 'claude' ? transcriptOf(a, await readJson(a.stateFile)) : undefined;
+        : a.agent === 'claude' ? transcriptOf(a, await readJson(a.stateFile))
+          : a.agent === 'antigravity' ? antigravityRecord(await readJson(a.stateFile)) : undefined;
       return readSessionTranscript({
         agent: a.agent, claudeDir, codexHome, root: repoDir, file,
         ...(a.agent === 'opencode' && { opencodeDb: a.opencodeDb }),
         ...(a.agent === 'grok' && { grokHome: a.grokHome, conversation: a.conversation }),
+        ...(a.agent === 'antigravity' && { planPrefix: a.permissionMode === 'plan' }),
         ...(limit ? { limit } : {}), ...(since !== undefined && since !== null ? { since } : {}),
       });
     },

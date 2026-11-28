@@ -47,6 +47,13 @@ const GROK_TITLE = /^\s*Allow .+\?\s*$/;
 // alone. Enter takes the picked one (Allow once at first), Esc rejects, and Left walks back to Allow once.
 const OPENCODE_TITLE = /^\s*[△▲]?\s*Permission required\s*$/;
 const OPENCODE_CHOICES = /^\s*Allow once\s{2,}Allow always\s{2,}Reject\b/;
+// Antigravity CLI's (agy 1.5.18, captured: shared/__fixtures__/pane-agy-approval-*.txt): a section name over a rule, what it
+// asks (`Requesting permission for:` and the command, or the file's path and its diff), a title ending `?` right over
+// the numbered rows (`> 1. Yes, run command` ... `4. No, cancel`), and the key hint `↑/↓ Navigate · …`. The same shape for
+// a command (`Run this command?`), a new file (`Allow creation of this file?`) and an edit (`Accept this file edit?`).
+// Its own question picker (`Question 1/2: …`, hint `enter Select · esc Skip`) is no approval.
+const AGY_FOOT = /^\s*↑\/↓ Navigate\b/;
+const AGY_QUESTION = /^\s*Question \d+\/\d+:/;
 // What a row that is the picker's own says: no answer from the page picks these.
 const OWN_ROW = /^(\[.\]\s*)?(Type something\.?|Chat about this|Next)$/;
 const CHECKBOX = /^\[(.)\]\s+/;
@@ -195,7 +202,7 @@ function dropTips(raw, width) {
 }
 
 /**
- * An approval the agent waits on: claude's permission dialog, codex's approval, or Grok Build's or OpenCode's.
+ * An approval the agent waits on: claude's permission dialog, codex's approval, or Grok Build's, OpenCode's or Antigravity's.
  * @param {string} pane
  * @param {string} [agent]  the session's agent: only its own shape is read. Left out, every shape is tried
  * @returns {null|{agent: string, what: string|null, title: string, detail: string[],
@@ -238,6 +245,10 @@ export function readApproval(pane, agent) {
   }
   if (!agent || agent === 'grok') {
     const read = grokApproval(lines);
+    if (read) return read;
+  }
+  if (!agent || agent === 'antigravity') {
+    const read = antigravityApproval(lines);
     if (read) return read;
   }
   if (!agent || agent === 'opencode') return opencodeApproval(lines);
@@ -283,6 +294,28 @@ function grokApproval(lines) {
   // Options numbered from 1, each once: anything else is a list the agent printed, not a prompt.
   if (!rows.length || rows.some((r, i) => r.n !== i + 1)) return null;
   return numberedApproval('grok', lines, title, title, rows, null, asDrawn(lines.slice(title + 1, first)), { digits: true });
+}
+
+// Antigravity CLI's: found from its key hint up, to the rows (numbered from 1, each once) and the title over them.
+function antigravityApproval(lines) {
+  const foot = lastIndex(lines, AGY_FOOT);
+  if (foot === -1 || /\benter Select\b/.test(lines[foot])) return null;
+  let first = -1;
+  for (let i = foot - 1; i >= Math.max(0, foot - 30); i--) {
+    if (/^\s*[>❯›]?\s*1\.\s/.test(lines[i])) {
+      first = i;
+      break;
+    }
+  }
+  if (first < 1) return null;
+  const title = first - 1;
+  if (!/\?\s*$/.test(lines[title]) || AGY_QUESTION.test(lines[title])) return null;
+  const rows = rowsOf(lines, first, foot);
+  if (!rows.length || rows.some((r, i) => r.n !== i + 1)) return null;
+  const rule = lastIndex(lines, RULE, title);
+  if (rule < 1) return null;
+  const what = lines[rule - 1].trim().slice(0, MAX_LINE) || null;
+  return numberedApproval('antigravity', lines, title, rule + 1, rows, what, asDrawn(lines.slice(rule + 1, title)));
 }
 
 // OpenCode's: its title, what it asks, and its choices on one line. Its pick shows only as a colour, and Left and Right
@@ -826,13 +859,14 @@ export function composerText(colored, agent) {
 }
 
 /**
- * Whether Grok Build's or OpenCode's input box holds a draft, from a capture with colours: a message is never typed onto
- * one. Neither draws its empty box dim, so each is read its own way (captured from grok 1.0.92 and opencode 1.19.6:
- * shared/__fixtures__/pane-{grok,opencode}-box-*.ansi). Grok's box is `│ ❯ ` in a frame, with nothing after its mark
+ * Whether Grok Build's, OpenCode's or Antigravity's input box holds a draft, from a capture with colours: a message is never
+ * typed onto one. None draws its empty box dim, so each is read its own way (captured from grok 1.0.92, opencode 1.19.6 and
+ * agy 1.5.18: shared/__fixtures__/pane-{grok,opencode,agy}-box-*.ansi). Grok's box is `│ ❯ ` in a frame, with nothing after its mark
  * when empty, except for a dimmed suggestion. OpenCode's shows its placeholder in the theme's muted colour, and a draft in its text colour, which the
- * model's name on the line under the box has too.
+ * model's name on the line under the box has too. agy's is `> ` between two rules, empty or with its mode's hint in bright black
+ * (SGR 90), where a draft is in the default colour.
  * @param {string} colored  `tmux capture-pane -e -p`
- * @param {'grok'|'opencode'} agent
+ * @param {'grok'|'opencode'|'antigravity'} agent
  * @returns {boolean|null}  null when its box is not on screen in a shape this reads
  */
 export function draftInBox(colored, agent) {
@@ -846,6 +880,21 @@ export function draftInBox(colored, agent) {
     let text = undimmed(lines[at]).replace(/^\s*│\s*❯/, '');
     for (let j = at + 1; j < plain.length && !/^\s*╰/.test(plain[j]); j++) text += undimmed(lines[j]).replace(/^\s*│/, '');
     return text.replace(/│\s*$/gm, '').trim() !== '';
+  }
+  if (agent === 'antigravity') {
+    // Its mark `>` right under a rule, the lowest such, and everything down to the next rule: a hint is drawn in bright black.
+    const styled = SGR_ANY.test(colored);
+    let at = -1;
+    // Its rules are found by their text: tmux writes a colour once, so a rule under a hint has none of its own.
+    for (let i = 1; i < plain.length; i++) if (/^\s*>(\s|$)/.test(plain[i]) && RULE.test(plain[i - 1])) at = i;
+    if (at === -1) return null;
+    for (let j = at; j < plain.length && (j === at || !RULE.test(plain[j])); j++) {
+      const cells = cellsOf(lines[j]);
+      const from = j === at ? cells.findIndex((c) => c.ch === '>') + 1 : 0;
+      // Without colours a hint cannot be told from a draft.
+      if (cells.slice(from).some((c) => c.ch.trim() && (c.fg !== '90' || !styled))) return true;
+    }
+    return false;
   }
   if (agent === 'opencode') {
     // Its placeholder and a draft differ only in colour: with none, it cannot say.

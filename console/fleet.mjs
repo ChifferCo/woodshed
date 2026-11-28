@@ -819,7 +819,7 @@ export function createFleet({
     herdrParent = false, startedFrom = null, startedApart = false,
   }) {
     refuseWithoutRepo(project, { kind, trigger });
-    // An agent that runs on its owner's own sign-in alone runs only in that owner's private session: a shared session,
+    // An agent with an own sign-in (Grok Build, OpenCode, and Antigravity, whose team key is for a private session too) runs only in its owner's private session: a shared session,
     // a question, a QA run and a review hold no one's sign-in (shared/agents.cjs).
     if (!owner && agents.agent(options?.agent).signIn) {
       console.warn('fleet: session refused, its agent needs an owner\'s own sign-in', { kind, number, trigger, agent: options.agent });
@@ -2165,6 +2165,35 @@ export function createFleet({
    * @param {'claude'|'codex'|'grok'|'opencode'} agent
    * @returns {boolean}  whether it was allowed now, rather than before
    */
+  /**
+   * Which personal credentials (`claude`, `codex`, `agent`) a run's first successful /settings answer handed out, kept for the
+   * run: the first answer stands. Asked again, a run is handed only those, so a credential the owner saved after the run
+   * started, which the repo's code in the container could ask for with the session's token, never reaches it
+   * (sessionApi.mjs settingsReply). A Resume starts the decision again.
+   * @param {object} session
+   * @param {{claude: boolean, codex: boolean, agent: boolean}} given
+   * @returns {{claude: boolean, codex: boolean, agent: boolean}}  the one in force
+   */
+  function rememberCredentials(session, given) {
+    if (session.credentialsGiven) return session.credentialsGiven;
+    update(session, { credentialsGiven: given });
+    return given;
+  }
+
+  /**
+   * Whether startup code of the repo's runs in the session, asked of its statusd now rather than read from the last poll, which
+   * may be seconds old: the owner's own sign-in is sent into a session only after this says no (server.mjs). Kept on the record
+   * once true. Throws when statusd could not be asked: nothing personal is sent then either.
+   * @returns {Promise<boolean>}
+   */
+  async function readStartupCode(session) {
+    if (session.startupCodeRuns) return true;
+    const fresh = await statusd(session, 'GET', '/status', { timeoutMs: 8000 });
+    if (fresh?.startupCodeRuns !== true) return false;
+    update(session, { startupCodeRuns: true });
+    return true;
+  }
+
   function allowAgent(session, agent) {
     if ((session.extraAgents ?? []).includes(agent)) return false;
     console.log('fleet: another agent allowed in the session', { id: session.id, agent });
@@ -2343,7 +2372,7 @@ export function createFleet({
       latestImage: latestImage ? true : null,
       // A Resume starts its own agent alone: what the agents of the last run were allowed (a Codex one's sign-in) is
       // not this run's, and the last run's list is not either.
-      extraAgents: null, agents: null,
+      extraAgents: null, agents: null, credentialsGiven: null, startupCodeRuns: null,
       // Its pull request's watch ended when it stopped: it is watched again once statusd reports it.
       announcedPrUrl: null,
       // A tainted session starts locked down, its entrypoint told so (WOODSHED_TAINTED): its statusd needs no notice.
@@ -3555,7 +3584,7 @@ export function createFleet({
 
   return {
     noteMessage, noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
-    onChange, soon, checkLive, createSession, conversationSaved, forgetConversations, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, keptMachine, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    onChange, soon, checkLive, createSession, conversationSaved, forgetConversations, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, rememberCredentials, readStartupCode, extend, setLimits, limitsOf, pauseOf, resumePrivate, keptMachine, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaLog, reviewLog, qaVideo, qaPoster, publicQaVideo, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

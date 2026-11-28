@@ -35,7 +35,7 @@
       // Right after the App: GitHub never lets an App approve its own pull requests, so review sessions approve through a
       // second one. Offered, never required: sessions work without it, only their approvals do not count.
       ...(me.reviewerSetupNeeded ? [{ key: 'reviewer', label: 'Add the reviewer App (optional)', hint: 'Review sessions approve pull requests through it, since GitHub never lets an App approve its own', done: false, optional: true }] : []),
-      { key: 'token', label: 'Choose your agent', hint: 'Save a Claude token, or a Codex, Grok Build or OpenCode sign-in: any one is enough', done: tokenSet },
+      { key: 'token', label: 'Choose your agent', hint: 'Save a Claude token, or a Codex, Grok Build, OpenCode or Antigravity sign-in: any one is enough', done: tokenSet },
       ...(showDb ? [{ key: 'databases', label: 'Your databases', hint: dbHint[db.status], done: db.status === 'ready', todo: db.status === 'failed' || db.status === 'none' }] : []),
     ];
   }
@@ -45,9 +45,12 @@
     return !me.repoNeeded && !me.githubSetupNeeded && anySignIn(me) && (!me.databases?.available || me.databases.status === 'ready');
   }
 
-  /** @returns {boolean}  a Claude token, a Codex sign-in, or another agent's own sign-in (`agentAuth`) is saved */
+  /**
+   * @returns {boolean}  a Claude token, a Codex sign-in, or another agent's own sign-in (`agentAuth`) is saved, or an agent
+   *   can run on a team key the console has (`agents`, from /api/my: Codex's OpenAI key, Antigravity's Gemini key)
+   */
   function anySignIn(me) {
-    return Boolean(me.claudeToken?.set || me.codexAuth?.set || Object.values(me.agentAuth ?? {}).some((a) => a?.set));
+    return Boolean(me.claudeToken?.set || me.codexAuth?.set || Object.values(me.agentAuth ?? {}).some((a) => a?.set) || Object.values(me.agents ?? {}).some(Boolean));
   }
 
   /**

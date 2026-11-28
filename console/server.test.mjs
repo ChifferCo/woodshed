@@ -1243,6 +1243,49 @@ test('New session offers only the agents set up to run, and a Codex start needs 
   assert.deepEqual(await agents(), { claude: false, codex: true, ...none }, 'no Claude token, no Claude');
 });
 
+test('Antigravity is offered with a saved login or the team\'s Gemini key, and a start with neither is refused', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const started = [];
+  const fleet = {
+    sessions: () => [], find: () => null,
+    startPrivate: async (args) => { started.push(args); return { id: '0a1b2c3d', owner: args.owner, token: 'secret', status: 'queued' }; },
+  };
+  const own = new Set();
+  const userSettings = {
+    refresh: async () => {},
+    view: () => ({
+      claudeToken: { set: true, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: true, available: true,
+      agentAuth: Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, { set: own.has(id), savedAt: null }])),
+    }),
+    setAgentAuth: async (login, id) => { own.add(id); },
+  };
+  let teamKey = null;
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet, auth, userSettings, geminiTeamKey: async () => teamKey });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+  const offered = async () => JSON.parse(await getBody(port, '/api/my', as)).agents.antigravity;
+
+  assert.equal(await offered(), false, 'no login and no team key');
+  assert.deepEqual(await post(port, '/api/my/sessions', { prompt: 'go', agent: 'antigravity' }, as),
+    { status: 409, body: { error: 'save your Antigravity sign-in on My settings first: the console has no Gemini key' } });
+  teamKey = 'AIza-team';
+  assert.equal(await offered(), true, 'the team key runs it');
+  const made = await post(port, '/api/my/sessions', { prompt: 'go', agent: 'antigravity', model: 'gemini-3.1-pro-low', effort: 'high' }, as);
+  assert.equal(made.status, 201);
+  assert.deepEqual([started[0].agent, started[0].model, started[0].effort], ['antigravity', 'gemini-3.1-pro-low', 'high']);
+  teamKey = null;
+  own.add('antigravity');
+  assert.equal(await offered(), true, 'their own login runs it');
+  assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'antigravity' }, as)).status, 201);
+  // Grok Build still needs its own sign-in, whatever else the console has.
+  teamKey = 'AIza-team';
+  assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'grok' }, as)).status, 409);
+});
+
 test('a stopped private session\'s kept machine is read for its owner, and Resume on the latest image reaches the fleet', async (t) => {
   t.mock.method(console, 'log', () => {});
   const resumed = [];
@@ -1604,12 +1647,12 @@ test('/api/my names each agent\'s default as the person\'s shared settings have 
   const me = async (login) => JSON.parse(await getBody(port, '/api/my', { cookie: `woodshed_session=${login}` }));
 
   assert.deepEqual((await me('mia-dev')).agentDefaults, {
-    claude: { read: true, model: 'opus', effort: 'high' }, codex: { read: true, model: 'gpt-5.5', effort: null }, grok: null, opencode: null,
+    claude: { read: true, model: 'opus', effort: 'high' }, codex: { read: true, model: 'gpt-5.5', effort: null }, grok: null, opencode: null, antigravity: null,
   });
   assert.deepEqual((await me('octocat')).agentDefaults, {
-    claude: { read: true, model: null, effort: null }, codex: { read: true, model: null, effort: null }, grok: null, opencode: null,
+    claude: { read: true, model: null, effort: null }, codex: { read: true, model: null, effort: null }, grok: null, opencode: null, antigravity: null,
   }, 'nothing saved: each agent picks its own, and nobody else\'s is shown');
-  const unread = { claude: { read: false, model: null, effort: null }, codex: { read: false, model: null, effort: null }, grok: null, opencode: null };
+  const unread = { claude: { read: false, model: null, effort: null }, codex: { read: false, model: null, effort: null }, grok: null, opencode: null, antigravity: null };
   const warned = t.mock.method(console, 'warn', () => {});
   const broken = await me('broken');
   assert.equal(broken.login, 'broken', '/api/my still answers');
@@ -3162,6 +3205,101 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   assert.equal(asked.length, calls, 'OpenCode credentials never enter this session');
 });
 
+test('an Antigravity agent beside claude is started with its owner\'s login, or on the team key, and refused with neither', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const asked = [];
+  const statusd = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      asked.push({ url: req.url, body: JSON.parse(body) });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"agent":{"id":"agent-2"}}');
+    });
+  });
+  const statusPort = await listen(statusd);
+  t.after(() => statusd.close());
+  const mine = { id: '0a1b2c3d', status: 'running', title: 't', token: 'tok', owner: 'local', options: { agent: 'claude' }, endpoint: { host: '127.0.0.1', termPort: 1, statusPort } };
+  const beside = { ...mine, id: '1b2c3d4e', options: { agent: 'antigravity' } };
+  const tainted = { ...mine, id: '2c3d4e5f', taintedAt: '2026-11-23T10:00:00Z' };
+  const all = [mine, beside, tainted];
+  const allowed = [];
+  const fleet = {
+    sessions: () => all, find: (id) => all.find((s) => s.id === id) ?? null, isLocked: () => false,
+    allowAgent: (s, agent) => allowed.push([s.id, agent]) > 0,
+  };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, launcher: { kind: 'docker' }, localLogin: 'local',
+  };
+  let login = null;
+  const userSettings = { agentAuth: async (who, id) => (who === 'local' && id === 'antigravity' ? login : null), limitsFor: () => ({}) };
+  let team = null;
+  const server = http.createServer(createHandler({ config, fleet, userSettings, geminiTeamKey: async () => team }));
+  const port = await listen(server);
+  t.after(() => server.close());
+  const start = (id, body = { agent: 'antigravity' }) => fetch(`http://127.0.0.1:${port}/api/sessions/${id}/agents`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-woodshed': '1' }, body: JSON.stringify(body),
+  });
+
+  // Neither a login nor a team key: refused, and nothing reaches the session.
+  const none = await start('0a1b2c3d');
+  assert.equal(none.status, 409);
+  assert.match((await none.json()).error, /save your Antigravity sign-in on My settings first: the console has no Gemini key/);
+  assert.deepEqual([asked.length, allowed.length], [0, 0]);
+  // The team's key: started with no sign-in in the body, and allowed the proxy once it started.
+  team = 'AIza-team';
+  assert.equal((await start('0a1b2c3d', { agent: 'antigravity', model: 'gemini-3.1-pro-low', effort: 'high', permissionMode: 'plan' })).status, 200);
+  assert.equal(asked[0].url, '/agents');
+  assert.deepEqual(asked[0].body, { agent: 'antigravity', model: 'gemini-3.1-pro-low', effort: 'high', permissionMode: 'plan', prompt: '' });
+  assert.deepEqual(allowed, [['0a1b2c3d', 'antigravity']]);
+  // The owner's own login goes with the start, as Codex's does, in place of the key.
+  login = JSON.stringify({ token: { access_token: 'ya29.test' } });
+  assert.equal((await start('0a1b2c3d')).status, 200);
+  assert.equal(asked[1].body.antigravityAuth, login);
+  // Beside an Antigravity session it shares that session's own: nothing is sent.
+  assert.equal((await start('1b2c3d4e')).status, 200);
+  assert.equal(asked[2].body.antigravityAuth, undefined);
+  // Once statusd reports startup code of the repo's running in the session, nothing personal is sent into it: the code could
+  // watch it arrive. The team's key carries none, and starts.
+  mine.startupCodeRuns = true;
+  const before = asked.length;
+  const held = await start('0a1b2c3d');
+  assert.equal(held.status, 409);
+  assert.match((await held.json()).error, /could read the owner's Google login: it is not sent/);
+  assert.equal(asked.length, before, 'the login never left the console');
+  login = null;
+  assert.equal((await start('0a1b2c3d')).status, 200, 'on the team key it starts');
+  assert.equal(asked.at(-1).body.antigravityAuth, undefined);
+  mine.startupCodeRuns = null;
+  login = JSON.stringify({ token: { access_token: 'ya29.test' } });
+  // The window before the first report: the record says nothing yet, but statusd, asked now, says it runs. Nothing is sent.
+  let fresh = true;
+  fleet.readStartupCode = async (session) => { if (fresh instanceof Error) throw fresh; if (fresh) session.startupCodeRuns = true; return fresh; };
+  const windowed = await start('0a1b2c3d');
+  assert.equal(windowed.status, 409);
+  assert.match((await windowed.json()).error, /could read the owner's Google login: it is not sent/);
+  assert.equal(asked.length, before + 1, 'nothing was sent in the window');
+  assert.equal(mine.startupCodeRuns, true, 'and the console keeps what statusd said');
+  mine.startupCodeRuns = null;
+  // A session that cannot be asked is sent nothing either.
+  fresh = new Error('statusd did not answer');
+  const unasked = await start('0a1b2c3d');
+  assert.equal(unasked.status, 502);
+  assert.match((await unasked.json()).error, /no sign-in of yours was sent/);
+  assert.equal(asked.length, before + 1);
+  // And with statusd saying no, it goes, with the login.
+  fresh = false;
+  assert.equal((await start('0a1b2c3d')).status, 200);
+  assert.equal(asked.at(-1).body.antigravityAuth, login);
+  delete fleet.readStartupCode;
+  // A lockdown gets nothing, and a model that is not a name Antigravity takes is refused before anything is read.
+  assert.equal((await start('2c3d4e5f')).status, 409);
+  assert.equal((await start('0a1b2c3d', { agent: 'antigravity', model: 'x; rm -rf /' })).status, 400);
+  assert.equal(asked.length, 5);
+});
+
 test('a Codex agent beside claude is started with its owner\'s sign-in, and allowed the team key only once it started', async (t) => {
   const asked = [];
   let answer = 409;
@@ -3210,9 +3348,23 @@ test('a Codex agent beside claude is started with its owner\'s sign-in, and allo
   userSettings.codexAuth = async () => { locked = true; return 'sk-own-key'; };
   assert.equal((await start('codex')).status, 409);
   assert.equal(asked.length, 3, 'the sign-in never reached the session');
+  // Startup code of the repo's running in the session (an Antigravity CLI on a checkout that ships hooks): the owner's own
+  // sign-in is not sent into it, and a Codex on the team's key is.
+  locked = false;
+  userSettings.codexAuth = async () => 'sk-own-key';
+  mine.startupCodeRuns = true;
+  const held = await start('codex');
+  assert.equal(held.status, 409);
+  assert.match((await held.json()).error, /could read the owner's Codex sign-in: it is not sent/);
+  assert.equal(asked.length, 3, 'the sign-in never left the console');
+  userSettings.codexAuth = async () => null;
+  assert.equal((await start('codex')).status, 200, 'the team key carries nothing of the owner\'s');
+  assert.equal(asked.length, 4);
+  mine.startupCodeRuns = null;
+  userSettings.codexAuth = async () => { locked = true; return 'sk-own-key'; };
   mine.taintedAt = '2026-11-23T10:00:00Z';
   assert.equal((await start('codex')).status, 409, 'a tainted session starts none');
-  assert.equal(asked.length, 3);
+  assert.equal(asked.length, 4);
 });
 
 test('the live session list needs a sign-in, shows only what that person may open, and pushes a change', async (t) => {

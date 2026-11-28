@@ -247,6 +247,7 @@ test('Grok Build and OpenCode sign-ins are each kept under the person\'s login, 
   assert.deepEqual(settings.view('octocat').agentAuth, {
     grok: { set: true, savedAt: '2026-11-23T10:00:00.000Z' },
     opencode: { set: true, savedAt: '2026-11-23T10:00:00.000Z' },
+    antigravity: { set: false, savedAt: null },
   });
   assert.equal(/grok-rt|sk-ant/.test(JSON.stringify(store.state)), false, 'never the value');
   assert.equal(await settings.agentAuth('mia-dev', 'grok'), null);

@@ -19,11 +19,11 @@ import path from 'node:path';
 
 import agents from '../shared/agents.cjs';
 
-export const SIGN_IN_USAGE = `Usage: woodshed sign-in push <${agents.OWN_SIGN_IN_AGENTS.join('|')}> [--replace] [--console <url>] [--json]
+export const SIGN_IN_USAGE = `Usage: woodshed sign-in push <${agents.OWN_ONLY_AGENTS.join('|')}> [--replace] [--console <url>] [--json]
 
-Sends this computer's own sign-in for ${agents.OWN_SIGN_IN_AGENTS.map((id) => agents.agent(id).product).join(' or ')} to the console, as
+Sends this computer's own sign-in for ${agents.OWN_ONLY_AGENTS.map((id) => agents.agent(id).product).join(' or ')} to the console, as
 your sign-in for that agent's private sessions, from the file its own login saved:
-${agents.OWN_SIGN_IN_AGENTS.map((id) => `  ${id.padEnd(9)}${agents.agent(id).signIn.steps[0].command} saves it in ${defaultFileText(id)}`).join('\n')}
+${agents.OWN_ONLY_AGENTS.map((id) => `  ${id.padEnd(9)}${agents.agent(id).signIn.steps[0].command} saves it in ${defaultFileText(id)}`).join('\n')}
 It is checked here first, and never printed. --replace replaces one the console has already.
 A first save leaves reviews of your pull requests off for that agent until you turn them on
 (woodshed config set grok-reviews on, or opencode-reviews). Replacing a saved sign-in leaves that switch as it is.`;
@@ -104,8 +104,8 @@ export async function signInCommand(ctx) {
     say(SIGN_IN_USAGE);
     return sub ? EXIT.done : EXIT.failed;
   }
-  if (sub !== 'push' || !agents.OWN_SIGN_IN_AGENTS.includes(id) || extra.length || words.some((w) => w.startsWith('-'))) {
-    throw fail(`usage: woodshed sign-in push <${agents.OWN_SIGN_IN_AGENTS.join('|')}> [--replace]`);
+  if (sub !== 'push' || !agents.OWN_ONLY_AGENTS.includes(id) || extra.length || words.some((w) => w.startsWith('-'))) {
+    throw fail(`usage: woodshed sign-in push <${agents.OWN_ONLY_AGENTS.join('|')}> [--replace]`);
   }
   const { product } = agents.agent(id);
   const read = readSignInFile(id, { env, home });
