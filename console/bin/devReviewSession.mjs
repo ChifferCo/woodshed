@@ -14,9 +14,92 @@ import { writeDevReviewGh } from './devReviewGh.mjs';
 // A made-up author, and no signing: a signing setup of the person running it must not stop the dev console starting.
 const AUTHOR = ['-c', 'user.email=dev@example.com', '-c', 'user.name=Dev Console', '-c', 'commit.gpgsign=false'];
 
-// The default branch's files, then what the branch changes: a webhook sender that gives up on the first failure, and
-// the branch that makes it retry with backoff.
+// The default branch's files, then what the branch changes: a small multi-module
+// service whose webhook sender gives up on the first failure, and the branch that
+// makes it retry with backoff. The surrounding modules stay untouched so the
+// whole-codebase map shows both changed and unchanged areas and their imports.
 const BEFORE = {
+  'README.md': `# Example billing & webhooks service
+
+Receives API requests, records billing events, and fans them out to webhook subscribers.
+`,
+  'config/app.json': `{
+  "port": 8080,
+  "env": "development"
+}
+`,
+  'src/api/server.mjs': `import appConfig from '../../config/app.json' with { type: 'json' };
+import { routeRequest } from './routes.mjs';
+
+export function startServer() {
+  return { port: appConfig.port, handler: routeRequest };
+}
+`,
+  'src/api/routes.mjs': `import { verifyToken } from '../auth/tokens.mjs';
+import { createInvoice } from '../billing/invoices.mjs';
+import { listSubscriptions } from '../db/subscriptions.mjs';
+
+export async function routeRequest(req) {
+  const actor = verifyToken(req.headers?.authorization);
+  if (req.url === '/invoices') return createInvoice(actor, req.body);
+  if (req.url === '/subscriptions') return listSubscriptions(actor.orgId);
+  return { status: 404 };
+}
+`,
+  'src/auth/tokens.mjs': `import { query } from '../db/pool.mjs';
+
+export function verifyToken(header) {
+  if (!header) throw new Error('missing token');
+  return { orgId: 'org_1', query };
+}
+`,
+  'src/billing/invoices.mjs': `import { query } from '../db/pool.mjs';
+import { emitBillingEvent } from './events.mjs';
+
+export async function createInvoice(actor, payload) {
+  const invoice = { id: 'inv_1', orgId: actor.orgId, amount: payload?.amount || 0 };
+  await query('INSERT INTO invoices ...', [invoice.id]);
+  await emitBillingEvent('invoice.created', invoice);
+  return invoice;
+}
+`,
+  'src/billing/events.mjs': `import { enqueueEvent } from '../webhooks/queue.mjs';
+
+export async function emitBillingEvent(type, data) {
+  return enqueueEvent({ id: \`evt_\${Date.now()}\`, type, data });
+}
+`,
+  'src/db/pool.mjs': `import appConfig from '../../config/app.json' with { type: 'json' };
+
+export async function query(sql, params = []) {
+  return { sql, params, env: appConfig.env, rows: [] };
+}
+`,
+  'src/db/subscriptions.mjs': `import { query } from './pool.mjs';
+
+export async function listSubscriptions(orgId) {
+  const res = await query('SELECT * FROM subscriptions WHERE org_id = $1', [orgId]);
+  return res.rows;
+}
+`,
+  'src/webhooks/queue.mjs': `import { listSubscriptions } from '../db/subscriptions.mjs';
+import { deliver } from './deliver.mjs';
+import { signPayload } from './sign.mjs';
+
+export async function enqueueEvent(event) {
+  const subs = await listSubscriptions(event.data?.orgId);
+  const results = [];
+  for (const sub of subs) {
+    const signed = signPayload(sub.secret, event);
+    results.push(await deliver(sub, signed));
+  }
+  return results;
+}
+`,
+  'src/webhooks/sign.mjs': `export function signPayload(secret, event) {
+  return { ...event, signature: \`sha256=\${secret ? 'ok' : 'none'}\` };
+}
+`,
   'src/webhooks/deliver.mjs': `// Sends one webhook event to a subscriber's URL.
 
 export async function deliver(subscription, event, { fetch = globalThis.fetch } = {}) {

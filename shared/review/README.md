@@ -151,6 +151,8 @@ page.mjs       the /review document (CSS + client script), one template literal
 askState.mjs   the ask panel's state model — also runs in the browser, see below
 diff.mjs       parseUnifiedDiff + intraLineDiff — hand-written, no deps
 highlight.mjs  tokenizeLine — also runs in the browser, see below
+codebaseMap.mjs whole-codebase module & import scanner for GET /reviews/<session>/map
+codebaseMapLayout.mjs 2D spatial layout for the interactive codebase map — also runs in the browser
 analyze.mjs    schema, prompt, NDJSON reducer, reconciliation
 explain.mjs    prompt, validation, answer extraction
 chat.mjs       the conversation about the change as a whole: prompt, history bound

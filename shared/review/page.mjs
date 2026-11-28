@@ -31,6 +31,7 @@ import { readFileSync } from 'node:fs';
 import { tokenizeLine } from './highlight.mjs';
 import { createAskState } from './askState.mjs';
 import { layoutDiagram } from './diagram.mjs';
+import { layoutCodebaseMap } from './codebaseMapLayout.mjs';
 import { MAX_ASK_DEPTH, MAX_USER_QUESTION } from './qa.mjs';
 
 const DICTATION_SCRIPT = readFileSync(new URL('../dictation.mjs', import.meta.url), 'utf8');
@@ -871,6 +872,536 @@ ${DARK_PALETTE}
     .archlegend i.added { border-color: var(--add); background: var(--add-bg); }
     .archlegend i.changed { border-color: var(--warn); }
     .archlegend i.removed { border-color: var(--del); border-style: dashed; background: var(--del-bg); }
+
+    /* --- interactive whole-codebase map: Google Maps-style top-down overview --- */
+    .secthead .sectmeta {
+      margin-left: auto; font: 500 11.5px/1.4 ui-monospace, monospace;
+      letter-spacing: 0; text-transform: none; color: var(--faint);
+    }
+    .cmap-backdrop {
+      position: fixed; inset: 0; z-index: 55;
+      background: rgba(15, 20, 30, 0.55); backdrop-filter: blur(2px);
+    }
+    .cmap-shell {
+      position: relative; width: 100%; height: clamp(490px, 66vh, 720px);
+      margin: 0.25rem 0 1.6rem; border: 1px solid var(--rule-strong); border-radius: 8px;
+      background: var(--sunk); overflow: hidden; user-select: none;
+    }
+    .cmap-shell.fullscreen {
+      position: fixed; inset: 14px; z-index: 60; width: auto; height: auto;
+      margin: 0; border-radius: 10px;
+      box-shadow: 0 22px 64px rgba(0, 0, 0, 0.38);
+    }
+    .cmap-stage {
+      position: absolute; inset: 0; overflow: hidden; cursor: grab; touch-action: none;
+      background-image: radial-gradient(circle, var(--rule) 1.2px, transparent 1.2px);
+      background-size: 24px 24px;
+    }
+    .cmap-stage.dragging { cursor: grabbing; }
+    .cmap-world {
+      position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform;
+    }
+    .cmap-svg {
+      position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none;
+    }
+    .cmap-svg-files { z-index: 6; }
+    .cmap-svg-mods { z-index: 1; }
+
+    /* Module-to-module interaction highways */
+    .cmap-medge path {
+      fill: none; stroke: var(--faint); stroke-opacity: 0.42;
+      transition: stroke-opacity 0.14s, stroke 0.14s;
+    }
+    .cmap-medge.hot path { stroke: var(--accent); stroke-opacity: 0.72; }
+    .cmap-medge.hi path { stroke: var(--accent); stroke-opacity: 0.96; }
+    .cmap-medge.dim path { stroke-opacity: 0.12; }
+    .cmap-medge rect {
+      fill: var(--panel); stroke: var(--rule-strong); stroke-width: 1;
+      transition: opacity 0.14s;
+    }
+    .cmap-medge.hot rect, .cmap-medge.hi rect { stroke: var(--accent); }
+    .cmap-medge text {
+      fill: var(--muted); font: 600 11px/1 ui-monospace, monospace;
+      transition: opacity 0.14s;
+    }
+    .cmap-medge.hot text, .cmap-medge.hi text { fill: var(--accent); }
+    .cmap-medge.quiet-label rect, .cmap-medge.quiet-label text { opacity: 0; }
+    .cmap-medge.quiet-label.hi rect, .cmap-medge.quiet-label.hi text { opacity: 1; }
+    .cmap-medge.dim rect, .cmap-medge.dim text { opacity: 0.15; }
+    .cmap-stage.zoom-detail .cmap-medge path { stroke-opacity: 0.22; }
+    .cmap-stage.zoom-detail .cmap-medge.hi path { stroke-opacity: 0.85; }
+    .cmap-stage.zoom-detail .cmap-medge rect,
+    .cmap-stage.zoom-detail .cmap-medge text { opacity: 0.35; }
+    .cmap-stage.zoom-detail .cmap-medge.hi rect,
+    .cmap-stage.zoom-detail .cmap-medge.hi text { opacity: 1; }
+
+    /* File-to-file interaction lines (visible at mid/detail zoom or when focused) */
+    .cmap-fedge path {
+      fill: none; stroke: var(--slate); stroke-width: 1.3; stroke-opacity: 0;
+      transition: stroke-opacity 0.14s;
+    }
+    .cmap-stage.zoom-mid .cmap-fedge.hot path,
+    .cmap-stage.zoom-detail .cmap-fedge.hot path { stroke-opacity: 0.38; stroke-dasharray: 4 3; }
+    .cmap-fedge.hi path {
+      stroke: var(--accent) !important; stroke-width: 2 !important;
+      stroke-opacity: 0.92 !important; stroke-dasharray: none !important;
+    }
+
+    /* Module district blocks */
+    .cmap-mod {
+      position: absolute; z-index: 2; border-radius: 10px;
+      background: var(--panel); border: 1.5px solid var(--rule-strong);
+      transition: border-color 0.14s, box-shadow 0.14s, opacity 0.14s;
+    }
+    .cmap-mod:hover { border-color: var(--slate); }
+    .cmap-mod.impact-major {
+      border: 2.5px solid var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+    }
+    .cmap-mod.impact-major.only-added {
+      border-color: var(--add);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--add) 18%, transparent);
+    }
+    .cmap-mod.impact-major.only-deleted {
+      border-color: var(--del);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--del) 18%, transparent);
+    }
+    .cmap-mod.impact-minor {
+      border: 1.5px dashed color-mix(in srgb, var(--slate) 65%, var(--rule-strong));
+      background: color-mix(in srgb, var(--panel) 94%, var(--slate) 6%);
+    }
+    .cmap-mod.selected {
+      box-shadow: 0 0 0 3px var(--accent);
+      z-index: 4;
+    }
+    .cmap-mod.dim { opacity: 0.38; }
+
+    .cmap-mhead {
+      position: absolute; top: 0; left: 0; right: 0; height: 42px;
+      display: flex; align-items: center; gap: 0.45rem; padding: 0 12px;
+      border-bottom: 1px solid var(--rule); border-radius: 8px 8px 0 0;
+      background: var(--sunk); cursor: pointer;
+    }
+    .cmap-mod.impact-major .cmap-mhead {
+      background: color-mix(in srgb, var(--accent) 14%, var(--sunk));
+    }
+    .cmap-mod.impact-major.only-added .cmap-mhead {
+      background: var(--add-bg);
+    }
+    .cmap-mod.impact-minor .cmap-mhead {
+      background: color-mix(in srgb, var(--slate) 8%, var(--sunk));
+    }
+    .cmap-mhead .mname {
+      font: 700 13px/1.2 "Red Hat Mono", ui-monospace, monospace;
+      color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .cmap-mhead .mcount {
+      font: 500 11px/1 ui-monospace, monospace; color: var(--faint); flex: none;
+    }
+    .cmap-mhead .mchg {
+      margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 0.3rem;
+      font: 600 10.5px/1.5 ui-monospace, monospace; padding: 0 0.45rem; border-radius: 999px;
+      background: var(--panel); border: 1px solid var(--rule-strong); color: var(--muted);
+    }
+    .cmap-mod.impact-major .cmap-mhead .mchg {
+      border-color: var(--accent); color: var(--ink);
+    }
+    .cmap-mhead .mchg .key { color: var(--accent); font-weight: 700; }
+    .cmap-mhead .mchg .p { color: var(--add); }
+    .cmap-mhead .mchg .m { color: var(--del); }
+
+    /* Macro zoom-out district label overlay (stays super legible at 0.35x-0.7x) */
+    .cmap-macro {
+      position: absolute; inset: 0; z-index: 5;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 16px; text-align: center; border-radius: 8px; cursor: pointer;
+      background: color-mix(in srgb, var(--panel) 84%, transparent);
+      opacity: 0; pointer-events: none; transition: opacity 0.16s;
+    }
+    .cmap-mod.impact-major .cmap-macro {
+      background: color-mix(in srgb, var(--panel) 74%, var(--accent) 14%);
+    }
+    .cmap-mod.impact-major.only-added .cmap-macro {
+      background: color-mix(in srgb, var(--add-bg) 85%, var(--panel));
+    }
+    .cmap-mod.impact-minor .cmap-macro {
+      background: color-mix(in srgb, var(--panel) 86%, var(--slate) 5%);
+    }
+    .cmap-stage.zoom-macro .cmap-macro { opacity: 1; pointer-events: auto; }
+    .cmap-stage.zoom-macro .cmap-mhead { opacity: 0.15; pointer-events: none; }
+    .cmap-stage.zoom-macro .cmap-parcel { opacity: 0.32; pointer-events: none; }
+    .cmap-macro-name {
+      font: 700 24px/1.18 "Red Hat Mono", ui-monospace, monospace;
+      color: var(--ink); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .cmap-mod.impact-minor .cmap-macro-name { color: var(--muted); font-weight: 600; }
+    .cmap-macro-desc {
+      margin-top: 6px; max-width: 92%;
+      font: 500 13.5px/1.38 "Red Hat Display", -apple-system, system-ui, sans-serif;
+      color: var(--ink); opacity: 0.84;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .cmap-mod.impact-minor .cmap-macro-desc { color: var(--muted); }
+    .cmap-macro-sub {
+      margin-top: 5px; font: 600 13px/1.3 "Red Hat Mono", ui-monospace, monospace;
+      color: var(--muted);
+    }
+    .cmap-macro-badge {
+      margin-top: 10px; display: inline-flex; align-items: center; gap: 8px;
+      padding: 4px 12px; border-radius: 999px;
+      font: 700 15px/1.3 ui-monospace, monospace;
+      background: var(--panel); border: 2px solid var(--accent); color: var(--ink);
+    }
+    .cmap-mod.impact-major .cmap-macro-badge {
+      background: color-mix(in srgb, var(--accent) 18%, var(--panel));
+    }
+    .cmap-mod.impact-major.only-added .cmap-macro-badge { border-color: var(--add); }
+    .cmap-mod.impact-major.only-deleted .cmap-macro-badge { border-color: var(--del); }
+    .cmap-mod.impact-minor .cmap-macro-badge {
+      border: 1.5px dashed var(--rule-strong); color: var(--muted); font-weight: 600; font-size: 13.5px;
+    }
+    .cmap-macro-badge .key { color: var(--accent); }
+    .cmap-macro-badge .p { color: var(--add); }
+    .cmap-macro-badge .m { color: var(--del); }
+
+    /* File parcels inside each district */
+    .cmap-parcel {
+      position: absolute; z-index: 3; border-radius: 6px;
+      border: 1px solid var(--rule); background: var(--sunk);
+      cursor: pointer; overflow: hidden;
+      transition: border-color 0.12s, box-shadow 0.12s, opacity 0.14s;
+    }
+    .cmap-parcel:hover { border-color: var(--slate); }
+    .cmap-parcel.selected { box-shadow: 0 0 0 2.5px var(--accent); border-color: var(--accent); z-index: 4; }
+    .cmap-parcel.neighbor { border-color: var(--accent); }
+    .cmap-parcel.unchanged {
+      display: flex; align-items: center; justify-content: space-between; gap: 4px;
+      padding: 0 8px; font: 11px/1.2 "Red Hat Mono", ui-monospace, monospace; color: var(--muted);
+    }
+    .cmap-parcel.unchanged .pname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cmap-parcel.unchanged .plines { flex: none; font-size: 9.5px; color: var(--faint); }
+    .cmap-parcel.overflow {
+      display: flex; align-items: center; justify-content: center;
+      font: 500 11px/1 "Red Hat Display", -apple-system, system-ui, sans-serif;
+      color: var(--faint); border-style: dashed; background: transparent;
+    }
+
+    /* Changed file parcels: significant changes stand out boldly; minor/supporting changes sit quietly */
+    .cmap-parcel.changed {
+      display: flex; flex-direction: column;
+      background: var(--panel); border: 1.5px solid var(--accent);
+      border-left-width: 4px; padding: 7px 9px;
+    }
+    .cmap-parcel.changed.impact-major {
+      box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 16%, transparent);
+    }
+    .cmap-parcel.changed.impact-major.added {
+      border-color: var(--add);
+      background: color-mix(in srgb, var(--add-bg) 42%, var(--panel));
+      box-shadow: 0 2px 10px color-mix(in srgb, var(--add) 16%, transparent);
+    }
+    .cmap-parcel.changed.impact-major.deleted {
+      border-color: var(--del);
+      background: color-mix(in srgb, var(--del-bg) 42%, var(--panel));
+      box-shadow: 0 2px 10px color-mix(in srgb, var(--del) 16%, transparent);
+    }
+    .cmap-parcel.changed.impact-minor {
+      border: 1px dashed var(--rule-strong);
+      border-left: 3px solid color-mix(in srgb, var(--slate) 55%, var(--rule-strong));
+      background: color-mix(in srgb, var(--sunk) 55%, var(--panel));
+      opacity: 0.84;
+    }
+    .cmap-parcel.changed.impact-minor:hover,
+    .cmap-parcel.changed.impact-minor.selected {
+      opacity: 1;
+      border-color: var(--slate);
+    }
+    .cmap-tag.key-chg {
+      background: var(--accent); border-color: var(--accent); color: #fff;
+    }
+    .cmap-tag.minor-chg {
+      border-style: dashed; color: var(--faint); background: transparent;
+    }
+    .cmap-p-top {
+      display: flex; align-items: center; gap: 5px; min-width: 0;
+    }
+    .cmap-p-title-link {
+      display: inline-flex; align-items: center; gap: 4px; flex: 1; min-width: 0;
+      padding: 0; border: 0; background: none; border-radius: 3px; cursor: pointer;
+      text-align: left; color: var(--ink);
+    }
+    .cmap-p-title-link:hover { color: var(--accent); filter: none; }
+    .cmap-p-title-link:hover .cmap-p-name { text-decoration: underline; }
+    .cmap-p-title-link svg {
+      width: 11px; height: 11px; flex: none; fill: currentColor; opacity: 0.65;
+    }
+    .cmap-p-title-link:hover svg { opacity: 1; }
+    .cmap-p-name {
+      font: 600 11.5px/1.3 "Red Hat Mono", ui-monospace, monospace;
+      color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      min-width: 0;
+    }
+    .cmap-p-stat {
+      flex: none; font: 600 10px/1 ui-monospace, monospace; font-variant-numeric: tabular-nums;
+    }
+    .cmap-p-stat .p { color: var(--add); }
+    .cmap-p-stat .m { color: var(--del); margin-left: 3px; }
+    .cmap-p-tags {
+      display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 4px;
+    }
+    .cmap-tag {
+      font: 600 8.5px/1.5 ui-monospace, monospace; letter-spacing: 0.04em; text-transform: uppercase;
+      padding: 0 4px; border-radius: 3px; border: 1px solid var(--rule-strong);
+      color: var(--muted); background: var(--sunk);
+    }
+    .cmap-tag.act { background: var(--c-act); border-color: var(--c-act); color: #fff; }
+    .cmap-tag.added { color: var(--add); border-color: var(--add); background: var(--add-bg); }
+    .cmap-tag.deleted { color: var(--del); border-color: var(--del); background: var(--del-bg); }
+    .cmap-tag.modified { color: var(--warn); border-color: var(--warn); }
+
+    /* Mid-zoom preview vs Street-level full description + clickable hunks */
+    .cmap-p-preview {
+      margin-top: 5px; font: 11px/1.4 "Red Hat Display", -apple-system, system-ui, sans-serif;
+      color: var(--muted);
+      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .cmap-p-detail { display: none; flex-direction: column; flex: 1; min-height: 0; margin-top: 5px; }
+    .cmap-stage.zoom-detail .cmap-p-preview { display: none; }
+    .cmap-stage.zoom-detail .cmap-p-detail { display: flex; }
+    .cmap-p-prose {
+      font: 10.5px/1.42 "Red Hat Display", -apple-system, system-ui, sans-serif;
+      color: var(--ink); overflow-y: auto; flex: 1; min-height: 0; padding-right: 2px;
+    }
+    .cmap-p-prose p { margin: 0 0 3px; }
+    .cmap-p-prose code { font-size: 9.5px; padding: 0 2px; }
+    .cmap-p-hunks {
+      display: flex; flex-direction: column; gap: 3px; margin-top: 5px;
+    }
+    .cmap-hunk-btn {
+      display: flex; align-items: center; gap: 5px; width: 100%;
+      padding: 2px 5px; border: 1px solid var(--rule); border-radius: 3px;
+      background: var(--sunk); color: var(--slate); text-align: left; cursor: pointer;
+      font: 500 9.5px/1.35 "Red Hat Mono", ui-monospace, monospace;
+    }
+    .cmap-hunk-btn:hover { border-color: var(--accent); color: var(--ink); background: var(--panel); filter: none; }
+    .cmap-hunk-btn .hctx { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cmap-hunk-btn .hstat { flex: none; font-size: 9px; }
+    .cmap-hunk-btn .hstat .p { color: var(--add); }
+    .cmap-hunk-btn .hstat .m { color: var(--del); margin-left: 2px; }
+    .cmap-p-more {
+      margin-top: 3px; font: 500 9.5px/1.2 ui-monospace, monospace; color: var(--faint);
+    }
+
+    /* Floating Google Maps chrome */
+    .cmap-hud-tl {
+      position: absolute; top: 10px; left: 10px; z-index: 12;
+      display: flex; align-items: center; gap: 8px; flex-wrap: nowrap;
+      max-width: calc(100% - 290px);
+      pointer-events: none;
+    }
+    .cmap-hud-tl > * { pointer-events: auto; }
+    .cmap-search-wrap { position: relative; flex: none; }
+    .cmap-search {
+      width: 220px; max-width: 100%; padding: 0.36rem 0.65rem;
+      border: 1px solid var(--rule-strong); border-radius: 6px;
+      background: var(--panel); color: var(--ink);
+      font: 12.5px/1.3 "Red Hat Display", -apple-system, system-ui, sans-serif;
+      box-shadow: 0 3px 12px rgba(27, 34, 50, 0.12);
+    }
+    .cmap-search:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+    .cmap-results {
+      position: absolute; top: calc(100% + 4px); left: 0; width: 290px; max-width: 80vw;
+      max-height: 240px; overflow-y: auto; z-index: 20;
+      background: var(--panel); border: 1px solid var(--rule-strong); border-radius: 6px;
+      box-shadow: 0 8px 24px rgba(27, 34, 50, 0.2);
+    }
+    .cmap-res-item {
+      display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 9px;
+      border: 0; border-bottom: 1px solid var(--rule); border-radius: 0;
+      background: none; color: var(--ink); text-align: left; cursor: pointer;
+      font: 12px/1.35 "Red Hat Mono", ui-monospace, monospace;
+    }
+    .cmap-res-item:last-child { border-bottom: 0; }
+    .cmap-res-item:hover { background: var(--sunk); filter: none; }
+    .cmap-res-item .rpath { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cmap-res-item .rkind { font-size: 10px; color: var(--faint); flex: none; }
+
+    .cmap-pills { display: flex; flex-wrap: nowrap; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+    .cmap-pills::-webkit-scrollbar { display: none; }
+    .cmap-pill {
+      display: inline-flex; align-items: center; gap: 4px; flex: none; white-space: nowrap;
+      padding: 4px 8px; border-radius: 999px; border: 1px solid var(--rule-strong);
+      background: var(--panel); color: var(--ink); cursor: pointer;
+      font: 600 11px/1.3 "Red Hat Mono", ui-monospace, monospace;
+      box-shadow: 0 2px 8px rgba(27, 34, 50, 0.08);
+    }
+    .cmap-pill:hover { border-color: var(--accent); color: var(--accent); filter: none; }
+    .cmap-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+    .cmap-pill.only-added .dot { background: var(--add); }
+    .cmap-pill.only-deleted .dot { background: var(--del); }
+    .cmap-pill.impact-minor { color: var(--muted); border-style: dashed; }
+    .cmap-pill.impact-minor .dot { background: transparent; border: 1.5px solid var(--slate); }
+    .cmap-pill .n { color: var(--muted); font-weight: 500; }
+
+    .cmap-hud-tr {
+      position: absolute; top: 10px; right: 10px; z-index: 12;
+      display: flex; align-items: center; gap: 5px; flex-wrap: wrap; justify-content: flex-end;
+    }
+    .cmap-btn {
+      padding: 5px 9px; border-radius: 6px; border: 1px solid var(--rule-strong);
+      background: var(--panel); color: var(--ink); cursor: pointer;
+      font: 600 11.5px/1.2 "Red Hat Display", -apple-system, system-ui, sans-serif;
+      box-shadow: 0 2px 8px rgba(27, 34, 50, 0.1);
+    }
+    .cmap-btn:hover { border-color: var(--slate); background: var(--sunk); filter: none; }
+    .cmap-btn.primary { border-color: var(--accent); color: var(--accent); }
+
+    .cmap-hud-bl {
+      position: absolute; bottom: 10px; left: 10px; z-index: 12;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      max-width: calc(100% - 230px);
+    }
+    .cmap-legend {
+      display: inline-flex; align-items: center; gap: 9px; padding: 4px 9px;
+      border: 1px solid var(--rule); border-radius: 6px;
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      font: 500 11px/1.2 "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--muted);
+    }
+    .cmap-legend span { display: inline-flex; align-items: center; gap: 4px; }
+    .cmap-legend i { width: 10px; height: 8px; border-radius: 2px; border: 1.5px solid var(--rule-strong); background: var(--sunk); }
+    .cmap-legend i.major { border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 22%, var(--panel)); }
+    .cmap-legend i.minor { border: 1.5px dashed var(--slate); background: var(--sunk); }
+    .cmap-legend i.add { border-color: var(--add); background: var(--add-bg); }
+    .cmap-legend i.del { border-color: var(--del); background: var(--del-bg); }
+
+    .cmap-hud-br {
+      position: absolute; bottom: 10px; right: 10px; z-index: 12;
+      display: flex; align-items: flex-end; gap: 8px;
+    }
+    .cmap-minimap {
+      width: 152px; height: 96px; border: 1px solid var(--rule-strong); border-radius: 6px;
+      background: color-mix(in srgb, var(--panel) 94%, transparent);
+      box-shadow: 0 3px 12px rgba(27, 34, 50, 0.14);
+      overflow: hidden; cursor: pointer; position: relative;
+    }
+    .cmap-minimap svg { width: 100%; height: 100%; display: block; }
+    .cmap-zoom-ctrl {
+      display: flex; flex-direction: column; border: 1px solid var(--rule-strong); border-radius: 6px;
+      background: var(--panel); overflow: hidden;
+      box-shadow: 0 3px 12px rgba(27, 34, 50, 0.14);
+    }
+    .cmap-zoom-ctrl button {
+      width: 30px; height: 28px; padding: 0; border: 0; border-bottom: 1px solid var(--rule);
+      border-radius: 0; background: none; color: var(--ink); font: 700 15px/1 ui-monospace, monospace;
+      cursor: pointer;
+    }
+    .cmap-zoom-ctrl button:last-child { border-bottom: 0; }
+    .cmap-zoom-ctrl button:hover { background: var(--sunk); filter: none; }
+    .cmap-zoom-pct {
+      font: 600 9.5px/1 ui-monospace, monospace; color: var(--muted);
+      text-align: center; padding: 4px 2px; border-bottom: 1px solid var(--rule);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Floating Google Maps Place Inspector Card */
+    .cmap-drawer {
+      position: absolute; top: 52px; left: 10px; bottom: 52px; width: min(350px, calc(100% - 24px));
+      z-index: 15; display: flex; flex-direction: column;
+      background: var(--panel); border: 1px solid var(--rule-strong); border-radius: 8px;
+      box-shadow: 0 10px 30px rgba(27, 34, 50, 0.22); user-select: text;
+    }
+    .cmap-drawer-head {
+      display: flex; align-items: flex-start; gap: 6px; padding: 10px 12px;
+      border-bottom: 1px solid var(--rule); background: var(--sunk); border-radius: 7px 7px 0 0;
+    }
+    .cmap-drawer-title {
+      flex: 1; min-width: 0; font: 700 12.5px/1.35 "Red Hat Mono", ui-monospace, monospace;
+      color: var(--ink); word-break: break-all;
+    }
+    .cmap-drawer-title-link {
+      display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 0;
+      padding: 0; border: 0; background: none; border-radius: 3px; cursor: pointer;
+      text-align: left; font: 700 12.5px/1.35 "Red Hat Mono", ui-monospace, monospace;
+      color: var(--ink); word-break: break-all;
+    }
+    .cmap-drawer-title-link:hover { color: var(--accent); filter: none; }
+    .cmap-drawer-title-link:hover span { text-decoration: underline; }
+    .cmap-drawer-title-link svg {
+      width: 13px; height: 13px; flex: none; fill: currentColor; opacity: 0.7;
+    }
+    .cmap-drawer-title-link:hover svg { opacity: 1; }
+    .cmap-drawer-x {
+      flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px;
+      background: none; color: var(--faint); font-size: 16px; line-height: 1; cursor: pointer;
+    }
+    .cmap-drawer-x:hover { background: var(--rule); color: var(--ink); filter: none; }
+    .cmap-drawer-body {
+      flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+      padding: 10px 12px; font-size: 13px; line-height: 1.5;
+    }
+    .cmap-drawer-sec { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--rule); }
+    .cmap-drawer-sec:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+    .cmap-drawer-label {
+      font: 600 10px/1.4 ui-monospace, monospace; letter-spacing: 0.07em;
+      text-transform: uppercase; color: var(--faint); margin-bottom: 5px;
+    }
+    .cmap-drawer-act { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .cmap-drawer-act b { color: var(--ink); }
+    .cmap-drawer-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+    .cmap-dep-chip {
+      padding: 2px 7px; border-radius: 4px; border: 1px solid var(--rule-strong);
+      background: var(--sunk); color: var(--slate); cursor: pointer;
+      font: 500 11px/1.4 "Red Hat Mono", ui-monospace, monospace;
+    }
+    .cmap-dep-chip:hover { border-color: var(--accent); color: var(--ink); filter: none; }
+    .cmap-dep-chip.changed { border-color: var(--accent); color: var(--ink); }
+    .cmap-drawer-files { display: flex; flex-direction: column; gap: 5px; }
+    .cmap-drawer-file {
+      display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 6px 8px;
+      border: 1px solid var(--rule); border-left: 3px solid var(--warn); border-radius: 5px;
+      background: var(--sunk); color: var(--ink); text-align: left; cursor: pointer;
+    }
+    .cmap-drawer-file.added { border-left-color: var(--add); }
+    .cmap-drawer-file.deleted { border-left-color: var(--del); }
+    .cmap-drawer-file.minor { border-left-color: var(--rule-strong); opacity: 0.82; }
+    .cmap-drawer-file.minor:hover { opacity: 1; }
+    .cmap-drawer-file:hover { border-color: var(--accent); background: var(--panel); filter: none; }
+    .cmap-drawer-file .df-top {
+      display: flex; align-items: center; gap: 6px;
+      font: 600 11.5px/1.3 "Red Hat Mono", ui-monospace, monospace;
+    }
+    .cmap-drawer-file .df-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cmap-drawer-file .df-why {
+      font: 12px/1.4 "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--muted);
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .cmap-drawer-foot {
+      display: flex; align-items: center; gap: 6px; padding: 9px 12px;
+      border-top: 1px solid var(--rule); background: var(--sunk); border-radius: 0 0 7px 7px;
+    }
+    .cmap-drawer-foot button { font-size: 12.5px; padding: 0.4rem 0.75rem; }
+    .cmap-drawer-foot .go-files { flex: 1; }
+    @media (max-width: 720px) {
+      .cmap-minimap, .cmap-legend { display: none; }
+      .cmap-hud-tr { top: 8px; right: 8px; gap: 4px; }
+      .cmap-btn { padding: 4px 7px; font-size: 11px; }
+      .cmap-hud-tl {
+        top: 40px; left: 8px; right: 8px; max-width: none;
+        flex-wrap: wrap; gap: 5px;
+      }
+      .cmap-search-wrap { flex: 1 1 140px; }
+      .cmap-search { width: 100%; font-size: 12px; padding: 0.3rem 0.55rem; }
+      .cmap-hud-bl { left: 8px; bottom: 8px; max-width: calc(100% - 54px); }
+      .cmap-hud-br { right: 8px; bottom: 8px; }
+      .cmap-drawer { top: auto; left: 8px; right: 8px; bottom: 48px; width: auto; max-height: 55%; }
+    }
+
+    /* Brief highlight when jumping from the codebase map to a specific file or hunk */
+    @keyframes jumpFlash {
+      0% { box-shadow: 0 0 0 3px var(--accent); background-color: color-mix(in srgb, var(--accent) 18%, transparent); }
+      100% { box-shadow: 0 0 0 0 transparent; }
+    }
+    .jump-flash { animation: jumpFlash 1.4s ease-out; }
     /* --- decisions: what was chosen, and why --- */
     .decisions { margin: 0 0 1.4rem; padding: 0; list-style: none; counter-reset: decision; max-width: var(--prose-measure); }
     .decisions li {
@@ -1711,6 +2242,10 @@ ${DARK_PALETTE}
     // before and after draw each piece, tested there.
     ${layoutDiagram.toString()}
 
+    // Inlined from review/codebaseMapLayout.mjs, same contract: 2D spatial layout
+    // of the whole codebase map and its interaction highways, tested there.
+    ${layoutCodebaseMap.toString()}
+
     // The launcher owns the theme for both pages. It is the same origin, so
     // its choice is readable here directly rather than passed through the
     // frame URL — which also means a review opened in its own tab matches the
@@ -1844,6 +2379,16 @@ ${DARK_PALETTE}
       if (ev.key !== 'Escape' || ev.defaultPrevented) return;
       var tag = document.activeElement && document.activeElement.tagName;
       if (tag === 'TEXTAREA' || tag === 'INPUT') return;
+      if (mapView.fullscreen) {
+        mapView.fullscreen = false;
+        render();
+        return;
+      }
+      if (mapView.selected) {
+        mapView.selected = null;
+        render();
+        return;
+      }
       if (!ask.openAnchor() && !picked) return;
       ask.close();
       clearPick();
@@ -2837,6 +3382,7 @@ ${DARK_PALETTE}
         renderMarkdown(overview, state.review.overview);
         content.appendChild(overview);
       }
+      renderCodebaseMapSection(content, described || Boolean(state.review && state.review.overview));
       renderWhatMatters(content);
       renderArchitecture(content);
       if (!state.review || !state.review.overview) {
@@ -3086,6 +3632,1290 @@ ${DARK_PALETTE}
         }
         content.appendChild(note);
       }
+    }
+
+    // --- whole-codebase interactive map -------------------------------------
+    //
+    // A Google Maps-style top-down overview of every module in the repository,
+    // its static import interactions, and where this change lands. Semantic
+    // zoom transitions smoothly from Codebase (districts + highways) to
+    // Modules (file parcels + connections) to Changes (the exact same preamble
+    // descriptions and clickable hunks as the Files changed tab).
+
+    var MAP_MIN_ZOOM = 0.22;
+    var MAP_MAX_ZOOM = 2.8;
+    var MAP_MACRO_CUT = 0.72;
+    var MAP_DETAIL_CUT = 1.32;
+    // Octicons link-external (box with top-right arrow) for jumping from a file title to Files changed.
+    var LINK_OUT_D = 'M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.854-1h4.146a.25.25 0 0 1 .25.25v4.146a.25.25 0 0 1-.427.177L13.03 4.03 9.28 7.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.75-3.75-1.543-1.543A.25.25 0 0 1 10.604 1Z';
+
+    var mapView = {
+      session: null,
+      diffAt: null,
+      data: null,
+      loading: false,
+      error: null,
+      tx: 0,
+      ty: 0,
+      zoom: 1,
+      fitted: false,
+      selected: null, // { kind: 'module', id } | { kind: 'file', path }
+      fullscreen: false,
+      search: '',
+      animFrame: 0,
+    };
+
+    function resetMap() {
+      if (mapView.animFrame) cancelAnimationFrame(mapView.animFrame);
+      mapView.animFrame = 0;
+      mapView.session = null;
+      mapView.diffAt = null;
+      mapView.data = null;
+      mapView.loading = false;
+      mapView.error = null;
+      mapView.fitted = false;
+      mapView.selected = null;
+      mapView.fullscreen = false;
+      mapView.search = '';
+    }
+
+    async function loadMap() {
+      if (!state.session) return;
+      var sess = state.session;
+      var diffAt = state.diffAt || null;
+      if (mapView.session === sess && mapView.diffAt === diffAt && (mapView.data || mapView.loading)) return;
+      mapView.session = sess;
+      mapView.diffAt = diffAt;
+      mapView.loading = true;
+      mapView.error = null;
+      mapView.data = null;
+      mapView.fitted = false;
+      mapView.selected = null;
+      try {
+        var got = await api('GET', '/reviews/' + sess + '/map');
+        if (mapView.session !== sess || mapView.diffAt !== diffAt) return;
+        mapView.data = got;
+        mapView.error = null;
+      } catch (e) {
+        if (mapView.session !== sess || mapView.diffAt !== diffAt) return;
+        mapView.error = e.message || 'Could not load codebase map';
+      } finally {
+        if (mapView.session === sess && mapView.diffAt === diffAt) mapView.loading = false;
+      }
+      if (state.tab === 'analysis') render();
+    }
+
+    // Build path -> { preamble, role, actIndex, actTitle, actWhy, hunks, additions, deletions, status }
+    // from the same analysis groups and parsed diff that Files changed renders.
+    function mapDetailsByPath() {
+      var byPath = fileByPath();
+      var decisionCounts = {};
+      var decisions = (state.review && state.review.decisions) || [];
+      for (var d = 0; d < decisions.length; d++) {
+        var dFiles = (decisions[d] && decisions[d].files) || [];
+        for (var dfi = 0; dfi < dFiles.length; dfi++) {
+          decisionCounts[dFiles[dfi]] = (decisionCounts[dFiles[dfi]] || 0) + 1;
+        }
+      }
+      var out = {};
+      var groups = groupsToRender();
+      for (var g = 0; g < groups.length; g++) {
+        var grp = groups[g];
+        var files = grp.files || [];
+        for (var i = 0; i < files.length; i++) {
+          var entry = files[i];
+          var df = byPath[entry.path];
+          out[entry.path] = {
+            preamble: entry.preamble || '',
+            role: entry.role || '',
+            decisionCount: decisionCounts[entry.path] || 0,
+            actIndex: grp.title ? g + 1 : null,
+            actTitle: grp.title || '',
+            actWhy: grp.why || '',
+            hunks: (df && df.hunks) || [],
+            hunksCount: df && df.hunks ? df.hunks.length : 0,
+            additions: df ? df.additions : 0,
+            deletions: df ? df.deletions : 0,
+            status: df ? df.status : 'modified',
+          };
+        }
+      }
+      var diffFiles = (state.diff && state.diff.files) || [];
+      for (var k = 0; k < diffFiles.length; k++) {
+        var f = diffFiles[k];
+        if (!out[f.path]) {
+          out[f.path] = {
+            preamble: '',
+            role: '',
+            decisionCount: decisionCounts[f.path] || 0,
+            actIndex: null,
+            actTitle: '',
+            actWhy: '',
+            hunks: f.hunks || [],
+            hunksCount: (f.hunks || []).length,
+            additions: f.additions || 0,
+            deletions: f.deletions || 0,
+            status: f.status || 'modified',
+          };
+        }
+      }
+      return out;
+    }
+
+    function hunkStats(hunk) {
+      var adds = 0;
+      var dels = 0;
+      var lines = (hunk && hunk.lines) || [];
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].type === 'add') adds += 1;
+        else if (lines[i].type === 'del') dels += 1;
+      }
+      var label = (hunk && hunk.context) ? hunk.context : ('Line ' + (hunk ? (hunk.newStart || hunk.oldStart || 1) : 1));
+      return { adds: adds, dels: dels, label: label };
+    }
+
+    function openFileFromMap(path, hunkIndex) {
+      if (mapView.fullscreen) mapView.fullscreen = false;
+      openFiles[path] = true;
+      showTab('files');
+      jumpToFile(path, hunkIndex);
+    }
+
+    function renderCodebaseMapSection(content, hasAbove) {
+      if (!state.session) return;
+      if (mapView.session !== state.session || mapView.diffAt !== (state.diffAt || null)) {
+        if (!mapView.loading) loadMap();
+      }
+      var head = el('div', 'secthead s-arch' + (hasAbove ? '' : ' first'));
+      head.appendChild(document.createTextNode('Codebase map'));
+      if (mapView.data && mapView.data.modules) {
+        var bits = [
+          mapView.data.modules.length + (mapView.data.modules.length === 1 ? ' module' : ' modules'),
+          mapView.data.totalFiles + (mapView.data.totalFiles === 1 ? ' file' : ' files'),
+        ];
+        if (mapView.data.changedFiles) bits.push(mapView.data.changedFiles + ' changed');
+        if (mapView.data.moduleEdges && mapView.data.moduleEdges.length) {
+          bits.push(mapView.data.moduleEdges.length + (mapView.data.moduleEdges.length === 1 ? ' link' : ' links'));
+        }
+        if (mapView.data.truncated) bits.push('sampled');
+        head.appendChild(el('span', 'sectmeta', bits.join(' \\u00b7 ')));
+      }
+      content.appendChild(head);
+
+      if (mapView.loading && !mapView.data) {
+        content.appendChild(loadingNote('Scanning the codebase modules and dependencies\\u2026'));
+        return;
+      }
+      if (mapView.error && !mapView.data) {
+        var errBox = el('div', 'tabnote');
+        errBox.appendChild(document.createTextNode('Could not load the codebase map: ' + mapView.error + ' '));
+        var retry = el('button', 'quiet', 'Try again');
+        retry.type = 'button';
+        retry.addEventListener('click', function onRetryMap() {
+          mapView.error = null;
+          mapView.session = null;
+          loadMap();
+        });
+        errBox.appendChild(retry);
+        content.appendChild(errBox);
+        return;
+      }
+      if (!mapView.data || !mapView.data.modules || !mapView.data.modules.length) return;
+
+      var details = mapDetailsByPath();
+      var layout = layoutCodebaseMap(mapView.data, details);
+      if (mapView.fullscreen) {
+        var backdrop = el('div', 'cmap-backdrop');
+        backdrop.addEventListener('click', function onBackdrop() {
+          mapView.fullscreen = false;
+          render();
+        });
+        content.appendChild(backdrop);
+      }
+      content.appendChild(buildCodebaseMapWidget(layout, details));
+    }
+
+    function buildCodebaseMapWidget(layout, details) {
+      var shell = el('div', 'cmap-shell' + (mapView.fullscreen ? ' fullscreen' : ''));
+      var stage = el('div', 'cmap-stage');
+      var world = el('div', 'cmap-world');
+      world.style.width = layout.width + 'px';
+      world.style.height = layout.height + 'px';
+
+      var modById = {};
+      var parcelByPath = {};
+      var modEls = {};
+      var parcelEls = {};
+      var modEdgeEls = [];
+      var fileEdgeEls = [];
+
+      for (var mi = 0; mi < layout.modules.length; mi++) {
+        var mod = layout.modules[mi];
+        modById[mod.id] = mod;
+        for (var pi = 0; pi < mod.parcels.length; pi++) {
+          if (mod.parcels[pi].path) parcelByPath[mod.parcels[pi].path] = mod.parcels[pi];
+        }
+      }
+
+      // Layer 1: SVG module-to-module interaction highways.
+      var modSvg = svgEl('svg', {
+        'class': 'cmap-svg cmap-svg-mods',
+        width: String(layout.width),
+        height: String(layout.height),
+        viewBox: '0 0 ' + layout.width + ' ' + layout.height,
+        'aria-hidden': 'true',
+      });
+      var mPrefix = 'cmapm' + (archMarkers++) + '-';
+      var mDefs = svgEl('defs');
+      [['plain', 'var(--faint)'], ['hot', 'var(--accent)']].forEach(function mkArrow(spec) {
+        var marker = svgEl('marker', {
+          id: mPrefix + spec[0], viewBox: '0 0 10 10', refX: '8.5', refY: '5',
+          markerWidth: '6.5', markerHeight: '6.5', orient: 'auto-start-reverse',
+        });
+        var mp = svgEl('path', { d: 'M0,1 L9,5 L0,9 z' });
+        mp.style.fill = spec[1];
+        marker.appendChild(mp);
+        mDefs.appendChild(marker);
+      });
+      modSvg.appendChild(mDefs);
+
+      for (var me = 0; me < layout.moduleEdges.length; me++) {
+        var edge = layout.moduleEdges[me];
+        var fromM = modById[edge.from];
+        var toM = modById[edge.to];
+        var hotEdge = edge.touchesChange && ((fromM && fromM.impact === 'major') || (toM && toM.impact === 'major'));
+        var showPill = hotEdge || layout.moduleEdges.length <= 16 || edge.count >= 6;
+        var eg = svgEl('g', { 'class': 'cmap-medge' + (hotEdge ? ' hot' : '') + (showPill ? '' : ' quiet-label') });
+        var strokeW = Math.min(4.2, 1.5 + Math.log(edge.count + 1) * 0.95);
+        var pathEl = svgEl('path', {
+          d: edge.d,
+          'stroke-width': String(Math.round(strokeW * 10) / 10),
+          'marker-end': 'url(#' + mPrefix + (hotEdge ? 'hot' : 'plain') + ')',
+        });
+        eg.appendChild(pathEl);
+        var badgeText = String(edge.count);
+        var bw = Math.max(20, badgeText.length * 7 + 10);
+        eg.appendChild(svgEl('rect', {
+          x: String(edge.labelX - bw / 2), y: String(edge.labelY - 9),
+          width: String(bw), height: '18', rx: '9',
+        }));
+        var bt = svgEl('text', {
+          x: String(edge.labelX), y: String(edge.labelY + 4), 'text-anchor': 'middle',
+        });
+        bt.textContent = badgeText;
+        eg.appendChild(bt);
+        modSvg.appendChild(eg);
+        modEdgeEls.push({ edge: edge, el: eg });
+      }
+      world.appendChild(modSvg);
+
+      // Layer 2: HTML district blocks & file parcels (full typography + markdown).
+      for (var i = 0; i < layout.modules.length; i++) {
+        var m = layout.modules[i];
+        var modCls = 'cmap-mod';
+        if (m.changedCount > 0) {
+          modCls += ' has-changes ' + (m.impact === 'major' ? 'impact-major' : 'impact-minor');
+          if (m.addedCount === m.changedCount) modCls += ' only-added';
+          else if (m.deletedCount === m.changedCount) modCls += ' only-deleted';
+        }
+        var mEl = el('div', modCls);
+        mEl.style.left = m.x + 'px';
+        mEl.style.top = m.y + 'px';
+        mEl.style.width = m.w + 'px';
+        mEl.style.height = m.h + 'px';
+        mEl.dataset.mod = m.id;
+
+        var mHead = el('div', 'cmap-mhead');
+        if (m.summary) mHead.title = m.summary;
+        mHead.appendChild(el('span', 'mname', m.label));
+        mHead.appendChild(el('span', 'mcount', m.fileCount + (m.fileCount === 1 ? ' file' : ' files')));
+        if (m.changedCount) {
+          var mchg = el('span', 'mchg');
+          if (m.majorCount) {
+            mchg.appendChild(el('span', 'key', m.majorCount + ' key'));
+            if (m.minorCount) mchg.appendChild(document.createTextNode('+' + m.minorCount));
+          } else {
+            mchg.appendChild(document.createTextNode(m.minorCount + ' minor'));
+          }
+          if (m.additions) mchg.appendChild(el('span', 'p', '+' + m.additions));
+          if (m.deletions) mchg.appendChild(el('span', 'm', '\\u2212' + m.deletions));
+          mHead.appendChild(mchg);
+        }
+        (function bindMod(modObj, headerEl) {
+          headerEl.addEventListener('click', function onModClick(ev) {
+            if (didDrag) return;
+            ev.stopPropagation();
+            selectItem({ kind: 'module', id: modObj.id });
+          });
+          headerEl.addEventListener('dblclick', function onModDbl(ev) {
+            ev.stopPropagation();
+            selectItem({ kind: 'module', id: modObj.id });
+            flyToBox(modObj, 1.08);
+          });
+        })(m, mHead);
+        mEl.appendChild(mHead);
+
+        // Macro overlay shown when zoomed out so districts read like city names.
+        var macro = el('div', 'cmap-macro');
+        if (m.summary) macro.title = m.summary;
+        macro.appendChild(el('div', 'cmap-macro-name', m.label));
+        if (m.summary) macro.appendChild(el('div', 'cmap-macro-desc', m.summary));
+        macro.appendChild(el('div', 'cmap-macro-sub',
+          m.fileCount + (m.fileCount === 1 ? ' file' : ' files') + (m.totalLines ? ' \\u00b7 ' + m.totalLines + ' lines' : '')));
+        if (m.changedCount) {
+          var mb = el('div', 'cmap-macro-badge');
+          if (m.majorCount) {
+            mb.appendChild(el('span', 'key', m.majorCount + ' key'));
+            if (m.minorCount) mb.appendChild(el('span', null, '\\u00b7 ' + m.minorCount + ' minor'));
+          } else {
+            mb.appendChild(el('span', null, m.minorCount + ' minor'));
+          }
+          if (m.additions) mb.appendChild(el('span', 'p', '+' + m.additions));
+          if (m.deletions) mb.appendChild(el('span', 'm', '\\u2212' + m.deletions));
+          macro.appendChild(mb);
+        }
+        (function bindMacro(modObj, macroEl) {
+          macroEl.addEventListener('click', function onMacroClick(ev) {
+            if (didDrag) return;
+            ev.stopPropagation();
+            selectItem({ kind: 'module', id: modObj.id });
+          });
+          macroEl.addEventListener('dblclick', function onMacroDbl(ev) {
+            ev.stopPropagation();
+            selectItem({ kind: 'module', id: modObj.id });
+            flyToBox(modObj, modObj.changedCount ? 1.12 : 0.95);
+          });
+        })(m, macro);
+        mEl.appendChild(macro);
+
+        // File parcels inside this district.
+        for (var p = 0; p < m.parcels.length; p++) {
+          var pc = m.parcels[p];
+          var pEl = renderParcel(pc, details[pc.path], m);
+          mEl.appendChild(pEl);
+          if (pc.path) parcelEls[pc.path] = pEl;
+        }
+
+        (function bindHoverMod(modObj, boxEl) {
+          boxEl.addEventListener('pointerenter', function onEnter() { applyHighlight({ kind: 'module', id: modObj.id }); });
+          boxEl.addEventListener('pointerleave', function onLeave() { applyHighlight(mapView.selected); });
+        })(m, mEl);
+
+        world.appendChild(mEl);
+        modEls[m.id] = mEl;
+      }
+
+      // Layer 3: SVG file-to-file connection lines (shown when zoomed in / focused).
+      var fileSvg = svgEl('svg', {
+        'class': 'cmap-svg cmap-svg-files',
+        width: String(layout.width),
+        height: String(layout.height),
+        viewBox: '0 0 ' + layout.width + ' ' + layout.height,
+        'aria-hidden': 'true',
+      });
+      var fPrefix = 'cmapf' + (archMarkers++) + '-';
+      var fDefs = svgEl('defs');
+      var fMark = svgEl('marker', {
+        id: fPrefix + 'hi', viewBox: '0 0 10 10', refX: '8.5', refY: '5',
+        markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse',
+      });
+      var fmp = svgEl('path', { d: 'M0,1 L9,5 L0,9 z' });
+      fmp.style.fill = 'var(--accent)';
+      fMark.appendChild(fmp);
+      fDefs.appendChild(fMark);
+      fileSvg.appendChild(fDefs);
+
+      for (var fe = 0; fe < layout.fileEdges.length; fe++) {
+        var fEdge = layout.fileEdges[fe];
+        var fg = svgEl('g', { 'class': 'cmap-fedge' + (fEdge.touchesChange ? ' hot' : '') });
+        fg.appendChild(svgEl('path', { d: fEdge.d, 'marker-end': 'url(#' + fPrefix + 'hi)' }));
+        fileSvg.appendChild(fg);
+        fileEdgeEls.push({ edge: fEdge, el: fg });
+      }
+      world.appendChild(fileSvg);
+      stage.appendChild(world);
+      shell.appendChild(stage);
+
+      // --- Floating Chrome: Top-Left (Search + Changed areas pills) ---
+      var hudTL = el('div', 'cmap-hud-tl');
+      var searchWrap = el('div', 'cmap-search-wrap');
+      var searchInput = document.createElement('input');
+      searchInput.type = 'search';
+      searchInput.className = 'cmap-search';
+      searchInput.placeholder = 'Find module or file\\u2026';
+      searchInput.setAttribute('aria-label', 'Find module or file on the codebase map');
+      searchInput.value = mapView.search || '';
+      var resultsBox = el('div', 'cmap-results');
+      resultsBox.hidden = true;
+      searchWrap.appendChild(searchInput);
+      searchWrap.appendChild(resultsBox);
+      hudTL.appendChild(searchWrap);
+
+      var changedMods = layout.modules
+        .filter(function hasChg(modObj) { return modObj.changedCount > 0; })
+        .sort(function byImpactThenSize(a, b) {
+          if (a.impact !== b.impact) return a.impact === 'major' ? -1 : 1;
+          if (b.majorCount !== a.majorCount) return b.majorCount - a.majorCount;
+          return (b.additions + b.deletions) - (a.additions + a.deletions);
+        });
+      if (changedMods.length) {
+        var pills = el('div', 'cmap-pills');
+        for (var cm = 0; cm < Math.min(changedMods.length, 6); cm++) {
+          (function addPill(modObj) {
+            var cls = 'cmap-pill ' + (modObj.impact === 'major' ? 'impact-major' : 'impact-minor');
+            if (modObj.impact === 'major') {
+              if (modObj.addedCount === modObj.changedCount) cls += ' only-added';
+              else if (modObj.deletedCount === modObj.changedCount) cls += ' only-deleted';
+            }
+            var pill = el('button', cls);
+            pill.type = 'button';
+            pill.appendChild(el('span', 'dot'));
+            pill.appendChild(el('span', null, modObj.label));
+            pill.appendChild(el('span', 'n', modObj.majorCount ? '(' + modObj.majorCount + ' key)' : '(' + modObj.changedCount + ')'));
+            pill.addEventListener('click', function onPill() {
+              selectItem({ kind: 'module', id: modObj.id });
+              flyToBox(modObj, 1.1);
+            });
+            pills.appendChild(pill);
+          })(changedMods[cm]);
+        }
+        hudTL.appendChild(pills);
+      }
+      shell.appendChild(hudTL);
+
+      function updateSearchResults() {
+        var q = searchInput.value.trim().toLowerCase();
+        mapView.search = searchInput.value;
+        resultsBox.replaceChildren();
+        if (!q) { resultsBox.hidden = true; return; }
+        var matches = [];
+        for (var sm = 0; sm < layout.modules.length; sm++) {
+          var modObj = layout.modules[sm];
+          if (modObj.label.toLowerCase().indexOf(q) !== -1
+            || (modObj.summary && modObj.summary.toLowerCase().indexOf(q) !== -1)) {
+            matches.push({ kind: 'module', id: modObj.id, label: modObj.label, changed: modObj.changedCount > 0, meta: modObj.fileCount + ' files' });
+          }
+          var files = modObj.allFiles || [];
+          for (var sf = 0; sf < files.length; sf++) {
+            var fl = files[sf];
+            if (fl.path.toLowerCase().indexOf(q) !== -1) {
+              matches.push({
+                kind: 'file', path: fl.path, modId: modObj.id, label: fl.path,
+                changed: fl.status !== 'unchanged',
+                meta: fl.status !== 'unchanged' ? fl.status : 'file',
+              });
+            }
+          }
+        }
+        matches.sort(function byChg(a, b) {
+          if (a.changed !== b.changed) return a.changed ? -1 : 1;
+          return a.label < b.label ? -1 : 1;
+        });
+        if (!matches.length) {
+          resultsBox.appendChild(el('div', 'cmap-res-item', 'No matching modules or files'));
+          resultsBox.hidden = false;
+          return;
+        }
+        for (var r = 0; r < Math.min(matches.length, 10); r++) {
+          (function addRes(item) {
+            var btn = el('button', 'cmap-res-item');
+            btn.type = 'button';
+            btn.appendChild(el('span', 'rpath', item.label));
+            btn.appendChild(el('span', 'rkind', item.meta));
+            btn.addEventListener('click', function onPick() {
+              resultsBox.hidden = true;
+              if (item.kind === 'module') {
+                selectItem({ kind: 'module', id: item.id });
+                flyToBox(modById[item.id], 1.05);
+              } else {
+                selectItem({ kind: 'file', path: item.path });
+                var targetBox = parcelByPath[item.path] || modById[item.modId];
+                flyToBox(targetBox, item.changed ? 1.52 : 1.15);
+              }
+            });
+            resultsBox.appendChild(btn);
+          })(matches[r]);
+        }
+        resultsBox.hidden = false;
+      }
+      searchInput.addEventListener('input', updateSearchResults);
+      searchInput.addEventListener('focus', updateSearchResults);
+      searchInput.addEventListener('keydown', function onSearchKey(ev) {
+        if (ev.key === 'Escape') {
+          resultsBox.hidden = true;
+          searchInput.blur();
+          ev.stopPropagation();
+        }
+      });
+
+      // --- Floating Chrome: Top-Right (Focus key changes, Fit all, Full screen) ---
+      var hudTR = el('div', 'cmap-hud-tr');
+      if (layout.majorBounds || layout.changedBounds) {
+        var hasMinorToo = layout.majorBounds && changedMods.some(function isMin(m) { return m.impact === 'minor'; });
+        var focusBtn = el('button', 'cmap-btn primary', hasMinorToo ? 'Focus key changes' : 'Focus changes');
+        focusBtn.type = 'button';
+        focusBtn.addEventListener('click', function onFocusChg() {
+          flyToRect(layout.majorBounds || layout.changedBounds, 1.55);
+        });
+        hudTR.appendChild(focusBtn);
+      }
+      var fitBtn = el('button', 'cmap-btn', 'Fit all');
+      fitBtn.type = 'button';
+      fitBtn.addEventListener('click', function onFitAll() {
+        flyToRect(layout.bounds, 1.15);
+      });
+      hudTR.appendChild(fitBtn);
+
+      var fsBtn = el('button', 'cmap-btn', mapView.fullscreen ? 'Exit full screen' : 'Full screen');
+      fsBtn.type = 'button';
+      fsBtn.addEventListener('click', function onFs() {
+        mapView.fullscreen = !mapView.fullscreen;
+        mapView.fitted = false;
+        render();
+      });
+      hudTR.appendChild(fsBtn);
+      shell.appendChild(hudTR);
+
+      // --- Floating Chrome: Bottom-Left (Legend) ---
+      var hudBL = el('div', 'cmap-hud-bl');
+      var legend = el('div', 'cmap-legend');
+      [['major', 'Key change'], ['minor', 'Minor'], ['add', 'Added'], ['del', 'Deleted'], ['', 'Unchanged']].forEach(function mkLeg(item) {
+        var sp = el('span');
+        sp.appendChild(el('i', item[0]));
+        sp.appendChild(document.createTextNode(item[1]));
+        legend.appendChild(sp);
+      });
+      hudBL.appendChild(legend);
+      shell.appendChild(hudBL);
+
+      // --- Floating Chrome: Bottom-Right (Interactive Minimap + Zoom Controls) ---
+      var hudBR = el('div', 'cmap-hud-br');
+      var miniWrap = el('div', 'cmap-minimap');
+      miniWrap.setAttribute('aria-label', 'Codebase minimap');
+      var miniSvg = svgEl('svg', { viewBox: '0 0 ' + layout.width + ' ' + layout.height, preserveAspectRatio: 'xMidYMid meet' });
+      for (var mm = 0; mm < layout.modules.length; mm++) {
+        var modM = layout.modules[mm];
+        var mRect = svgEl('rect', {
+          x: String(modM.x), y: String(modM.y), width: String(modM.w), height: String(modM.h), rx: '10',
+        });
+        if (modM.impact === 'major') {
+          mRect.style.fill = modM.addedCount === modM.changedCount ? 'var(--add)' : (modM.deletedCount === modM.changedCount ? 'var(--del)' : 'var(--accent)');
+          mRect.style.fillOpacity = '0.85';
+        } else if (modM.impact === 'minor') {
+          mRect.style.fill = 'var(--slate)';
+          mRect.style.fillOpacity = '0.45';
+        } else {
+          mRect.style.fill = 'var(--rule-strong)';
+          mRect.style.fillOpacity = '0.5';
+        }
+        miniSvg.appendChild(mRect);
+      }
+      var miniViewRect = svgEl('rect', { x: '0', y: '0', width: '100', height: '100', rx: '6' });
+      miniViewRect.style.fill = 'var(--accent)';
+      miniViewRect.style.fillOpacity = '0.14';
+      miniViewRect.style.stroke = 'var(--accent)';
+      miniViewRect.style.strokeWidth = String(Math.max(12, Math.round(Math.max(layout.width, layout.height) * 0.014)));
+      miniSvg.appendChild(miniViewRect);
+      miniWrap.appendChild(miniSvg);
+      hudBR.appendChild(miniWrap);
+
+      var zoomCtrl = el('div', 'cmap-zoom-ctrl');
+      var zIn = el('button', null, '+');
+      zIn.type = 'button';
+      zIn.setAttribute('aria-label', 'Zoom in');
+      zIn.addEventListener('click', function onZIn() { zoomAtStageCenter(mapView.zoom * 1.32, true); });
+      var zPct = el('div', 'cmap-zoom-pct', '100%');
+      var zOut = el('button', null, '\\u2212');
+      zOut.type = 'button';
+      zOut.setAttribute('aria-label', 'Zoom out');
+      zOut.addEventListener('click', function onZOut() { zoomAtStageCenter(mapView.zoom / 1.32, true); });
+      zoomCtrl.appendChild(zIn);
+      zoomCtrl.appendChild(zPct);
+      zoomCtrl.appendChild(zOut);
+      hudBR.appendChild(zoomCtrl);
+      shell.appendChild(hudBR);
+
+      // --- Floating Google Maps Place Inspector Drawer ---
+      var drawerHost = el('div');
+      shell.appendChild(drawerHost);
+
+      function renderDrawer() {
+        drawerHost.replaceChildren();
+        var sel = mapView.selected;
+        if (!sel) return;
+        var drawer = el('div', 'cmap-drawer');
+        var dHead = el('div', 'cmap-drawer-head');
+        var dBody = el('div', 'cmap-drawer-body');
+        var dFoot = el('div', 'cmap-drawer-foot');
+
+        if (sel.kind === 'file') {
+          var det = details[sel.path] || null;
+          var pc = parcelByPath[sel.path] || null;
+          var isChg = !!(det || (pc && pc.status !== 'unchanged'));
+          if (isChg) {
+            var titleLink = el('button', 'cmap-drawer-title-link');
+            titleLink.type = 'button';
+            titleLink.title = 'Open ' + sel.path + ' in Files changed';
+            titleLink.setAttribute('aria-label', 'Open ' + sel.path + ' in Files changed');
+            titleLink.appendChild(el('span', null, sel.path));
+            titleLink.appendChild(svgIcon(LINK_OUT_D));
+            titleLink.addEventListener('click', function onOpenTitle() { openFileFromMap(sel.path); });
+            dHead.appendChild(titleLink);
+          } else {
+            dHead.appendChild(el('div', 'cmap-drawer-title', sel.path));
+          }
+          var xBtn = el('button', 'cmap-drawer-x', '\\u00d7');
+          xBtn.type = 'button';
+          xBtn.setAttribute('aria-label', 'Close details');
+          xBtn.addEventListener('click', function onCloseD() { selectItem(null); });
+          dHead.appendChild(xBtn);
+
+          if (isChg && det) {
+            var topSec = el('div', 'cmap-drawer-sec');
+            var tagRow = el('div', 'cmap-p-tags');
+            if (pc && pc.impact === 'major') tagRow.appendChild(el('span', 'cmap-tag key-chg', 'KEY'));
+            else if (pc && pc.impact === 'minor') tagRow.appendChild(el('span', 'cmap-tag minor-chg', 'minor'));
+            if (det.actIndex) tagRow.appendChild(el('span', 'cmap-tag act', 'ACT ' + det.actIndex));
+            if (det.role) tagRow.appendChild(el('span', 'cmap-tag', det.role));
+            tagRow.appendChild(el('span', 'cmap-tag ' + (det.status || 'modified'), det.status || 'modified'));
+            var statSp = el('span', 'cmap-p-stat');
+            if (det.additions) statSp.appendChild(el('span', 'p', '+' + det.additions));
+            if (det.deletions) statSp.appendChild(el('span', 'm', '\\u2212' + det.deletions));
+            tagRow.appendChild(statSp);
+            topSec.appendChild(tagRow);
+            if (det.actTitle) {
+              var actNote = el('div', 'cmap-drawer-act');
+              actNote.appendChild(el('b', null, det.actTitle));
+              if (det.actWhy) {
+                actNote.appendChild(document.createTextNode(' \\u2014 ' + det.actWhy));
+              }
+              topSec.appendChild(actNote);
+            }
+            dBody.appendChild(topSec);
+
+            var descSec = el('div', 'cmap-drawer-sec');
+            descSec.appendChild(el('div', 'cmap-drawer-label', 'Change description'));
+            var prose = el('div', 'prose');
+            if (det.preamble) renderMarkdown(prose, det.preamble);
+            else prose.appendChild(el('p', null, state.status === 'ready' ? 'No summary was generated for this file.' : 'Analysis in progress\\u2026'));
+            descSec.appendChild(prose);
+            dBody.appendChild(descSec);
+
+            if (det.hunks && det.hunks.length) {
+              var hSec = el('div', 'cmap-drawer-sec');
+              hSec.appendChild(el('div', 'cmap-drawer-label', 'Changed sections (' + det.hunks.length + ') \\u2014 click to jump'));
+              var hList = el('div', 'cmap-p-hunks');
+              for (var hi = 0; hi < det.hunks.length; hi++) {
+                (function addHunk(idx, hunk) {
+                  var hs = hunkStats(hunk);
+                  var hb = el('button', 'cmap-hunk-btn');
+                  hb.type = 'button';
+                  hb.appendChild(el('span', 'hctx', hs.label));
+                  var st = el('span', 'hstat');
+                  if (hs.adds) st.appendChild(el('span', 'p', '+' + hs.adds));
+                  if (hs.dels) st.appendChild(el('span', 'm', '\\u2212' + hs.dels));
+                  hb.appendChild(st);
+                  hb.addEventListener('click', function onJumpHunk() { openFileFromMap(sel.path, idx); });
+                  hList.appendChild(hb);
+                })(hi, det.hunks[hi]);
+              }
+              hSec.appendChild(hList);
+              dBody.appendChild(hSec);
+            }
+          } else {
+            var uSec = el('div', 'cmap-drawer-sec');
+            uSec.appendChild(el('div', 'cmap-drawer-act', 'Unchanged file' + (pc && pc.lines ? ' \\u00b7 ' + pc.lines + ' lines' : '')));
+            dBody.appendChild(uSec);
+          }
+
+          // File-level incoming & outgoing interactions.
+          var importsOut = [];
+          var importedBy = [];
+          var allFe = (mapView.data && mapView.data.fileEdges) || [];
+          for (var fIdx = 0; fIdx < allFe.length; fIdx++) {
+            if (allFe[fIdx].from === sel.path) importsOut.push(allFe[fIdx].to);
+            if (allFe[fIdx].to === sel.path) importedBy.push(allFe[fIdx].from);
+          }
+          if (importsOut.length || importedBy.length) {
+            var depSec = el('div', 'cmap-drawer-sec');
+            if (importsOut.length) {
+              depSec.appendChild(el('div', 'cmap-drawer-label', 'Imports (' + importsOut.length + ')'));
+              depSec.appendChild(renderFileDepChips(importsOut));
+            }
+            if (importedBy.length) {
+              var lbl2 = el('div', 'cmap-drawer-label', 'Imported by (' + importedBy.length + ')');
+              if (importsOut.length) lbl2.style.marginTop = '8px';
+              depSec.appendChild(lbl2);
+              depSec.appendChild(renderFileDepChips(importedBy));
+            }
+            dBody.appendChild(depSec);
+          }
+
+          if (pc) {
+            var zoomBtn = el('button', 'quiet', 'Zoom in');
+            zoomBtn.type = 'button';
+            zoomBtn.addEventListener('click', function onZFile() { flyToBox(pc, isChg ? 1.56 : 1.25); });
+            dFoot.appendChild(zoomBtn);
+          }
+        } else if (sel.kind === 'module' && modById[sel.id]) {
+          var modObj = modById[sel.id];
+          dHead.appendChild(el('div', 'cmap-drawer-title', modObj.label));
+          var xBtnM = el('button', 'cmap-drawer-x', '\\u00d7');
+          xBtnM.type = 'button';
+          xBtnM.setAttribute('aria-label', 'Close details');
+          xBtnM.addEventListener('click', function onCloseM() { selectItem(null); });
+          dHead.appendChild(xBtnM);
+
+          var mSec = el('div', 'cmap-drawer-sec');
+          if (modObj.summary) {
+            var mDesc = el('div', 'prose');
+            mDesc.style.marginBottom = '6px';
+            mDesc.appendChild(el('p', null, modObj.summary));
+            mSec.appendChild(mDesc);
+          }
+          var sumText = modObj.fileCount + (modObj.fileCount === 1 ? ' file' : ' files');
+          if (modObj.totalLines) sumText += ' \\u00b7 ' + modObj.totalLines + ' lines';
+          if (modObj.changedCount) sumText += ' \\u00b7 ' + modObj.changedCount + ' changed (+' + modObj.additions + ' / \\u2212' + modObj.deletions + ')';
+          mSec.appendChild(el('div', 'cmap-drawer-act', sumText));
+          dBody.appendChild(mSec);
+
+          var chgFiles = (modObj.allFiles || [])
+            .filter(function isC(fl) { return fl.status !== 'unchanged'; })
+            .sort(function byImp(a, b) {
+              var ia = parcelByPath[a.path] && parcelByPath[a.path].impact === 'major' ? 0 : 1;
+              var ib = parcelByPath[b.path] && parcelByPath[b.path].impact === 'major' ? 0 : 1;
+              return ia - ib;
+            });
+          if (chgFiles.length) {
+            var cfSec = el('div', 'cmap-drawer-sec');
+            cfSec.appendChild(el('div', 'cmap-drawer-label', 'Changed files (' + chgFiles.length + ')'));
+            var cfList = el('div', 'cmap-drawer-files');
+            for (var cf = 0; cf < chgFiles.length; cf++) {
+              (function addChgRow(fl) {
+                var fDet = details[fl.path] || {};
+                var fImp = parcelByPath[fl.path] && parcelByPath[fl.path].impact === 'minor' ? 'minor' : 'major';
+                var row = el('button', 'cmap-drawer-file ' + (fl.status || 'modified') + (fImp === 'minor' ? ' minor' : ''));
+                row.type = 'button';
+                var top = el('div', 'df-top');
+                top.appendChild(el('span', 'cmap-tag ' + (fImp === 'major' ? 'key-chg' : 'minor-chg'), fImp === 'major' ? 'KEY' : 'minor'));
+                top.appendChild(el('span', 'df-name', fl.name));
+                var st = el('span', 'cmap-p-stat');
+                if (fl.additions) st.appendChild(el('span', 'p', '+' + fl.additions));
+                if (fl.deletions) st.appendChild(el('span', 'm', '\\u2212' + fl.deletions));
+                top.appendChild(st);
+                row.appendChild(top);
+                if (fDet.preamble) row.appendChild(el('div', 'df-why', stripMarkdownLite(fDet.preamble)));
+                row.addEventListener('click', function onRowPick() {
+                  selectItem({ kind: 'file', path: fl.path });
+                  if (parcelByPath[fl.path]) flyToBox(parcelByPath[fl.path], 1.54);
+                });
+                cfList.appendChild(row);
+              })(chgFiles[cf]);
+            }
+            cfSec.appendChild(cfList);
+            dBody.appendChild(cfSec);
+          }
+
+          var modOut = [];
+          var modIn = [];
+          for (var em = 0; em < layout.moduleEdges.length; em++) {
+            var meItem = layout.moduleEdges[em];
+            if (meItem.from === modObj.id) modOut.push({ id: meItem.to, count: meItem.count });
+            if (meItem.to === modObj.id) modIn.push({ id: meItem.from, count: meItem.count });
+          }
+          if (modOut.length || modIn.length) {
+            var mdSec = el('div', 'cmap-drawer-sec');
+            if (modOut.length) {
+              mdSec.appendChild(el('div', 'cmap-drawer-label', 'Depends on (' + modOut.length + ')'));
+              mdSec.appendChild(renderModDepChips(modOut));
+            }
+            if (modIn.length) {
+              var ml2 = el('div', 'cmap-drawer-label', 'Used by (' + modIn.length + ')');
+              if (modOut.length) ml2.style.marginTop = '8px';
+              mdSec.appendChild(ml2);
+              mdSec.appendChild(renderModDepChips(modIn));
+            }
+            dBody.appendChild(mdSec);
+          }
+
+          var zMod = el('button', 'quiet', 'Zoom into module');
+          zMod.type = 'button';
+          zMod.addEventListener('click', function onZMod() { flyToBox(modObj, modObj.changedCount ? 1.38 : 1.05); });
+          dFoot.appendChild(zMod);
+        }
+
+        drawer.appendChild(dHead);
+        drawer.appendChild(dBody);
+        if (dFoot.childNodes.length) drawer.appendChild(dFoot);
+        drawerHost.appendChild(drawer);
+      }
+
+      function renderFileDepChips(paths) {
+        var wrap = el('div', 'cmap-drawer-chips');
+        for (var i = 0; i < Math.min(paths.length, 12); i++) {
+          (function addChip(p) {
+            var changed = !!details[p];
+            var chip = el('button', 'cmap-dep-chip' + (changed ? ' changed' : ''), p.split('/').slice(-2).join('/'));
+            chip.type = 'button';
+            chip.title = p;
+            chip.addEventListener('click', function onChip() {
+              selectItem({ kind: 'file', path: p });
+              if (parcelByPath[p]) flyToBox(parcelByPath[p], changed ? 1.52 : 1.15);
+            });
+            wrap.appendChild(chip);
+          })(paths[i]);
+        }
+        return wrap;
+      }
+
+      function renderModDepChips(items) {
+        var wrap = el('div', 'cmap-drawer-chips');
+        for (var i = 0; i < items.length; i++) {
+          (function addMChip(it) {
+            var target = modById[it.id];
+            var chip = el('button', 'cmap-dep-chip' + (target && target.changedCount ? ' changed' : ''),
+              (target ? target.label : it.id) + ' (' + it.count + ')');
+            chip.type = 'button';
+            chip.addEventListener('click', function onMChip() {
+              if (!target) return;
+              selectItem({ kind: 'module', id: target.id });
+              flyToBox(target, 1.08);
+            });
+            wrap.appendChild(chip);
+          })(items[i]);
+        }
+        return wrap;
+      }
+
+      function renderParcel(pc, det, modObj) {
+        if (pc.kind === 'overflow') {
+          var ov = el('div', 'cmap-parcel overflow', pc.name);
+          ov.style.left = pc.rx + 'px';
+          ov.style.top = pc.ry + 'px';
+          ov.style.width = pc.w + 'px';
+          ov.style.height = pc.h + 'px';
+          ov.addEventListener('click', function onOv(ev) {
+            if (didDrag) return;
+            ev.stopPropagation();
+            selectItem({ kind: 'module', id: modObj.id });
+          });
+          return ov;
+        }
+        if (pc.kind === 'unchanged') {
+          var tile = el('div', 'cmap-parcel unchanged');
+          tile.style.left = pc.rx + 'px';
+          tile.style.top = pc.ry + 'px';
+          tile.style.width = pc.w + 'px';
+          tile.style.height = pc.h + 'px';
+          tile.title = pc.path;
+          tile.appendChild(el('span', 'pname', pc.name));
+          if (pc.lines) tile.appendChild(el('span', 'plines', pc.lines + 'L'));
+          tile.addEventListener('click', function onUClick(ev) {
+            if (didDrag) return;
+            ev.stopPropagation();
+            selectItem({ kind: 'file', path: pc.path });
+          });
+          tile.addEventListener('dblclick', function onUDbl(ev) {
+            ev.stopPropagation();
+            selectItem({ kind: 'file', path: pc.path });
+            flyToBox(pc, 1.25);
+          });
+          tile.addEventListener('pointerenter', function onUEnter() { applyHighlight({ kind: 'file', path: pc.path }); });
+          tile.addEventListener('pointerleave', function onULeave() { applyHighlight(mapView.selected); });
+          return tile;
+        }
+
+        // Changed file parcel: mid-zoom summary + street-level full preamble & clickable hunks.
+        var impCls = pc.impact === 'minor' ? ' impact-minor' : ' impact-major';
+        var card = el('div', 'cmap-parcel changed ' + (pc.status || 'modified') + impCls);
+        card.style.left = pc.rx + 'px';
+        card.style.top = pc.ry + 'px';
+        card.style.width = pc.w + 'px';
+        card.style.height = pc.h + 'px';
+        card.title = pc.path;
+
+        var top = el('div', 'cmap-p-top');
+        var titleBtn = el('button', 'cmap-p-title-link');
+        titleBtn.type = 'button';
+        titleBtn.title = 'Open ' + pc.path + ' in Files changed';
+        titleBtn.setAttribute('aria-label', 'Open ' + pc.path + ' in Files changed');
+        titleBtn.appendChild(el('span', 'cmap-p-name', pc.name));
+        titleBtn.appendChild(svgIcon(LINK_OUT_D));
+        titleBtn.addEventListener('click', function onTitleOpen(ev) {
+          ev.stopPropagation();
+          openFileFromMap(pc.path);
+        });
+        top.appendChild(titleBtn);
+        var stat = el('span', 'cmap-p-stat');
+        if (pc.additions) stat.appendChild(el('span', 'p', '+' + pc.additions));
+        if (pc.deletions) stat.appendChild(el('span', 'm', '\\u2212' + pc.deletions));
+        top.appendChild(stat);
+        card.appendChild(top);
+
+        var tags = el('div', 'cmap-p-tags');
+        if (pc.impact === 'major') tags.appendChild(el('span', 'cmap-tag key-chg', 'KEY'));
+        else tags.appendChild(el('span', 'cmap-tag minor-chg', 'minor'));
+        if (det && det.actIndex) tags.appendChild(el('span', 'cmap-tag act', 'ACT ' + det.actIndex));
+        if (det && det.role) tags.appendChild(el('span', 'cmap-tag', det.role));
+        tags.appendChild(el('span', 'cmap-tag ' + (pc.status || 'modified'), pc.status || 'modified'));
+        card.appendChild(tags);
+
+        // Mid-zoom concise preview.
+        var previewText = (det && det.preamble)
+          ? stripMarkdownLite(det.preamble)
+          : (pc.hunksCount ? pc.hunksCount + (pc.hunksCount === 1 ? ' changed section' : ' changed sections') : 'Changed in this review');
+        card.appendChild(el('div', 'cmap-p-preview', previewText));
+
+        // Street-level detail (zoom >= 1.32): exact same markdown preamble & clickable hunks!
+        var detailBox = el('div', 'cmap-p-detail');
+        var proseBox = el('div', 'cmap-p-prose prose');
+        if (det && det.preamble) renderMarkdown(proseBox, det.preamble);
+        else proseBox.appendChild(el('p', null, state.status === 'ready' ? 'No summary was generated for this file.' : 'Analysis running\\u2026'));
+        detailBox.appendChild(proseBox);
+
+        var hunks = (det && det.hunks) || [];
+        if (hunks.length) {
+          var hWrap = el('div', 'cmap-p-hunks');
+          for (var hi = 0; hi < Math.min(hunks.length, 3); hi++) {
+            (function addInlineHunk(idx, hunk) {
+              var hs = hunkStats(hunk);
+              var hb = el('button', 'cmap-hunk-btn');
+              hb.type = 'button';
+              hb.appendChild(el('span', 'hctx', hs.label));
+              var hst = el('span', 'hstat');
+              if (hs.adds) hst.appendChild(el('span', 'p', '+' + hs.adds));
+              if (hs.dels) hst.appendChild(el('span', 'm', '\\u2212' + hs.dels));
+              hb.appendChild(hst);
+              hb.addEventListener('click', function onInlineHunk(ev) {
+                ev.stopPropagation();
+                openFileFromMap(pc.path, idx);
+              });
+              hWrap.appendChild(hb);
+            })(hi, hunks[hi]);
+          }
+          detailBox.appendChild(hWrap);
+        }
+        if (hunks.length > 3) {
+          detailBox.appendChild(el('div', 'cmap-p-more', '+' + (hunks.length - 3) + ' more changed sections'));
+        }
+        card.appendChild(detailBox);
+
+        card.addEventListener('click', function onCClick(ev) {
+          if (didDrag) return;
+          if (ev.target && ev.target.closest && ev.target.closest('button')) return;
+          ev.stopPropagation();
+          selectItem({ kind: 'file', path: pc.path });
+        });
+        card.addEventListener('dblclick', function onCDbl(ev) {
+          if (ev.target && ev.target.closest && ev.target.closest('button')) return;
+          ev.stopPropagation();
+          selectItem({ kind: 'file', path: pc.path });
+          flyToBox(pc, 1.56);
+        });
+        card.addEventListener('pointerenter', function onCEnter() { applyHighlight({ kind: 'file', path: pc.path }); });
+        card.addEventListener('pointerleave', function onCLeave() { applyHighlight(mapView.selected); });
+        return card;
+      }
+
+      function stripMarkdownLite(text) {
+        return String(text || '')
+          .split(String.fromCharCode(96)).join('')
+          .replace(/\\*\\*([^*]+)\\*\\*/g, '$1')
+          .replace(/\\s+/g, ' ')
+          .trim();
+      }
+
+      // --- Camera, Pan, Cursor-Centered Zoom, Minimap & Highlighting ---
+      function clampZoom(z) {
+        return Math.max(MAP_MIN_ZOOM, Math.min(MAP_MAX_ZOOM, z));
+      }
+
+      function applyCamera() {
+        world.style.transform = 'translate3d(' + mapView.tx.toFixed(1) + 'px,' + mapView.ty.toFixed(1) + 'px,0) scale(' + mapView.zoom.toFixed(4) + ')';
+        var grid = Math.max(12, Math.min(48, 24 * mapView.zoom));
+        stage.style.backgroundSize = grid.toFixed(1) + 'px ' + grid.toFixed(1) + 'px';
+        stage.style.backgroundPosition = (mapView.tx % grid).toFixed(1) + 'px ' + (mapView.ty % grid).toFixed(1) + 'px';
+
+        var tier = mapView.zoom < MAP_MACRO_CUT ? 'macro' : (mapView.zoom >= MAP_DETAIL_CUT ? 'detail' : 'mid');
+        stage.classList.toggle('zoom-macro', tier === 'macro');
+        stage.classList.toggle('zoom-mid', tier === 'mid');
+        stage.classList.toggle('zoom-detail', tier === 'detail');
+        zPct.textContent = Math.round(mapView.zoom * 100) + '%';
+
+        var sw = stage.clientWidth || 800;
+        var sh = stage.clientHeight || 520;
+        var vx = -mapView.tx / mapView.zoom;
+        var vy = -mapView.ty / mapView.zoom;
+        var vw = sw / mapView.zoom;
+        var vh = sh / mapView.zoom;
+        var mx0 = Math.max(0, Math.min(layout.width - 20, vx));
+        var my0 = Math.max(0, Math.min(layout.height - 20, vy));
+        var mx1 = Math.max(mx0 + 20, Math.min(layout.width, vx + vw));
+        var my1 = Math.max(my0 + 20, Math.min(layout.height, vy + vh));
+        miniViewRect.setAttribute('x', String(mx0));
+        miniViewRect.setAttribute('y', String(my0));
+        miniViewRect.setAttribute('width', String(mx1 - mx0));
+        miniViewRect.setAttribute('height', String(my1 - my0));
+      }
+
+      function cancelAnim() {
+        if (mapView.animFrame) {
+          cancelAnimationFrame(mapView.animFrame);
+          mapView.animFrame = 0;
+        }
+      }
+
+      function animateTo(targetTx, targetTy, targetZoom) {
+        cancelAnim();
+        var z1 = clampZoom(targetZoom);
+        var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (reduced) {
+          mapView.tx = targetTx;
+          mapView.ty = targetTy;
+          mapView.zoom = z1;
+          applyCamera();
+          return;
+        }
+        var tx0 = mapView.tx;
+        var ty0 = mapView.ty;
+        var z0 = mapView.zoom;
+        var start = performance.now();
+        var dur = 240;
+        function step(now) {
+          var t = Math.min(1, (now - start) / dur);
+          var ease = 1 - Math.pow(1 - t, 3);
+          mapView.tx = tx0 + (targetTx - tx0) * ease;
+          mapView.ty = ty0 + (targetTy - ty0) * ease;
+          mapView.zoom = z0 + (z1 - z0) * ease;
+          applyCamera();
+          if (t < 1) mapView.animFrame = requestAnimationFrame(step);
+          else mapView.animFrame = 0;
+        }
+        mapView.animFrame = requestAnimationFrame(step);
+      }
+
+      function flyToRect(rect, maxZoom, instant) {
+        var sw = stage.clientWidth || 860;
+        var sh = stage.clientHeight || 520;
+        var pad = 44;
+        var rw = Math.max(100, rect.maxX - rect.minX);
+        var rh = Math.max(80, rect.maxY - rect.minY);
+        var z = clampZoom(Math.min((sw - pad * 2) / rw, (sh - pad * 2) / rh, maxZoom || 1.25));
+        var cx = (rect.minX + rect.maxX) / 2;
+        var cy = (rect.minY + rect.maxY) / 2;
+        var tx = sw / 2 - cx * z;
+        var ty = sh / 2 - cy * z;
+        if (instant) {
+          cancelAnim();
+          mapView.tx = tx;
+          mapView.ty = ty;
+          mapView.zoom = z;
+          applyCamera();
+        } else {
+          animateTo(tx, ty, z);
+        }
+      }
+
+      function flyToBox(box, minZoom) {
+        var sw = stage.clientWidth || 860;
+        var sh = stage.clientHeight || 520;
+        var drawerOffset = mapView.selected && sw > 720 ? 150 : 0;
+        var fitZ = Math.min((sw - drawerOffset - 120) / Math.max(140, box.w), (sh - 120) / Math.max(80, box.h));
+        var z = clampZoom(Math.max(minZoom || 1.0, Math.min(fitZ, 1.75)));
+        var cx = box.x + box.w / 2;
+        var cy = box.y + box.h / 2;
+        var tx = (sw + drawerOffset) / 2 - cx * z;
+        var ty = sh / 2 - cy * z;
+        animateTo(tx, ty, z);
+      }
+
+      function zoomAt(clientX, clientY, nextZoom, animate) {
+        var rect = stage.getBoundingClientRect();
+        var cx = clientX - rect.left;
+        var cy = clientY - rect.top;
+        var z1 = clampZoom(nextZoom);
+        var ratio = z1 / mapView.zoom;
+        var tx = cx - (cx - mapView.tx) * ratio;
+        var ty = cy - (cy - mapView.ty) * ratio;
+        if (animate) animateTo(tx, ty, z1);
+        else {
+          cancelAnim();
+          mapView.tx = tx;
+          mapView.ty = ty;
+          mapView.zoom = z1;
+          applyCamera();
+        }
+      }
+
+      function zoomAtStageCenter(nextZoom, animate) {
+        var rect = stage.getBoundingClientRect();
+        zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, nextZoom, animate);
+      }
+
+      function selectItem(item) {
+        mapView.selected = item;
+        applyHighlight(item);
+        renderDrawer();
+      }
+
+      function applyHighlight(focus) {
+        for (var mk in modEls) {
+          modEls[mk].classList.remove('selected', 'dim');
+        }
+        for (var pk in parcelEls) {
+          parcelEls[pk].classList.remove('selected', 'neighbor');
+        }
+        for (var i = 0; i < modEdgeEls.length; i++) {
+          modEdgeEls[i].el.classList.remove('hi', 'dim');
+        }
+        for (var j = 0; j < fileEdgeEls.length; j++) {
+          fileEdgeEls[j].el.classList.remove('hi');
+        }
+        if (mapView.selected) {
+          if (mapView.selected.kind === 'module' && modEls[mapView.selected.id]) {
+            modEls[mapView.selected.id].classList.add('selected');
+          }
+          if (mapView.selected.kind === 'file' && parcelEls[mapView.selected.path]) {
+            parcelEls[mapView.selected.path].classList.add('selected');
+          }
+        }
+        if (!focus) return;
+        if (focus.kind === 'module') {
+          var neighbors = {};
+          neighbors[focus.id] = true;
+          for (var e = 0; e < modEdgeEls.length; e++) {
+            var ed = modEdgeEls[e].edge;
+            var hit = ed.from === focus.id || ed.to === focus.id;
+            modEdgeEls[e].el.classList.toggle('hi', hit);
+            modEdgeEls[e].el.classList.toggle('dim', !hit);
+            if (hit) { neighbors[ed.from] = true; neighbors[ed.to] = true; }
+          }
+          for (var mid in modEls) {
+            if (!neighbors[mid]) modEls[mid].classList.add('dim');
+          }
+        } else if (focus.kind === 'file') {
+          var hitFiles = {};
+          hitFiles[focus.path] = true;
+          for (var f = 0; f < fileEdgeEls.length; f++) {
+            var feItem = fileEdgeEls[f].edge;
+            var fHit = feItem.from === focus.path || feItem.to === focus.path;
+            fileEdgeEls[f].el.classList.toggle('hi', fHit);
+            if (fHit) { hitFiles[feItem.from] = true; hitFiles[feItem.to] = true; }
+          }
+          for (var fp in hitFiles) {
+            if (fp !== focus.path && parcelEls[fp]) parcelEls[fp].classList.add('neighbor');
+          }
+        }
+      }
+
+      // Pointer drag panning on the stage.
+      var panning = false;
+      var didDrag = false;
+      var panStartX = 0;
+      var panStartY = 0;
+      var camStartX = 0;
+      var camStartY = 0;
+
+      stage.addEventListener('pointerdown', function onPanDown(ev) {
+        if (ev.button !== 0) return;
+        if (ev.target && ev.target.closest && ev.target.closest('button, input')) return;
+        cancelAnim();
+        panning = true;
+        didDrag = false;
+        panStartX = ev.clientX;
+        panStartY = ev.clientY;
+        camStartX = mapView.tx;
+        camStartY = mapView.ty;
+        stage.setPointerCapture(ev.pointerId);
+      });
+      stage.addEventListener('pointermove', function onPanMove(ev) {
+        if (!panning) return;
+        var dx = ev.clientX - panStartX;
+        var dy = ev.clientY - panStartY;
+        if (!didDrag && Math.abs(dx) + Math.abs(dy) > 4) {
+          didDrag = true;
+          stage.classList.add('dragging');
+        }
+        if (didDrag) {
+          mapView.tx = camStartX + dx;
+          mapView.ty = camStartY + dy;
+          applyCamera();
+        }
+      });
+      function endPan(ev) {
+        if (!panning) return;
+        panning = false;
+        stage.classList.remove('dragging');
+        try { stage.releasePointerCapture(ev.pointerId); } catch (e) {}
+        setTimeout(function clearDrag() { didDrag = false; }, 0);
+      }
+      stage.addEventListener('pointerup', endPan);
+      stage.addEventListener('pointercancel', endPan);
+      stage.addEventListener('click', function onStageBgClick(ev) {
+        if (didDrag) return;
+        resultsBox.hidden = true;
+        if (ev.target === stage || ev.target === world || ev.target === modSvg) {
+          if (mapView.selected) selectItem(null);
+        }
+      });
+
+      // Smooth cursor-anchored scroll wheel / trackpad pinch zoom.
+      stage.addEventListener('wheel', function onWheel(ev) {
+        // Allow scrolling inside an open street-level preamble when zoomed in.
+        if (ev.target && ev.target.closest && !ev.ctrlKey) {
+          var scroller = ev.target.closest('.cmap-p-prose');
+          if (scroller && scroller.scrollHeight > scroller.clientHeight + 2) return;
+        }
+        ev.preventDefault();
+        var factor = Math.exp(-ev.deltaY * (ev.ctrlKey ? 0.008 : 0.0022));
+        zoomAt(ev.clientX, ev.clientY, mapView.zoom * factor, false);
+      }, { passive: false });
+
+      // Interactive minimap click & drag to pan camera.
+      var miniDragging = false;
+      function panFromMini(ev) {
+        var r = miniWrap.getBoundingClientRect();
+        var scale = Math.min(r.width / layout.width, r.height / layout.height);
+        var offX = (r.width - layout.width * scale) / 2;
+        var offY = (r.height - layout.height * scale) / 2;
+        var wx = (ev.clientX - r.left - offX) / scale;
+        var wy = (ev.clientY - r.top - offY) / scale;
+        var sw = stage.clientWidth || 860;
+        var sh = stage.clientHeight || 520;
+        cancelAnim();
+        mapView.tx = sw / 2 - wx * mapView.zoom;
+        mapView.ty = sh / 2 - wy * mapView.zoom;
+        applyCamera();
+      }
+      miniWrap.addEventListener('pointerdown', function onMiniDown(ev) {
+        ev.stopPropagation();
+        miniDragging = true;
+        miniWrap.setPointerCapture(ev.pointerId);
+        panFromMini(ev);
+      });
+      miniWrap.addEventListener('pointermove', function onMiniMove(ev) {
+        if (!miniDragging) return;
+        panFromMini(ev);
+      });
+      miniWrap.addEventListener('pointerup', function onMiniUp(ev) {
+        miniDragging = false;
+        try { miniWrap.releasePointerCapture(ev.pointerId); } catch (e) {}
+      });
+
+      // Fit initial camera after layout mounts so stage.clientWidth is live.
+      requestAnimationFrame(function initCamera() {
+        if (!stage.isConnected) return;
+        if (!mapView.fitted) {
+          mapView.fitted = true;
+          flyToRect(layout.bounds, 1.05, true);
+        } else {
+          applyCamera();
+        }
+        applyHighlight(mapView.selected);
+        renderDrawer();
+      });
+
+      return shell;
     }
 
     // Prose, so it goes through the same small markdown renderer the answers
@@ -4470,6 +6300,7 @@ ${DARK_PALETTE}
             // did nothing. Say so, and offer the other thing instead.
             if (data && data.unchanged) return offerReanalysis();
             resetQa();
+            resetMap();
             // Re-read in place rather than reloading the document. A reload
             // throws away the conversation, the scroll and which files were
             // open, to arrive at the same page with a newer diff in it.
@@ -4530,6 +6361,7 @@ ${DARK_PALETTE}
           // page memoised describes a review that no longer exists.
           ask = createAskState();
           resetQa();
+          resetMap();
           renderChat();
           return loadReview(state.session);
         })
@@ -4945,7 +6777,9 @@ ${DARK_PALETTE}
       var box = el('div', 'dlines');
       for (var h = 0; h < file.hunks.length; h++) {
         var hunk = file.hunks[h];
-        box.appendChild(el('div', 'dhunk', hunk.header));
+        var dh = el('div', 'dhunk', hunk.header);
+        dh.dataset.hunkIndex = String(h);
+        box.appendChild(dh);
         for (var i = 0; i < hunk.lines.length; i++) {
           var line = hunk.lines[i];
           box.appendChild(renderLine(file, line));
@@ -5489,7 +7323,7 @@ ${DARK_PALETTE}
       return null;
     }
 
-    function jumpToFile(path) {
+    function jumpToFile(path, hunkIndex) {
       // Only when it is not already showing — under the launcher's
       // expand-everything setting most files are, and re-rendering to open
       // one that is open throws away the scroll this is about to set.
@@ -5499,10 +7333,26 @@ ${DARK_PALETTE}
       }
       var card = cardFor(path);
       if (!card) return;
-      // The bar sticks at the top edge, so putting the card's top there is
-      // exactly where a reader expects it to land.
-      var top = card.getBoundingClientRect().top + window.scrollY;
-      window.scrollTo({ top: Math.max(0, top - 4), behavior: 'auto' });
+      var target = card;
+      var offset = 4;
+      if (typeof hunkIndex === 'number') {
+        var hunks = card.querySelectorAll('.dhunk');
+        for (var i = 0; i < hunks.length; i++) {
+          if (hunks[i].dataset.hunkIndex === String(hunkIndex)) {
+            target = hunks[i];
+            var bar = card.querySelector('.fbar');
+            offset = (bar ? bar.offsetHeight : 36) + 8;
+            break;
+          }
+        }
+      }
+      // The bar sticks at the top edge, so putting the card's top (or the
+      // targeted hunk just below the sticky bar) is where a reader expects to land.
+      var top = target.getBoundingClientRect().top + window.scrollY;
+      window.scrollTo({ top: Math.max(0, top - offset), behavior: 'auto' });
+      target.classList.remove('jump-flash');
+      void target.offsetWidth;
+      target.classList.add('jump-flash');
       setActive(path);
     }
 
@@ -6409,6 +8259,7 @@ ${DARK_PALETTE}
       // status poll moves to a newer review while this one is still drawn.
       state.diffAt = diff.createdAt || got.createdAt || null;
       render();
+      loadMap();
       // After the first paint, not before it: the ticks are one more round
       // trip, and a diff that waits on GitHub to draw is a diff that is slower
       // than it was before any of this existed.

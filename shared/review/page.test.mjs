@@ -45,7 +45,7 @@ test('no bare backtick inside the page literal', () => {
 // An interpolation added by accident in CSS or JavaScript runs at module load and disappears into the page.
 const MEANT = [
   '${DARK_PALETTE}', '${DICTATION_SCRIPT}', '${tokenizeLine.toString()}', '${createAskState.toString()}',
-  '${layoutDiagram.toString()}', '${MAX_ASK_DEPTH}', '${MAX_USER_QUESTION}',
+  '${layoutDiagram.toString()}', '${layoutCodebaseMap.toString()}', '${MAX_ASK_DEPTH}', '${MAX_USER_QUESTION}',
 ];
 
 test('the only interpolations are the ones the file means', () => {

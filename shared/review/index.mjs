@@ -60,6 +60,7 @@ import {
   snapshotTreeish, makeSnapshot, removeSnapshot, validateUserQuestion,
 } from './qa.mjs';
 import { enqueuePr, fetchMergeReadiness, mergeBlocker, mergePr } from './merge.mjs';
+import { buildCodebaseMap } from './codebaseMap.mjs';
 import { pullRequestsFor, schedulePrRefresh } from '../prStatus.mjs';
 
 // Set by install.sh's throwaway verify instance, which boots the server purely
@@ -174,6 +175,8 @@ let qaGen = 0;
  *  a new question that happens to share its id. Cleared wherever qaRuns is, so an answer still on its way
  *  after a discard or re-review writes nothing. */
 const qaAsks = new Map();
+/** session -> {key, promise} cached whole-codebase module map per diff take. */
+const mapCache = new Map();
 
 /**
  * session -> the take of its review in progress. One at a time per session,
@@ -877,6 +880,7 @@ async function removeReviewSessionNow({ ctx, sessionName }) {
   progressBySession.delete(sessionName);
   qaRuns.delete(sessionName);
   qaAsks.delete(sessionName);
+  mapCache.delete(sessionName);
   // The ref holding the Q&A's tree goes with the review, whoever owns the worktree.
   if (review.kind === 'worktree') {
     const released = await releaseTree({ worktreePath: review.worktree, sessionName });
@@ -1051,6 +1055,10 @@ export async function handleReviewRequest(req, res, ctx) {
   }
   if (req.method === 'GET' && section === '/diff') {
     handleDiff(res, ctx, session);
+    return true;
+  }
+  if (req.method === 'GET' && section === '/map') {
+    await handleMap(res, ctx, session);
     return true;
   }
   if (req.method === 'POST' && section === '/analyze') {
@@ -1318,6 +1326,7 @@ function handleDiscardReview(res, ctx, session) {
   progressBySession.delete(session);
   qaRuns.delete(session);
   qaAsks.delete(session);
+  mapCache.delete(session);
   discardReviewWork(session);
   log('review.discarded', { reqId, session, jobsKilled: killed, kind: review?.kind });
   json(res, 200, { ok: true });
@@ -1660,6 +1669,7 @@ async function takeWorktreeReview(res, ctx, session, { follow = false } = {}) {
   progressBySession.delete(session);
   qaRuns.delete(session);
   qaAsks.delete(session);
+  mapCache.delete(session);
   beginAnalysis({ ctx, session, review: made.review });
   // The Q&A alongside it, for this diff: what the reader opens the tab to find should be written by then.
   startQaAfterTake({ ctx, session, review: made.review });
@@ -1712,6 +1722,7 @@ async function takeRefreshReview(res, ctx, session) {
   progressBySession.delete(session);
   qaRuns.delete(session);
   qaAsks.delete(session);
+  mapCache.delete(session);
   beginAnalysis({ ctx, session, review: done.review });
   startQaAfterTake({ ctx, session, review: done.review });
 
@@ -1889,6 +1900,32 @@ function handleDiff(res, ctx, session) {
   return ctx.json(res, 200, {
     ok: true, session, ...diff, createdAt: diff.createdAt ?? readSessionReview(session)?.createdAt ?? null,
   });
+}
+
+async function handleMap(res, ctx, session) {
+  const review = readSessionReview(session);
+  if (!review) return ctx.json(res, 404, { ok: false, error: 'no review for this session' });
+  const diff = readDiff(session);
+  const key = `${review.createdAt || ''}:${review.headSha || ''}`;
+  let cached = mapCache.get(session);
+  if (!cached || cached.key !== key) {
+    const promise = buildCodebaseMap({
+      rootDir: review.worktree,
+      diffFiles: diff?.files || [],
+    });
+    cached = { key, promise };
+    mapCache.set(session, cached);
+    promise.catch(() => {
+      if (mapCache.get(session) === cached) mapCache.delete(session);
+    });
+  }
+  try {
+    const map = await cached.promise;
+    return ctx.json(res, 200, { ok: true, session, ...map });
+  } catch (err) {
+    ctx.log('review.map_failed', { reqId: ctx.reqId, session, error: err?.message });
+    return ctx.json(res, 500, { ok: false, error: err?.message || 'could not build codebase map' });
+  }
 }
 
 async function handleAnalyze(res, ctx, session) {
