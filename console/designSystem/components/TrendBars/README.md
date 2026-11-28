@@ -22,7 +22,7 @@ Analytics page (`console/public/analytics.js`) uses them under its figures.
 - Never two scales on one chart: a second measure is a second chart.
 
 On Analytics a chart may take a colour of its own (a day-by-day bar chart of pull requests opened, one of sessions started) (still never a status colour or orange): pull requests
-through Woodshed in `slate` or violet and without in `proj-teal`. The page's figures carry a 2px top rule, an icon and a
+through Woodshed in `slate` and without in `proj-teal`. The page's figures carry a 2px top rule, an icon and a
 value in one of the project colours; tier pills are green, amber and red; lines added are `add`, removed `del`.
 
 Also on Analytics, in the same box as the bars:
@@ -44,5 +44,5 @@ Also on Analytics, in the same box as the bars:
 - **Lines**: `+added` in `add` and `−removed` in `del`, in mono, bold.
 
 - **By person table**: the merge risk column is the risk bar's shape at 8px with `N low`, `N med`, `N high` in words under it
-  (`high` in `bad`, bold, when any); a dash means none of their pull requests was reviewed. A column that shows two numbers
-  with a slash says what they are in a `meta` sub-header under its name (`opened / merged`, `Woodshed / without`), and in its tooltip.
+  (`high` in `bad`, bold, when any; `meta`, or `sub` on a picked row); a dash means none of their pull requests was reviewed. A column that shows two numbers
+  with a slash says what they are in a `sub` sub-header (`meta` is under 4.5:1 on the header's `stopped`) under its name (`opened / merged`, `Woodshed / without`), and in its tooltip.

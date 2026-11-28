@@ -1430,7 +1430,7 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 .analytics-table .quiet, .analytics-page .quiet { color: var(--meta); }
 .analytics-table tr.is-picked td { background: var(--slate-tint); }
 /* meta is 4.1:1 on slate-tint: the picked row's quiet text is sub, 4.5:1 or better. */
-.analytics-table tr.is-picked .quiet { color: var(--sub); }
+.analytics-table tr.is-picked .quiet, .analytics-table tr.is-picked .risk-mix-counts { color: var(--sub); }
 .analytics-table .analytics-title { min-width: 260px; }
 .analytics-table .link-btn { padding: 0; border: 0; background: none; color: var(--slate); font: inherit; cursor: pointer; text-align: left; }
 .analytics-table .link-btn:hover { text-decoration: underline; }
@@ -1466,11 +1466,11 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 .trend-tip-row { display: flex; align-items: center; }
 .trend-tip-row.is-total { margin-top: 2px; padding-top: 3px; border-top: 1px solid currentColor; opacity: .85; }
 .trend-tip .trend-key { margin-right: 6px; box-shadow: 0 0 0 1px var(--ground); }
-.th-sub { display: block; font-size: 10.5px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--meta); white-space: nowrap; }
+.th-sub { display: block; font-size: 10.5px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--sub); white-space: nowrap; }
 .risk-mix { display: flex; flex-direction: column; gap: 3px; min-width: 120px; }
 .risk-mix .risk-bar { height: 8px; border-radius: 4px; }
 .risk-mix-counts { display: flex; gap: 8px; font-size: 11.5px; color: var(--meta); white-space: nowrap; }
-.risk-mix-counts .is-high { color: var(--bad); font-weight: 600; }
+.analytics-table tr.is-picked .risk-mix-counts .is-high, .risk-mix-counts .is-high { color: var(--bad); font-weight: 600; }
 .sign-in-list { display: flex; flex-wrap: wrap; gap: 4px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .slack-line { display: flex; align-items: center; gap: 8px; margin-top: 2px; }

@@ -176,7 +176,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
       const col = h('div', {
         class: 'trend-col', tabindex: '0',
         'aria-label': `${unit} ${day(b.start)}: ${series.map((s) => `${count(b, s)} ${s.word}`).join(', ')}${series.length > 1 ? `, ${totals[i]} in all` : ''}`,
-        onmouseenter: () => show(col, b, totals[i], i), onmouseleave: () => hide(col), onfocus: () => show(col, b, totals[i], i), onblur: () => hide(col),
+        onmouseenter: () => show(col, b, totals[i], i), onmouseleave: () => { if (document.activeElement !== col) hide(col); }, onfocus: () => show(col, b, totals[i], i), onblur: () => hide(col),
       }, series.map((s) => count(b, s) > 0 && h('span', { class: `trend-seg ${s.cls}`, style: `height: ${(count(b, s) / top) * 100}%` })));
       return col;
     });
