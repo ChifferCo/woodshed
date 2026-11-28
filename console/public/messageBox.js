@@ -77,8 +77,7 @@
     const mine = () => files.get(sessionId) ?? [];
 
     function fit() {
-      field.style.height = 'auto';
-      field.style.height = `${Math.min(field.scrollHeight, MAX_FIELD_PX)}px`;
+      W.fitField(field, MAX_FIELD_PX);
     }
 
     function draw() {

@@ -190,8 +190,10 @@
     }
 
     function fit() {
-      field.style.height = 'auto';
-      field.style.height = `${Math.min(field.scrollHeight, 240)}px`;
+      // A thread at its very foot stays there as the box grows over it, so its last line is not hidden; one the reader scrolled up a little keeps its place.
+      const stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 8;
+      W.fitField(field, 240, [scroller]);
+      if (stick) scroller.scrollTop = scroller.scrollHeight;
     }
 
     // Enter sends and Shift+Enter makes a new line, on a keyboard; a phone's Return is a new line, and its Send sends.
