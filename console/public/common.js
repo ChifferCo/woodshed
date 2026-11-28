@@ -77,6 +77,21 @@
     }).catch(() => {});
   });
 
+  // Grows a textarea to its text. Collapsing it to measure shrinks the layout for an instant, which clamps the scroll of
+  // everything around it (the chat thread, the page) and leaves it at the bottom after every keystroke: so the scrolls
+  // are put back, and nothing is written when the height did not change.
+  function fitField(field, max) {
+    const spots = [];
+    for (let n = field.parentElement; n; n = n.parentElement) if (n.scrollTop) spots.push([n, n.scrollTop]);
+    const page = [window.scrollX, window.scrollY];
+    const before = field.style.height;
+    field.style.height = 'auto';
+    const next = `${Math.min(field.scrollHeight, max)}px`;
+    field.style.height = next === before ? before : next;
+    for (const [n, top] of spots) if (n.scrollTop !== top) n.scrollTop = top;
+    if (window.scrollY !== page[1]) window.scrollTo(page[0], page[1]);
+  }
+
   function h(tag, attrs, ...children) {
     const el = document.createElement(tag);
     for (const [key, value] of Object.entries(attrs || {})) {
@@ -2182,6 +2197,7 @@
   }
 
   window.Woodshed = {
+    fitField,
     invite, sessionTab, forgetSignedIn, forgetOtherLogins, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, sessionsAnswer, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, askChoice, pickedLogins, byQuery, peoplePicker,

@@ -48,7 +48,7 @@ function load() {
     for (const c of children.flat(Infinity)) if (c !== null && c !== undefined && c !== false) el.append(c);
     return el;
   };
-  const W = { h, agentOf: () => 'claude', agentTitle: () => 'Claude', shell: { toast() {} } };
+  const W = { h, agentOf: () => 'claude', agentTitle: () => 'Claude', shell: { toast() {} }, fitField() {} };
   const storage = { getItem: () => null, setItem() {}, removeItem() {} };
   const window = { Woodshed: W, WoodshedChatThread: thread, matchMedia: () => ({ matches: false }), sessionStorage: storage };
   // Nothing is read from the session: the line is drawn from what the console said alone, as before the first read.

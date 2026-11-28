@@ -190,8 +190,7 @@
     }
 
     function fit() {
-      field.style.height = 'auto';
-      field.style.height = `${Math.min(field.scrollHeight, 240)}px`;
+      W.fitField(field, 240);
     }
 
     // Enter sends and Shift+Enter makes a new line, on a keyboard; a phone's Return is a new line, and its Send sends.
