@@ -513,7 +513,8 @@ export function layoutCodebaseMap(map, detailsByPath) {
       y += tileRows * TILE_H + Math.max(0, tileRows - 1) * TILE_GAP;
     }
 
-    var totalH = Math.max(92, y + PAD_BOTTOM);
+    var minH = rm.summary ? 136 : 96;
+    var totalH = Math.max(minH, y + PAD_BOTTOM);
     return {
       id: rm.id,
       label: rm.label || rm.id,

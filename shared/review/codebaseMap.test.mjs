@@ -115,3 +115,66 @@ test('buildCodebaseMap extracts module summaries from README.md and entrypoint c
   assert.match(session.summary, /everything a session needs/);
   assert.equal(worker.summary, 'Runs background webhook jobs with retries.');
 });
+
+test('buildCodebaseMap refuses symlinks and symlinked parent directories outside the worktree', async (t) => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-cmap-outside-'));
+  const sentinel = 'OUTSIDE_WORKTREE_SENTINEL_948271';
+  fs.writeFileSync(path.join(outside, 'secret.md'), `# Private\n\n${sentinel}\n`, 'utf8');
+  fs.writeFileSync(path.join(outside, 'README.md'), `# Escaped dir\n\n${sentinel}\n`, 'utf8');
+
+  const dir = makeTempRepo({
+    'docs/guide.md': '# Guide\n',
+    'src/ok/README.md': '# Webhooks\n\nDelivers signed webhook events safely.\n',
+    'src/ok/index.mjs': 'export const ok = true;\n',
+  });
+  t.after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+
+  // Tracked symlinked README pointing outside the checkout.
+  fs.symlinkSync(path.join(outside, 'secret.md'), path.join(dir, 'docs', 'README.md'));
+  // Tracked symlinked parent directory pointing outside the checkout.
+  fs.symlinkSync(outside, path.join(dir, 'linked'));
+  execFileSync('git', [...AUTHOR, '-C', dir, 'add', 'docs/README.md', 'linked']);
+  execFileSync('git', [...AUTHOR, '-C', dir, 'commit', '-q', '-m', 'add symlinks']);
+
+  const map = await buildCodebaseMap({
+    rootDir: dir,
+    diffFiles: [
+      { path: 'docs/README.md', status: 'added', additions: 1, deletions: 0, hunks: [{}] },
+      { path: 'linked/README.md', status: 'modified', additions: 1, deletions: 0, hunks: [{}] },
+    ],
+  });
+
+  const serialized = JSON.stringify(map);
+  assert.equal(serialized.includes(sentinel), false, 'outside-worktree symlink text must never appear in map output');
+
+  const okMod = map.modules.find((m) => m.id === 'src/ok');
+  assert.ok(okMod);
+  assert.match(okMod.summary, /Delivers signed webhook events safely/);
+});
+
+test('buildCodebaseMap preserves every changed file when diff exceeds maxFiles', async (t) => {
+  const dir = makeTempRepo({
+    'src/a.mjs': 'export const a = 1;\n',
+    'src/b.mjs': 'export const b = 2;\n',
+    'src/c.mjs': 'export const c = 3;\n',
+    'src/d.mjs': 'export const d = 4;\n',
+    'src/u1.mjs': 'export const u1 = 1;\n',
+    'src/u2.mjs': 'export const u2 = 2;\n',
+  });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const diffFiles = [
+    { path: 'src/a.mjs', status: 'modified', additions: 2, deletions: 1, hunks: [{}] },
+    { path: 'src/b.mjs', status: 'modified', additions: 2, deletions: 1, hunks: [{}] },
+    { path: 'src/c.mjs', status: 'modified', additions: 2, deletions: 1, hunks: [{}] },
+    { path: 'src/d.mjs', status: 'modified', additions: 2, deletions: 1, hunks: [{}] },
+  ];
+
+  const map = await buildCodebaseMap({ rootDir: dir, diffFiles, maxFiles: 3 });
+  const paths = map.modules.flatMap((m) => m.files.map((f) => f.path)).sort();
+  assert.equal(map.truncated, true);
+  assert.deepEqual(paths, ['src/a.mjs', 'src/b.mjs', 'src/c.mjs', 'src/d.mjs']);
+});

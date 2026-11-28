@@ -143,26 +143,26 @@ re-analyse — and everything before them is about keeping three things in step.
 ## Shape
 
 ```
-index.mjs      the route table, the async orchestration, the startup sweep
-target.mjs     what the "PR or branch" field is allowed to become
-worktree.mjs   creating and destroying the session's worktree at a head,
-               and diffing a session's own worktree against the default branch
-page.mjs       the /review document (CSS + client script), one template literal
-askState.mjs   the ask panel's state model — also runs in the browser, see below
-diff.mjs       parseUnifiedDiff + intraLineDiff — hand-written, no deps
-highlight.mjs  tokenizeLine — also runs in the browser, see below
-codebaseMap.mjs whole-codebase module & import scanner for GET /reviews/<session>/map
-codebaseMapLayout.mjs 2D spatial layout for the interactive codebase map — also runs in the browser
-analyze.mjs    schema, prompt, NDJSON reducer, reconciliation
-explain.mjs    prompt, validation, answer extraction
-chat.mjs       the conversation about the change as a whole: prompt, history bound
-aiReviews.mjs  the AI reviews on the pull request (Claude Code, Codex) read into verdicts and findings
-prChecks.mjs   the merge risk and QA checks on the pull request's head commit, for the AI reviews tab
-qa.mjs         the Q&A tab: questions and answers generated from the reviewed code
-jobs.mjs       `claude -p` child lifecycle, concurrency, orphan reaping
-store.mjs      on-disk layout under $REVIEWS_DIR, one directory per session
-github.mjs     the `gh` CLI
-exec.mjs       promise-wrapped spawn
+index.mjs              the route table, the async orchestration, the startup sweep
+target.mjs             what the "PR or branch" field is allowed to become
+worktree.mjs           creating and destroying the session's worktree at a head,
+                       and diffing a session's own worktree against the default branch
+page.mjs               the /review document (CSS + client script), one template literal
+askState.mjs           the ask panel's state model — also runs in the browser, see below
+diff.mjs               parseUnifiedDiff + intraLineDiff — hand-written, no deps
+highlight.mjs          tokenizeLine — also runs in the browser, see below
+codebaseMap.mjs        whole-codebase module & import scanner for GET /reviews/<session>/map
+codebaseMapLayout.mjs  2D spatial layout for the interactive codebase map — also runs in the browser
+analyze.mjs            schema, prompt, NDJSON reducer, reconciliation
+explain.mjs            prompt, validation, answer extraction
+chat.mjs               the conversation about the change as a whole: prompt, history bound
+aiReviews.mjs          the AI reviews on the pull request (Claude Code, Codex) read into verdicts and findings
+prChecks.mjs           the merge risk and QA checks on the pull request's head commit, for the AI reviews tab
+qa.mjs                 the Q&A tab: questions and answers generated from the reviewed code
+jobs.mjs               `claude -p` child lifecycle, concurrency, orphan reaping
+store.mjs              on-disk layout under $REVIEWS_DIR, one directory per session
+github.mjs             the `gh` CLI
+exec.mjs               promise-wrapped spawn
 ```
 
 ## Six rules

@@ -8,6 +8,7 @@
 //
 // Plain Node 22, zero dependencies, async throughout, and no shell.
 
+import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -115,20 +116,32 @@ async function walkFilesFallback(rootDir, prefix, out) {
 }
 
 /**
- * Read the head of a text file for line-count estimation and import extraction.
- * Returns null if unreadable or binary.
+ * Read the head of a regular text file strictly within `realRoot` for
+ * line-count estimation and import extraction. Symlinks (including symlinked
+ * parent directories) and non-regular files (e.g. FIFOs) are skipped so the
+ * scanner never reads outside the reviewed checkout or blocks on a special file.
+ * Returns null if skipped, unreadable, or binary.
  */
-async function readSnippet(rootDir, rel) {
+async function readSnippet(rootDir, rel, realRoot) {
   const ext = path.extname(rel).toLowerCase();
   const base = path.basename(rel);
   if (SKIP_BASENAMES.has(base)) return { lines: 0, text: '' };
   if (ext && !TEXT_EXTS.has(ext) && base !== 'Dockerfile' && base !== 'Makefile') {
     return null;
   }
-  const full = path.join(rootDir, rel);
+  if (!realRoot) return null;
+  const full = path.resolve(rootDir, rel);
   let handle;
   try {
-    handle = await fs.open(full, 'r');
+    const lst = await fs.lstat(full);
+    if (!lst.isFile() || lst.isSymbolicLink()) return null;
+    const realFull = await fs.realpath(full);
+    const rootPrefix = realRoot.endsWith(path.sep) ? realRoot : `${realRoot}${path.sep}`;
+    if (!realFull.startsWith(rootPrefix)) return null;
+    const flags = fsConstants.O_RDONLY
+      | (fsConstants.O_NOFOLLOW || 0)
+      | (fsConstants.O_NONBLOCK || 0);
+    handle = await fs.open(realFull, flags);
     const stat = await handle.stat();
     if (!stat.isFile()) return null;
     const toRead = Math.min(stat.size, MAX_PARSE_BYTES);
@@ -514,13 +527,14 @@ async function mapWithConcurrency(items, limit, fn) {
  *   truncated: boolean,
  * }>}
  */
-export async function buildCodebaseMap({ rootDir, diffFiles = [] }) {
+export async function buildCodebaseMap({ rootDir, diffFiles = [], maxFiles = MAX_FILES }) {
   const diffByPath = new Map();
   for (const df of diffFiles) {
     if (!df || typeof df.path !== 'string') continue;
     diffByPath.set(normalizePath(df.path), df);
   }
 
+  const realRoot = rootDir ? await fs.realpath(rootDir).catch(() => null) : null;
   const repoFiles = await listRepoFiles(rootDir);
   const allSet = new Set(repoFiles);
   // Deleted files (and any diff file missing from ls-files) always belong on the map.
@@ -531,20 +545,23 @@ export async function buildCodebaseMap({ rootDir, diffFiles = [] }) {
   let truncated = false;
   let selectedPaths = allPaths;
 
-  if (allPaths.length > MAX_FILES) {
-    truncated = true;
-    // Always include every changed file, then files sharing their directories,
-    // then the rest alphabetically up to MAX_FILES.
-    const changedDirs = new Set([...diffByPath.keys()].map((p) => path.posix.dirname(p)));
-    selectedPaths = allPaths
-      .slice()
+  if (allPaths.length > maxFiles) {
+    // Always preserve every changed path; apply the sampling budget only to unchanged files,
+    // prioritizing unchanged files sharing a directory with a changed file.
+    const changedPaths = [...diffByPath.keys()].sort((a, b) => a.localeCompare(b));
+    const unchangedBudget = Math.max(0, maxFiles - changedPaths.length);
+    const changedDirs = new Set(changedPaths.map((p) => path.posix.dirname(p)));
+    const unchangedPaths = allPaths
+      .filter((p) => !diffByPath.has(p))
       .sort((a, b) => {
-        const ac = diffByPath.has(a) ? 0 : (changedDirs.has(path.posix.dirname(a)) ? 1 : 2);
-        const bc = diffByPath.has(b) ? 0 : (changedDirs.has(path.posix.dirname(b)) ? 1 : 2);
+        const ac = changedDirs.has(path.posix.dirname(a)) ? 0 : 1;
+        const bc = changedDirs.has(path.posix.dirname(b)) ? 0 : 1;
         if (ac !== bc) return ac - bc;
         return a.localeCompare(b);
-      })
-      .slice(0, MAX_FILES);
+      });
+    const keptUnchanged = unchangedPaths.slice(0, unchangedBudget);
+    truncated = keptUnchanged.length < unchangedPaths.length;
+    selectedPaths = [...changedPaths, ...keptUnchanged];
   }
 
   const fileSet = new Set(selectedPaths);
@@ -560,7 +577,7 @@ export async function buildCodebaseMap({ rootDir, diffFiles = [] }) {
   const scanned = await mapWithConcurrency(selectedPaths, READ_CONCURRENCY, async (rel) => {
     const df = diffByPath.get(rel);
     const isDeleted = df?.status === 'deleted';
-    const snippet = (!isDeleted && rootDir) ? await readSnippet(rootDir, rel) : null;
+    const snippet = (!isDeleted && rootDir && realRoot) ? await readSnippet(rootDir, rel, realRoot) : null;
     const imports = snippet ? extractImports(rel, snippet.text) : [];
     const lines = snippet ? snippet.lines : (df ? df.additions + df.deletions : 0);
     return {
