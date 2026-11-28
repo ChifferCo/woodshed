@@ -494,7 +494,7 @@ test('setup asks for the one agent missing, and not for the other when the perso
   assert.equal(one.code, EXIT.done);
   const agent = one.events.find((event) => event.step === 'agent');
   assert.equal(agent.status, 'done');
-  assert.match(agent.message, /Claude Code is connected: your pull requests get reviews from Claude Code/);
+  assert.equal(agent.message, 'Claude Code is connected for sessions and reviews.', 'who reviews is the reviewer choice, said after it');
 });
 
 test('on a terminal, setup lets the person answer that they use only one agent', async () => {

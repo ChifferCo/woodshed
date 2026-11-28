@@ -472,7 +472,8 @@ export async function setupCommand(args, ctx) {
       return stop('agent', EXIT.waiting, ...handoff(`${onlyOne.trim() ? `${onlyOne.trim()} ` : ''}Then ${again}.`));
     }
     const names = wanted.map((name) => AGENT_NAMES[name]).join(' and ');
-    report('agent', 'done', `${names} ${wanted.length === 2 ? 'are' : 'is'} connected: your pull requests get reviews from ${wanted.length === 2 ? 'both' : names}.`, { agent: wanted[0], wanted });
+    // Who reviews is the reviewer choice's, read after this: here, only what is connected.
+    report('agent', 'done', `${names} ${wanted.length === 2 ? 'are' : 'is'} connected for sessions and reviews.`, { agent: wanted[0], wanted });
   }
   // The session's agent: the one they use when they said only one, else Claude Code unless only Codex is connected.
   const agent = wanted.length === 1 ? wanted[0] : (signIns?.codex && !signIns?.claude ? 'codex' : 'claude');
