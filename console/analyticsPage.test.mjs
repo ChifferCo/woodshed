@@ -237,7 +237,20 @@ test('every chart is the one component: a y axis of ticks, gridlines, more than 
   assert.equal(tip.hidden, true);
   const popped = walk(opened).find((e) => e.className === 'trend-col' && /[1-9]\d* through Woodshed, [1-9]\d* without/.test(e.attrs['aria-label']));
   popped.listeners.focus();
-  assert.match(textOf(walk(opened).find((e) => e.className === 'trend-tip')), /Day of .*through Woodshed.*without.*in all/);
+  const openedTip = walk(opened).find((e) => e.className === 'trend-tip');
+  assert.match(textOf(openedTip), /Day of .*through Woodshed.*without.*in all/);
+  // Focus one column, hover another and leave it: the focused column's tooltip comes back.
+  const [other] = walk(opened).filter((e) => e.className === 'trend-col' && e !== popped);
+  const focusedText = textOf(openedTip);
+  other.listeners.mouseenter();
+  other.listeners.mouseleave();
+  assert.equal(openedTip.hidden, false);
+  assert.equal(textOf(openedTip), focusedText);
+  popped.listeners.blur();
+  assert.equal(openedTip.hidden, true);
+  // A series at 0 that day is still a row, so the tooltip agrees with the column's label.
+  const zero = walk(opened).find((e) => e.className === 'trend-col' && /\b0 through Woodshed/.test(e.attrs['aria-label']));
+  if (zero) { zero.listeners.mouseenter(); assert.match(textOf(openedTip), /0 through Woodshed/); }
 });
 
 test('the people table gives the whole merge risk, a dash for nothing reviewed, and says what each slashed pair is', async () => {

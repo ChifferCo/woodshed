@@ -160,7 +160,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     const ticks = niceTicks(Math.max(...totals));
     const top = ticks[ticks.length - 1];
     const tipFor = (b, total) => [h('strong', null, `${unit} ${day(b.start)}`),
-      ...series.filter((s) => series.length === 1 || count(b, s) > 0).map((s) => h('span', { class: 'trend-tip-row' }, h('i', { class: `trend-key ${s.cls}`, 'aria-hidden': 'true' }), `${n(count(b, s))} ${s.word}`)),
+      ...series.map((s) => h('span', { class: 'trend-tip-row' }, h('i', { class: `trend-key ${s.cls}`, 'aria-hidden': 'true' }), `${n(count(b, s))} ${s.word}`)),
       series.length > 1 && h('span', { class: 'trend-tip-row is-total' }, `${n(total)} in all`)];
     const tip = h('div', { class: 'trend-tip', role: 'tooltip', hidden: true });
     const show = (col, b, total, i) => {
@@ -171,12 +171,14 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
       tip.classList.toggle('is-left', mid > 0.6);
       col.classList.add('is-hot');
     };
+    // What shows the focused column's tooltip again once the pointer leaves another column.
+    let focused = null;
     const hide = (col) => { tip.hidden = true; col.classList.remove('is-hot'); };
     const cols = trend.map((b, i) => {
       const col = h('div', {
         class: 'trend-col', tabindex: '0',
         'aria-label': `${unit} ${day(b.start)}: ${series.map((s) => `${count(b, s)} ${s.word}`).join(', ')}${series.length > 1 ? `, ${totals[i]} in all` : ''}`,
-        onmouseenter: () => show(col, b, totals[i], i), onmouseleave: () => { if (document.activeElement !== col) hide(col); }, onfocus: () => show(col, b, totals[i], i), onblur: () => hide(col),
+        onmouseenter: () => show(col, b, totals[i], i), onmouseleave: () => { hide(col); if (focused && focused !== col) focused(); }, onfocus: () => { focused = () => show(col, b, totals[i], i); focused(); }, onblur: () => { focused = null; hide(col); },
       }, series.map((s) => count(b, s) > 0 && h('span', { class: `trend-seg ${s.cls}`, style: `height: ${(count(b, s) / top) * 100}%` })));
       return col;
     });
