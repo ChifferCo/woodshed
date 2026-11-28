@@ -39,6 +39,9 @@ const DROPPED_HEADERS = new Set(['host', 'connection', 'keep-alive', 'proxy-conn
   'x-goog-api-key', 'x-goog-user-project', 'x-goog-request-params', 'cookie']);
 // The most of a call that is read whole to check it: a long conversation with images fits.
 export const MAX_BODY_BYTES = 64 * 1024 * 1024;
+// And the most of all calls' bodies held at once, since the console is one process for every session: past it a call is told
+// to try again (503), which agy does, rather than the console taking more.
+export const MAX_INFLIGHT_BYTES = 256 * 1024 * 1024;
 
 // A path already in its plain form: no `.` or `..` segment, no empty one, no `%` escape and no backslash.
 const UNPLAIN_PATH_RE = /[%\\]|\/\/|(?:^|\/)\.{1,2}(?:\/|$)/;
@@ -155,11 +158,13 @@ export function keyOf(headers) {
  *            handle: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, session: object|null) => Promise<void>,
  *            teamCredential: () => Promise<string|null>, cut: (sessionId: string) => void}}
  */
-export function createGeminiProxy({ secrets = null, teamKey = null, upstream = 'https://generativelanguage.googleapis.com', now = Date.now } = {}) {
+export function createGeminiProxy({ secrets = null, teamKey = null, upstream = 'https://generativelanguage.googleapis.com', now = Date.now, maxInflightBytes = MAX_INFLIGHT_BYTES } = {}) {
   const target = new URL(upstream);
   let team = null;
   let teamRead = null;
   const routed = new Set();
+  // The bytes of calls' bodies held now, from the first chunk of a call until its response is over.
+  let inflightBytes = 0;
   // The calls on their way, by session: a lockdown cuts its session's (cut), so nothing it sends after its first relayed
   // production call rides a request opened before it.
   const open = new Map();
@@ -247,12 +252,22 @@ export function createGeminiProxy({ secrets = null, teamKey = null, upstream = '
     }
     const chunks = [];
     let bytes = 0;
+    // Counted as they arrive and given back when the call is over, whatever ends it: an answer, a refusal, a cut or an abort.
+    res.on('close', () => { inflightBytes -= bytes; bytes = 0; });
     try {
       for await (const chunk of req) {
         bytes += chunk.length;
+        inflightBytes += chunk.length;
         if (bytes > MAX_BODY_BYTES) {
           req.resume();
           refuse(res, 413, 'this call is larger than the console reads');
+          return null;
+        }
+        if (inflightBytes > maxInflightBytes) {
+          req.resume();
+          console.warn('geminiProxy: busy, too much of other calls is held in memory', { sessionId: session.id });
+          res.setHeader?.('retry-after', '5');
+          refuse(res, 503, 'the console is holding as much of other sessions\' calls as it will: try again in a moment');
           return null;
         }
         chunks.push(chunk);

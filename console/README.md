@@ -974,7 +974,7 @@ card is offered with one of them (`/api/my`'s `agents.antigravity`):
   its calls are also refused when they ask Google to reach out (grounding with Google Search, the URL context tool), as
   the Anthropic proxy refuses Anthropic's. A lockdown cuts a call from the moment it is authorized, a body still arriving
   included (`geminiProxy: calls cut at the lockdown`), and each call's access and lock state are asked again with the whole
-  call in hand, just before it goes: nothing of a call that was on its way when the lockdown began reaches Google.
+  call in hand, just before it goes: nothing of a call that was on its way when the lockdown began reaches Google. The bodies held at once are bounded for the whole console (256 MiB, `MAX_INFLIGHT_BYTES`; 64 MiB for one call): past it a call gets a 503 with `Retry-After`, which agy retries, and what a call held is given back whatever ends it.
 - **The owner's own Google login**, their Antigravity plan (Free, Pro or Ultra), saved on My settings as
   `users/<login>/antigravity-auth` and handed to their private sessions in `/settings`'s `agentAuth` when they saved one.
   It is agy's own file, `~/.gemini/antigravity-cli/antigravity-oauth-token` (a laptop writes it only after `AGY_CLI_FORCE_FILE_TOKEN_STORAGE=true agy`;

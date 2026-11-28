@@ -326,3 +326,49 @@ test('a file search store or a reach tool inside a count\'s wrapped request is f
   assert.equal(serverSideReach(wrapped({ urlContext: {} })), 'the urlContext tool');
   assert.equal(serverSideReach(wrapped({ functionDeclarations: [] })), null);
 });
+
+test('the bodies of calls held at once are bounded for the whole console: past it a call is told to try again, and the room comes back', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const seen = [];
+  const upstream = http.createServer((req, res) => { req.resume(); req.on('end', () => { seen.push(req.url); res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end('data: {}\r\n\r\n'); }); });
+  const upPort = await listen(upstream);
+  // Room for 500 bytes of bodies at once.
+  const gemini = createGeminiProxy({ teamKey: 'AIza-team', upstream: `http://127.0.0.1:${upPort}`, maxInflightBytes: 500 });
+  const handle = createSessionApi({ fleet: { sessions: () => SESSIONS }, tokens: { token: async () => ({}) }, gemini });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => { server.close(); upstream.close(); });
+  const part = (n) => `{"contents":[{"parts":[{"text":"${'x'.repeat(n)}`;
+  const rest = '"}]}]}';
+
+  // One call has sent 400 bytes of its body and waits to send the rest.
+  const first = heldCall(port, 'agy-private', { chunks: [part(400), rest] });
+  await settle();
+  // Another that would take it past 500 is told to try again, and nothing of it goes to Google.
+  const busy = await new Promise((resolve, reject) => {
+    const r = http.request({ host: '127.0.0.1', port, method: 'POST', path: `/gemini${STREAM}`, headers: { 'x-goog-api-key': 'agy-beside', 'content-type': 'application/json' } },
+      (res) => { res.resume(); res.on('end', () => resolve({ status: res.statusCode, retryAfter: res.headers['retry-after'] })); });
+    r.on('error', reject);
+    r.end(part(300) + rest);
+  });
+  assert.equal(busy.status, 503);
+  assert.equal(busy.retryAfter, '5');
+  assert.equal(seen.length, 0);
+  // The first one finishes and goes: what it held, and what the refused one counted, are given back.
+  first.finish();
+  assert.equal((await first.outcome).status, 200);
+  assert.equal(seen.length, 1);
+  await settle();
+  const again = await fetch(`http://127.0.0.1:${port}/gemini${STREAM}`, { method: 'POST', headers: { 'x-goog-api-key': 'agy-beside', 'content-type': 'application/json' }, body: part(300) + rest });
+  assert.equal(again.status, 200, 'there is room again');
+  // A call that gives up mid-body gives its bytes back too: after one that sent 400 bytes and was dropped, one this size fits.
+  const aborted = http.request({ host: '127.0.0.1', port, method: 'POST', path: `/gemini${STREAM}`, headers: { 'x-goog-api-key': 'agy-beside', 'content-type': 'application/json', 'transfer-encoding': 'chunked' } });
+  aborted.on('error', () => {});
+  aborted.write(part(400));
+  await settle();
+  aborted.destroy();
+  await settle();
+  const afterAbort = await fetch(`http://127.0.0.1:${port}/gemini${STREAM}`, { method: 'POST', headers: { 'x-goog-api-key': 'agy-beside', 'content-type': 'application/json' }, body: part(300) + rest });
+  assert.equal(afterAbort.status, 200, 'the dropped call\'s bytes were given back');
+});
