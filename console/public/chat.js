@@ -190,8 +190,8 @@
     }
 
     function fit() {
-      // A thread at its foot stays there as the box grows over it, so its last line is not hidden.
-      const stick = nearFoot();
+      // A thread at its very foot stays there as the box grows over it, so its last line is not hidden; one the reader scrolled up a little keeps its place.
+      const stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 8;
       W.fitField(field, 240, [scroller]);
       if (stick) scroller.scrollTop = scroller.scrollHeight;
     }
