@@ -4,7 +4,7 @@
 // another program can build one from services of its own and serve it from its own servers (README.md, "Embedding the
 // console").
 
-import { createAnalytics } from './analytics.mjs';
+import { createAnalytics, warmAtStart } from './analytics.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -490,6 +490,13 @@ export async function createInstallation({ config: loaded, store, provider, trus
   members?.whenGone?.((login) => fleet.releaseAssignments({ login, by: 'the program' }));
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
+  // The Analytics page's pull requests are read again when one closes, and once at start, so a view does not wait for GitHub.
+  const analytics = createAnalytics({
+    config, sessions: () => fleet.sessions(), state: () => store.state, githubFor, gatesOf: fileGatesOf,
+    members: () => (members ? members.view().members.map((m) => m.login) : []),
+  });
+  pullWebhooks.watch({ name: 'analytics', stale: analytics.pullChanged });
+  if (tokens) warmAtStart(analytics);
   // Questions need the bot token to answer, and the session API to hear the answer.
   const asks = slack.canReply && config.sessionApi.host ? createAsks({
     store, fleet, slack, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null,
@@ -594,10 +601,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     slackSetup,
     cli,
     // The Analytics page: the fleet's sessions and those kept since they left its list, and each repo's pull requests.
-    analytics: createAnalytics({
-      config, sessions: () => fleet.sessions(), state: () => store.state, githubFor, gatesOf: fileGatesOf,
-      members: () => (members ? members.view().members.map((m) => m.login) : []),
-    }),
+    analytics,
     // Whether a repo's review can run in a session, for `woodshed review`: none with no GitHub App to run it.
     reviewReadiness: config.githubApp || hostApp ? createReviewReadiness({
       publicUrl: config.publicUrl, reviewer: reviewerApp, ownReviewer: !hostApp, appLogin: () => appIdentity.login(),

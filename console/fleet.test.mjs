@@ -4968,3 +4968,30 @@ test('a working session slow to answer delays only its own next live read, as th
   answer({ state: 'working' });
   await settle();
 });
+
+test('a reviewer the author chose and the console left out is said so on the review, in the console\'s own words', async () => {
+  const leftOut = [{ agent: 'grok' }];
+  const { fleet, calls } = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['claude'], choice: 'claude+grok', leftOut: [{ agent: 'grok', code: 'expired' }], why: 'Grok Build left out: SECRET-LOG-TEXT' }) } });
+  await fleet.reviewOnTag({ number: 7 });
+  const [session] = fleet.sessions();
+  assert.deepEqual(session.review.leftOut, leftOut, 'kept on the review session, the reviewer alone');
+  assert.doesNotMatch(JSON.stringify(fleet.sessions()), /expired/, 'nothing of why in the record other people can list');
+  assert.match(calls.comments[0].body, /Grok Build was left out of this review\./, 'the running comment');
+  await fleet.reviewFinished(session, { ...REVIEW_RESULT, summary: 'Looks good. Grok Build was left out: and so I say.' });
+  assert.match(calls.reviews[0].body, /Looks good\.[\s\S]*\n\nGrok Build was left out of this review\. The author can see why on My settings\.$/);
+  assert.match(calls.comments.at(-1).body, /Grok Build was left out of this review\./);
+  assert.ok(![calls.reviews[0].body, ...calls.comments.map((c) => c.body)].some((b) => /expired|login/.test(b)), 'nothing of the author\'s sign-in state');
+  assert.ok(![calls.reviews[0].body, ...calls.comments.map((c) => c.body)].some((b) => b.includes('SECRET-LOG-TEXT')), 'the console\'s log reason never reaches GitHub');
+  const bare = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['claude'], leftOut, why: null }) } });
+  await bare.fleet.reviewOnTag({ number: 7 });
+  await bare.fleet.reviewFinished(bare.fleet.sessions()[0], { ...REVIEW_RESULT, comment: '' });
+  assert.match(bare.calls.comments.at(-1).body, /Review finished.*Grok Build was left out of this review/, 'the empty-comment fallback');
+  const none = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['claude'], leftOut, why: null }) } });
+  await none.fleet.reviewOnTag({ number: 7 });
+  await none.fleet.reviewFinished(none.fleet.sessions()[0], { ...REVIEW_RESULT, conclusion: null });
+  assert.match(none.calls.comments.at(-1).body, /did not finish.*Grok Build was left out of this review/, 'the no-verdict comment');
+  const plain = reviewSetup();
+  await plain.fleet.reviewOnTag({ number: 7 });
+  await plain.fleet.reviewFinished(plain.fleet.sessions()[0], REVIEW_RESULT);
+  assert.doesNotMatch(plain.calls.reviews[0].body, /left out/);
+});

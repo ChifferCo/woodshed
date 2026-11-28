@@ -59,19 +59,20 @@ function resolvedOf(raw) {
  * @param {{sessionUrl: string|null, agents?: string[]}} args
  * @returns {string}  the review's comment while its session runs, replaced by the review's own comment when it ends
  */
-export function reviewRunningComment({ sessionUrl, agents = ['claude'] }) {
+export function reviewRunningComment({ sessionUrl, agents = ['claude'], leftOut = null }) {
   const where = sessionUrl ? `[a Woodshed session](${sessionUrl})` : 'a Woodshed session';
   const who = agents.length === 1 && agents[0] === 'claude' ? '' : ` with ${reviewerNames(agents)}`;
-  return `**Reviewing**${who} in ${where}: the review and its merge risk follow here when it ends. ${SPINNER_HTML}\n`;
+  const left = leftOutNote(leftOut);
+  return `**Reviewing**${who} in ${where}: the review and its merge risk follow here when it ends.${left ? ` ${left}` : ''} ${SPINNER_HTML}\n`;
 }
 
 /**
  * @param {{reason: string, sessionUrl: string|null}} args
  * @returns {string}  the review's comment when its session ended without a review
  */
-export function reviewEndedComment({ reason, sessionUrl }) {
+export function reviewEndedComment({ reason, sessionUrl, leftOut = null }) {
   const where = sessionUrl ? ` ([session](${sessionUrl}))` : '';
-  return `⚠️ **The review did not finish**${where}: ${codeSpan(reason)}. A new commit starts another.\n`;
+  return `⚠️ **The review did not finish**${where}: ${codeSpan(reason)}. A new commit starts another.${leftOutNote(leftOut) ? ` ${leftOutNote(leftOut)}` : ''}\n`;
 }
 
 /** The reason quotes what the session met, a project file's unknown key among it, so it goes in as code: a link, an
@@ -87,9 +88,25 @@ function codeSpan(text) {
  * @param {{conclusion: string, tier: string|null}} args
  * @returns {string}  the review's comment when it reported a verdict but wrote no comment of its own
  */
-export function reviewDoneComment({ conclusion, tier }) {
+export function reviewDoneComment({ conclusion, tier, leftOut = null }) {
   const verdict = { APPROVE: 'approved', REQUEST_CHANGES: 'changes requested', COMMENT: 'commented, no verdict' }[conclusion] ?? 'finished';
-  return `**Review finished**: ${verdict}${tier ? `, merge risk ${tier}` : ''}. Details in the review.\n`;
+  return `**Review finished**: ${verdict}${tier ? `, merge risk ${tier}` : ''}. Details in the review.${leftOutNote(leftOut) ? ` ${leftOutNote(leftOut)}` : ''}\n`;
+}
+
+// Which reviewers the author chose were left out, and nothing of why: the pull request may be public, and why is the
+// state of the author's own sign-in. The reason stays in the console's log and on the author's My settings.
+/**
+ * @param {{agent: string}[]|null|undefined} leftOut  from the review session's record
+ * @returns {string}  a note for the review, a fixed sentence for each reviewer the author chose and the console left out, or ''
+ */
+export function leftOutNote(leftOut) {
+  if (!Array.isArray(leftOut)) return '';
+  return leftOut
+    .filter((l) => agentsRegistry.REVIEW_AGENT_IDS.includes(l?.agent))
+    // Grok Build and OpenCode run on the author's own sign-in, which My settings explains; Claude Code and Codex on the
+    // team's keys, whose reason belongs to the installation.
+    .map((l) => `${productOf(l.agent)} was left out of this review.${['grok', 'opencode'].includes(l.agent) ? ' The author can see why on My settings.' : ''}`)
+    .join(' ');
 }
 
 const WHY_PRODUCTS = new Set(agentsRegistry.REVIEW_AGENT_IDS.map((id) => agentsRegistry.agent(id).product));
