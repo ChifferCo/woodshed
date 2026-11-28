@@ -986,6 +986,8 @@ card is offered with one of them (`/api/my`'s `agents.antigravity`):
   `agentAuth` and the session runs on the team key instead of being refused, as Grok Build and OpenCode are. A start
   needs one or the other (`save your Antigravity sign-in on My settings first: the console has no Gemini key`).
 
+The first `/settings` answer of a run decides which of the two an Antigravity session runs on (`fleet.rememberAgentCredential`, cleared by a Resume): a run that started on the team key is not handed a login saved after, which the repo's code in the container could ask for with the session's token (`sessionApi: Antigravity CLI sign-in not handed out, this run started on the team key`). And once statusd reports that startup code of the repo's runs in the session (`startupCodeRuns` in its status, kept on the session record for the run), the console sends no personal sign-in of the owner's into it: an extra Claude, Codex or Antigravity agent that would carry one is refused with a 409 saying why before anything is sent, so it never reaches statusd, where that code could watch it arrive. A team-key agent carries none and starts.
+
 An extra Antigravity agent (**+ Another agent**) is started with the owner's login in the start itself
 (`antigravityAuth`), or on the team key, which the console allows only once the agent started, and not once the session
 has seen production data. Antigravity does not review pull requests yet (`reviews: false`), and gets none of the console's

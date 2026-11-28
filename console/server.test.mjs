@@ -3261,10 +3261,23 @@ test('an Antigravity agent beside claude is started with its owner\'s login, or 
   // Beside an Antigravity session it shares that session's own: nothing is sent.
   assert.equal((await start('1b2c3d4e')).status, 200);
   assert.equal(asked[2].body.antigravityAuth, undefined);
+  // Once statusd reports startup code of the repo's running in the session, nothing personal is sent into it: the code could
+  // watch it arrive. The team's key carries none, and starts.
+  mine.startupCodeRuns = true;
+  const before = asked.length;
+  const held = await start('0a1b2c3d');
+  assert.equal(held.status, 409);
+  assert.match((await held.json()).error, /could read the owner's Google login: it is not sent/);
+  assert.equal(asked.length, before, 'the login never left the console');
+  login = null;
+  assert.equal((await start('0a1b2c3d')).status, 200, 'on the team key it starts');
+  assert.equal(asked.at(-1).body.antigravityAuth, undefined);
+  mine.startupCodeRuns = null;
+  login = JSON.stringify({ token: { access_token: 'ya29.test' } });
   // A lockdown gets nothing, and a model that is not a name Antigravity takes is refused before anything is read.
   assert.equal((await start('2c3d4e5f')).status, 409);
   assert.equal((await start('0a1b2c3d', { agent: 'antigravity', model: 'x; rm -rf /' })).status, 400);
-  assert.equal(asked.length, 3);
+  assert.equal(asked.length, 4);
 });
 
 test('a Codex agent beside claude is started with its owner\'s sign-in, and allowed the team key only once it started', async (t) => {
@@ -3315,9 +3328,23 @@ test('a Codex agent beside claude is started with its owner\'s sign-in, and allo
   userSettings.codexAuth = async () => { locked = true; return 'sk-own-key'; };
   assert.equal((await start('codex')).status, 409);
   assert.equal(asked.length, 3, 'the sign-in never reached the session');
+  // Startup code of the repo's running in the session (an Antigravity CLI on a checkout that ships hooks): the owner's own
+  // sign-in is not sent into it, and a Codex on the team's key is.
+  locked = false;
+  userSettings.codexAuth = async () => 'sk-own-key';
+  mine.startupCodeRuns = true;
+  const held = await start('codex');
+  assert.equal(held.status, 409);
+  assert.match((await held.json()).error, /could read the owner's Codex sign-in: it is not sent/);
+  assert.equal(asked.length, 3, 'the sign-in never left the console');
+  userSettings.codexAuth = async () => null;
+  assert.equal((await start('codex')).status, 200, 'the team key carries nothing of the owner\'s');
+  assert.equal(asked.length, 4);
+  mine.startupCodeRuns = null;
+  userSettings.codexAuth = async () => { locked = true; return 'sk-own-key'; };
   mine.taintedAt = '2026-11-23T10:00:00Z';
   assert.equal((await start('codex')).status, 409, 'a tainted session starts none');
-  assert.equal(asked.length, 3);
+  assert.equal(asked.length, 4);
 });
 
 test('the live session list needs a sign-in, shows only what that person may open, and pushes a change', async (t) => {

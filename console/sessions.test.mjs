@@ -159,6 +159,17 @@ test('stopReason stops a session past its lifetime, and a start that hangs', () 
   assert.equal(stopReason(session({ status: 'stopped', startedAt: '2026-10-21T01:00:00.000Z' }), now, LIMITS), null);
 });
 
+test('statusUpdate keeps startup code of the repo\'s running once statusd said so, for the run', () => {
+  const nowIso = '2026-10-21T12:00:00.000Z';
+  const base = session({ status: 'running' });
+  assert.equal(statusUpdate(base, { state: 'done' }, nowIso).startupCodeRuns, null, 'not said, not known');
+  const said = statusUpdate(base, { state: 'done', startupCodeRuns: true }, nowIso);
+  assert.equal(said.startupCodeRuns, true);
+  // A later read that leaves it out, as a statusd that was started again might, does not clear it.
+  assert.equal(statusUpdate({ ...base, ...said }, { state: 'done' }, nowIso).startupCodeRuns, true);
+  assert.equal(statusUpdate({ ...base, ...said }, { state: 'done', startupCodeRuns: false }, nowIso).startupCodeRuns, true);
+});
+
 test('statusUpdate marks a starting session running and only working counts as activity', () => {
   const nowIso = '2026-10-21T12:00:00.000Z';
   const starting = statusUpdate(session({ status: 'starting' }), { state: 'done', branch: 'b', head: 'abc' }, nowIso);

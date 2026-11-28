@@ -690,8 +690,11 @@ function repoShipsStartupCode() {
     }
   });
 }
+function repoStartupCodeKnown() {
+  return repoStartupCodeRuns || existsSync(REPO_STARTUP_CODE_MARKER);
+}
 function refuseWhileRepoStartupCodeRuns(what) {
-  if (!repoStartupCodeRuns && !existsSync(REPO_STARTUP_CODE_MARKER)) return;
+  if (!repoStartupCodeKnown()) return;
   throw Object.assign(new Error(`Antigravity CLI started in this session on a repo that ships startup code, which runs by itself and could read ${what}: it is not put here. Start a new session to use it`), { status: 409 });
 }
 
@@ -1299,6 +1302,9 @@ async function status() {
     claudeSession: !CLAUDE ? null : (await newestTranscript().catch(() => null))?.name.replace(/\.jsonl$/, '') ?? null,
     // The agents beside the session's own, for the page's switch over Chat and TUI. Left out where none can start.
     ...(agents ? { agents: await agents.list().catch(() => []) } : {}),
+    // Startup code of the repo's runs in this container (antigravitySetup.sh): the console sends no personal sign-in of the
+    // owner's into it, so it never reaches statusd, where code in the container could watch it arrive.
+    ...(repoStartupCodeKnown() ? { startupCodeRuns: true } : {}),
     branch: await git('branch', '--show-current'),
     head: await git('rev-parse', '--short', 'HEAD'),
     prUrl: await prUrl(),

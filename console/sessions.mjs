@@ -604,6 +604,9 @@ export function statusUpdate(session, status, nowIso, { repos = [] } = {}) {
     app: APP_STATES.has(status.app) ? status.app : null,
     // The agents a person started beside its own, for the page's switch over Chat and TUI.
     agents: agentsFrom(status.agents),
+    // Startup code of the repo's runs in the container (an Antigravity CLI on a checkout that ships hooks, MCP servers or
+    // plugins): once seen it stays for the run, and the console sends no personal sign-in of the owner's into the session.
+    startupCodeRuns: status.startupCodeRuns === true ? true : session.startupCodeRuns ?? null,
     // Claude's own id for the conversation, which Resume hands back to `claude --resume`.
     claudeSession: CLAUDE_SESSION_RE.test(status.claudeSession ?? '') ? status.claudeSession : session.claudeSession ?? null,
     appServers: appServersFrom(status.appServers),

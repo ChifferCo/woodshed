@@ -2106,6 +2106,18 @@ export function createFleet({
    * @param {'claude'|'codex'|'grok'|'opencode'} agent
    * @returns {boolean}  whether it was allowed now, rather than before
    */
+  /**
+   * Which credential an Antigravity session's first /settings answer gave it, `own` or `key`, kept for the run: the first
+   * answer decides. Asked again, a session that started on the team's key is not handed a login saved since, which the
+   * repo's code in the container could ask for with the session's token (sessionApi.mjs settingsReply).
+   * @returns {'own'|'key'}  the one now in force
+   */
+  function rememberAgentCredential(session, how) {
+    if (session.agentCredential === 'own' || session.agentCredential === 'key') return session.agentCredential;
+    update(session, { agentCredential: how });
+    return how;
+  }
+
   function allowAgent(session, agent) {
     if ((session.extraAgents ?? []).includes(agent)) return false;
     console.log('fleet: another agent allowed in the session', { id: session.id, agent });
@@ -2284,7 +2296,7 @@ export function createFleet({
       latestImage: latestImage ? true : null,
       // A Resume starts its own agent alone: what the agents of the last run were allowed (a Codex one's sign-in) is
       // not this run's, and the last run's list is not either.
-      extraAgents: null, agents: null,
+      extraAgents: null, agents: null, agentCredential: null, startupCodeRuns: null,
       // Its pull request's watch ended when it stopped: it is watched again once statusd reports it.
       announcedPrUrl: null,
       // A tainted session starts locked down, its entrypoint told so (WOODSHED_TAINTED): its statusd needs no notice.
@@ -3491,7 +3503,7 @@ export function createFleet({
 
   return {
     noteMessage, noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
-    onChange, soon, checkLive, createSession, conversationSaved, forgetConversations, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, keptMachine, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    onChange, soon, checkLive, createSession, conversationSaved, forgetConversations, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, rememberAgentCredential, extend, setLimits, limitsOf, pauseOf, resumePrivate, keptMachine, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaLog, reviewLog, qaVideo, qaPoster, publicQaVideo, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

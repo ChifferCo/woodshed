@@ -1808,6 +1808,8 @@ test('a session whose own agent is an Antigravity CLI on startup code is told so
     WOODSHED_AGENT_STATE_DIR: dir, WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'own-state.json'),
   } });
   await assert.rejects(fs.stat(path.join(home, '.config/woodshed/repo-startup-code')), { code: 'ENOENT' });
+  // Said to the console in every status read, which then sends nothing personal into the session (sessions.mjs, server.mjs).
+  assert.equal((await call('GET', '/status', 'sess')).body.startupCodeRuns, true);
   const refused = await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'codex', codexAuth: '{"tokens":{"refresh_token":"dummy-not-a-real-token"}}' }));
   assert.equal(refused.status, 409);
   assert.match(refused.body.error, /could read the owner's Codex sign-in/);
@@ -1831,6 +1833,10 @@ test('startup code agy runs cannot lift the refusal by deleting the marker or it
   const codexHome = path.join(home, '.codex');
   await fs.mkdir(codexHome, { recursive: true });
   await fs.mkdir(path.join(repo, '.agents'), { recursive: true });
+  // A real checkout: /status reads its branch.
+  const git = (...args) => promisify(execFile)('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.invalid', ...args], { cwd: repo, env: isolatedEnv() });
+  await git('init', '-q', '-b', 'main');
+  await git('commit', '-q', '--allow-empty', '-m', 'init');
   // The checkout ships a startup hook, as the review's repo does: agy runs it by itself.
   await fs.writeFile(path.join(repo, '.agents/hooks.json'), '{}');
   await fs.writeFile(path.join(repo, 'AGENTS.md'), 'Use pnpm.\n');
@@ -1853,6 +1859,7 @@ test('startup code agy runs cannot lift the refusal by deleting the marker or it
   const dummyGoogle = JSON.stringify({ token: { access_token: 'ya29.dummy-not-real', refresh_token: '1//dummy-not-real' } });
   const dummyCodex = '{"tokens":{"refresh_token":"dummy-not-a-real-token"}}';
 
+  assert.equal((await call('GET', '/status', 'sess')).body.startupCodeRuns, undefined, 'nothing runs yet, so nothing is said');
   // 1. The owner's Google login on a checkout that ships startup code: refused before anything is written, whether or not an
   // agy runs yet. (No agent is open here, so only the checkout says so.)
   const early = await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'antigravity', antigravityAuth: dummyGoogle }));
@@ -1866,6 +1873,7 @@ test('startup code agy runs cannot lift the refusal by deleting the marker or it
   // 3. The repo's code, as this user, removes the marker and its own files. Nothing the owner brings goes in afterwards.
   await fs.rm(marker);
   await fs.rm(path.join(repo, '.agents'), { recursive: true });
+  assert.equal((await call('GET', '/status', 'sess')).body.startupCodeRuns, true, 'still said to the console, with the marker and the files gone');
   const codex = await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'codex', codexAuth: dummyCodex }));
   assert.equal(codex.status, 409, JSON.stringify(codex.body));
   assert.match(codex.body.error, /could read the owner's Codex sign-in/);

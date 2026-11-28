@@ -241,7 +241,7 @@ export function createSessionApi({
       console.warn('sessionApi: request refused, no active session has that token', { pathname, from: req.socket.remoteAddress });
       return reply(res, 401, { error: 'unauthorized' });
     }
-    if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, repoSettings, { planOnly: req.headers[PLAN_ONLY_HEADER] === '1' });
+    if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, repoSettings, { planOnly: req.headers[PLAN_ONLY_HEADER] === '1', fleet });
     if (pathname === '/repo-settings') return repoSettingsReply(req, res, session, repoSettings);
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings, fleet);
     if (pathname === '/agent-auth') return agentAuthReply(req, res, session, userSettings, fleet);
@@ -376,7 +376,7 @@ async function repoSettingsReply(req, res, session, repoSettings) {
 
 // The owner's settings and no one else's: the session is found by its own token, and its owner was fixed when
 // the console created it.
-async function settingsReply(res, session, userSettings, databases, repoSettings, { planOnly = false } = {}) {
+async function settingsReply(res, session, userSettings, databases, repoSettings, { planOnly = false, fleet = null } = {}) {
   // A review session has no databases; it asks /settings only for the plan it runs on.
   if (isReview(session)) {
     const onPlan = Boolean(await starterToken(session, userSettings));
@@ -390,9 +390,18 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
   // no `agentAuth`, which is how the session knows.
   const own = agents.OWN_SIGN_IN_AGENTS.includes(session.options?.agent) ? agents.agent(session.options.agent) : null;
   // Read in the sign-in's turn, so a refresh by the console (grokLogin.mjs) is done, or not begun, when it is handed out.
-  const agentAuth = own && userSettings
+  let agentAuth = own && userSettings
     ? await (userSettings.agentAuthTurn ? userSettings.agentAuthTurn(session.owner, own.id, ({ read }) => read()) : userSettings.agentAuth(session.owner, own.id))
     : null;
+  // The first answer of a run decides which credential an agent with both runs on. A session that started on the team's key
+  // is not handed a login saved after: the repo's code in the container holds the session's token and could ask for it.
+  if (own?.signIn.optional && session.options?.agent === own.id) {
+    const decided = fleet?.rememberAgentCredential ? fleet.rememberAgentCredential(session, agentAuth ? 'own' : 'key') : (agentAuth ? 'own' : 'key');
+    if (decided === 'key' && agentAuth) {
+      console.warn(`sessionApi: ${own.product} sign-in not handed out, this run started on the team key`, { sessionId: session.id, owner: session.owner, agent: own.id });
+      agentAuth = null;
+    }
+  }
   if (own && !agentAuth && !own.signIn.optional) {
     console.warn(`sessionApi: no ${own.product} sign-in for the owner`, { sessionId: session.id, owner: session.owner, agent: own.id });
     return reply(res, 409, { error: `@${session.owner} has no ${own.product} sign-in saved on My settings` });

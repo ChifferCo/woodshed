@@ -2385,8 +2385,13 @@ export function createHandler({
         if (!/^xai-[0-9A-Za-z_-]{10,200}$/.test(agentAuth ?? '')) return reply(res, 409, { error: 'save an xAI API key on My settings to run Grok alongside another agent' });
         if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
       }
+      // An Antigravity CLI in the session runs its repo's startup code as the session's user (statusd reports it, sessions.mjs
+      // `startupCodeRuns`): no personal sign-in of the owner's is sent into it, since the code could watch it arrive at statusd or
+      // read it where it lands. A team-key agent carries none and starts.
+      const startupCodeRefusal = (what) => reply(res, 409, { error: `Antigravity CLI is running in this session on a repo that ships startup code, which runs by itself and could read ${what}: it is not sent. Start a new session to use it` });
       const needsClaudeToken = picked.agent === 'claude' && !primary.teamCredential;
       let claudeToken = null;
+      if (needsClaudeToken && session.startupCodeRuns) return startupCodeRefusal('the owner\'s Claude token');
       if (needsClaudeToken) {
         try {
           claudeToken = await userSettings?.claudeToken(session.owner);
@@ -2411,6 +2416,7 @@ export function createHandler({
         }
         // Asked again after the read: a lockdown that started meanwhile gets no sign-in sent into the session.
         if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
+        if (codexAuth && session.startupCodeRuns) return startupCodeRefusal('the owner\'s Codex sign-in');
       }
       // An extra Antigravity agent runs on its owner's own Google login, handed to the session with the start itself, as
       // Codex's is; with none, on the team's Gemini key through the console's proxy (geminiProxy.mjs), which the session
@@ -2424,6 +2430,7 @@ export function createHandler({
           console.warn('console: Antigravity sign-in not read for an agent', { id: session.id, message: err?.message });
           return reply(res, 502, { error: 'the console could not read your Antigravity sign-in: try again' });
         }
+        if (antigravityAuth && session.startupCodeRuns) return startupCodeRefusal('the owner\'s Google login');
         if (!antigravityAuth && !(await readTeamGeminiKey())) return reply(res, 409, { error: 'save your Antigravity sign-in on My settings first: the console has no Gemini key' });
         // Asked again after the read: a lockdown that started meanwhile gets no sign-in sent into the session.
         if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
