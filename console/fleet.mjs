@@ -608,11 +608,6 @@ export function createFleet({
     store.save();
   }
 
-  async function tellLauncherForgotten(session, why) {
-    queueForget(session, why);
-    await attemptForget(session.id);
-  }
-
   async function attemptForget(id) {
     const item = (state.forgetPending ?? []).find((i) => i.id === id);
     if (!item || typeof launcher.forget !== 'function') return;
@@ -1586,7 +1581,7 @@ export function createFleet({
     prCheckedAt.delete(session.id);
     console.log('fleet: kept session cleaned up', { id: session.id, why });
     await deleteHome(session);
-    await tellLauncherForgotten(session, why);
+    await attemptForget(session.id);
   }
 
   async function deleteHome(session) {

@@ -5079,3 +5079,25 @@ test('a launcher without forget leaves queued entries dormant, and a stop still 
   await ctx.fleet.tick();
   assert.deepEqual(told, ['gone0001']);
 });
+
+test('the launcher is not told of a removed private session while its stop is still in flight', async () => {
+  const ctx = setup();
+  const told = [];
+  ctx.launcher.forget = async (id) => { told.push(id); };
+  const session = await ctx.fleet.startPrivate({ owner: 'joel', prompt: 'a' });
+  ctx.statuses[session.id] = { state: 'working' };
+  await ctx.fleet.tick();
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const realStop = ctx.launcher.stop;
+  ctx.launcher.stop = async (...args) => { await held; return realStop?.(...args); };
+  const stopping = ctx.fleet.stop(session, 'test');
+  await new Promise((r) => setTimeout(r, 20));
+  await ctx.fleet.removePrivate('joel');
+  assert.deepEqual(told, [], 'the stop has not finished');
+  release();
+  await stopping;
+  ctx.advance(11 * 60_000);
+  await ctx.fleet.tick();
+  assert.deepEqual(told, [session.id], 'told once it has');
+});
