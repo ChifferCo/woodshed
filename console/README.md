@@ -999,8 +999,8 @@ Grok Build's **Model** is a menu when the console could read its models on your 
 https://cli-chat-proxy.grok.com/v1/models` with its access token, and an xAI key `GET https://api.x.ai/v1/models`, whose
 image and video models a session cannot use and are left out. The list is kept 10 minutes, tried again a minute after a
 failure, and forgotten when you save or remove the sign-in. **Effort** is then the picked model's efforts, its default
-marked, kept to the registry's. As for Codex, the console never refreshes the login: one whose `expires_at` has passed is
-not sent, and gives your last list read or none. With none (no sign-in, an expired login, xAI not answering) the
+marked, kept to the registry's. Unlike Codex's, a Grok login the console finds ended (or ending within 10 minutes) is refreshed first
+(`grokLogin.mjs`, below); one that still could not be is not sent, and gives your last list read or none. With none (no sign-in, an expired login, xAI not answering) the
 Model is the box to type in again, and a line under the menus says why. A start is checked against the registry's shape
 alone, never the list, so a model typed while the list cannot be read still starts.
 
@@ -1515,8 +1515,21 @@ Grok Build and OpenCode review the same way, on the author's own sign-in alone, 
   It runs with `--disallowed-tools x_search`, since `--disable-web-search` leaves xAI's X search in, and the proxy takes
   the `id` off the reasoning items it sends back on `/v1/responses` (reviewAgentScope.mjs says why). The proxy sends
   them on with the author's xAI key to `api.x.ai/v1`, or with a login's access token to `cli-chat-proxy.grok.com/v1`,
-  only while its `expires_at` is ahead: the console never refreshes a login (`grokModels.mjs` says why), which a Grok
-  session of theirs does at its stop.
+  only while its `expires_at` is ahead. The console refreshes a login that has ended, or ends within 10 minutes, when a
+  review starts, when My settings or New session reads it, and on each call of a review (`grokLogin.mjs`): it reads
+  xAI's `.well-known/openid-configuration` on the issuer in the login's scope (`https://auth.x.ai` alone, no other
+  host), and posts a `refresh_token` grant with the scope's client id to its `token_endpoint` (a public client: no
+  secret; measured from grok 1.0.x's binary and xAI's discovery document). xAI rotates the refresh token, so the
+  console refreshes **only inside that sign-in's own turn** (`userSettings.agentAuthTurn`, which My settings' save, a
+  session's write-back and the handing of the login to a starting session also take) and **only while none of the
+  owner's Grok sessions is queued, starting, running or stopping**: such a session holds the refresh token and writes its
+  own refresh back at its stop, which a refresh by the console would kill. Then the login is left as it is, the review
+  leaves Grok Build out, and My settings' Grok Build row says **Expired for reviews** with why (a session of yours is
+  running, xAI refused the refresh, the console could not reach xAI, or the login holds no refresh token). A session
+  that starts meanwhile is in the fleet before it asks for the login, and its read waits for the turn, so it is given
+  the refreshed one. xAI refusing a refresh (a 4xx but 408 and 429) is not tried again until a new login is saved,
+  since sending a rotated token again can end its whole family; xAI not reached before the call was sent is tried again after a minute, but a call that may have been sent and got no answer (a timeout) is treated as refused, since xAI may have rotated the token; each call waits at most 5 s, so a session's read of its login waits at most about 10 s. The
+  refresh keeps every other field of `auth.json`, and nothing of it, no token, is logged.
 - **OpenCode** reviews only on an API key (`{type: 'api'}`) of Anthropic or OpenAI, the first of those the author's
   `auth.json` has (`OPENCODE_REVIEW_PROVIDERS` in shared/agents.cjs), and the session gets `REVIEW_OPENCODE_PROVIDER`.
   Its own config points that provider alone at the console's `/opencode/<provider>/v1` (its `baseURL`), with the
@@ -3366,7 +3379,7 @@ work without it, not for ranking people:
   dismissed review; one with more than 100 reviews that shows none is "not known", not "no human") and how many models reviewed each (the agents of Woodshed's own review sessions when there were
   any, else the distinct review bots on GitHub), merge risk counted at every level (low, medium, high, not reviewed)
   for each kind, and bars of those opened each day and those merged.
-- **By repo**: pull requests for each repo, through Woodshed and without; a repo name filters the list below.
+- **By repo**: pull requests for each repo, through Woodshed and without. With more than one repo the **Repo** menu at the top (`?repo=owner/name`, beside Person) narrows the whole page to one: sessions, figures, charts, people and lists; a repo name in this table picks it too.
 - **By person**: each member, those who started nothing included, with their sessions, the days they started one, their
   pull requests each way, the share through Woodshed, their time to merge and their high-risk count. Picking a name (here, or in the
   Person menu at the top) shows only their sessions, pull requests, daily opens and repos.
@@ -3395,7 +3408,7 @@ window (90 days) that all three windows share, and at most its newest 2,000 of t
 repo with more is read in date ranges, halved until each fits; a window is flagged cut off only when the 2,000 do not reach back
 past its start). The saved read is always shown at once, however old, with when the data is as of and a
 **Refresh** button (`POST /api/analytics/refresh`, off while a read runs, the page asking again every 3 s until it is done); a view
-of a read over an hour old also starts one in the background, and one that fails keeps the last read, says so on the page and is
+of a read over an hour old also starts one in the background, as does a pull request closing, merged or not (a pull request webhook, `pullWebhooks: pull request marked due` by `analytics`), for that repo only if it was read before; a console with GitHub App tokens also reads each repo not yet read ten seconds after it starts, so a first view after that read finished does not wait for GitHub, and one that fails keeps the last read, says so on the page and is
 not tried on its own again for a minute (nor is a first read that failed) (`analytics: refresh failed, keeping the last read`; `analytics: refresh asked` says who
 pressed the button). Only the first read, with none saved, makes the viewer wait. `analytics: pull requests not read` with the project and GitHub's error when a read fails, and the
 page names the repo it left out.

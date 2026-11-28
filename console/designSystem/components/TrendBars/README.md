@@ -30,5 +30,6 @@ Also on Analytics, in the same box as the bars:
 - **Agent tag** (Claude amber, Codex teal, Grok violet, OpenCode rose) and **Woodshed / models pills**: a pill on the tint of the
   colour, the agent's name in it.
 - **Person menu**: a plain select beside the window's buttons, `Everyone` first; picking a person filters every group below it.
+- **Repo menu**: the same select (`person-pick`, a repo icon and the word Repo) before the Person menu, `All repos` first, shown only with two or more repos and listing every repo the viewer may open, a quiet one too; picking one filters every group below it, the by-repo table excepted, which keeps every repo to pick from.
 - **Show more / Show all**: outline buttons (`analytics-btn`, only on this page) under a list of more than 25 rows.
 - **Lines**: `+added` in `add` and `−removed` in `del`, in mono, bold.

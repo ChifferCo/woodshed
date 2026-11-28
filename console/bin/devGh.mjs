@@ -39,7 +39,16 @@ export function writeDevGh(dir, { projectFiles = {}, mongoRepo = process.env.DEV
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'open-pulls.json'), answer);
   // The Analytics page's search (github.mjs, RecentPulls): every made-up pull request at once, for any repo and window.
-  fs.writeFileSync(path.join(dir, 'recent-pulls.json'), JSON.stringify({ data: { search: { issueCount: recentPulls.length, pageInfo: { hasNextPage: false, endCursor: null }, nodes: recentPulls } } }));
+  // A pull request may name its repo (`__repo`, not GitHub's): the search answers each repo with its own, the rest with
+  // those that name none.
+  const repoPulls = {};
+  for (const p of recentPulls) if (p.__repo && p.__repo !== 'example-org/example-repo') (repoPulls[p.__repo] ??= []).push(p);
+  const searchAnswer = (nodes) => JSON.stringify({ data: { search: { issueCount: nodes.length, pageInfo: { hasNextPage: false, endCursor: null }, nodes } } });
+  fs.writeFileSync(path.join(dir, 'recent-pulls.json'), searchAnswer(recentPulls.filter((p) => !repoPulls[p.__repo])));
+  const searchCases = Object.entries(repoPulls).filter(([repo]) => /^[\w.-]+\/[\w.-]+$/.test(repo)).map(([repo, nodes], i) => {
+    fs.writeFileSync(path.join(dir, `recent-pulls-${i}.json`), searchAnswer(nodes));
+    return `case " $* " in *"q=repo:${repo} "*) cat '${path.join(dir, `recent-pulls-${i}.json`)}'; exit 0 ;; esac\n`;
+  }).join('');
   const projectCases = Object.entries(projectFiles).map(([repo, text], i) => {
     const file = path.join(dir, `project-${i}.json`);
     fs.writeFileSync(file, JSON.stringify({ content: Buffer.from(text).toString('base64'), encoding: 'base64' }));
@@ -52,6 +61,8 @@ export function writeDevGh(dir, { projectFiles = {}, mongoRepo = process.env.DEV
     : '';
   const mineCases = mine && /^[\w.-]+\/[\w.-]+$/.test(mine.repo) && /^[\w-]+$/.test(mine.login) ? writeMine(dir, now, mine) : '';
   fs.writeFileSync(path.join(dir, 'gh'), `#!/bin/sh
+case " $* " in *"query=query RecentPulls"*) ${searchCases ? '' : ':'}
+${searchCases}esac
 for arg in "$@"; do
   case "$arg" in
     "query=query OpenPulls"*) cat '${path.join(dir, 'open-pulls.json')}'; exit 0 ;;

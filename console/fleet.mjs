@@ -14,7 +14,7 @@ import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { finishedComment, runningComment } from './qaSessions.mjs';
 import { QA_RECORDING_DAYS, newRecordingSecret, opensPublicVideo, qaPublicVideoPath, qaVideoPath } from './qaRecordings.mjs';
-import { reviewDoneComment, reviewEndedComment, reviewHeading, reviewRunningComment } from './reviewSessions.mjs';
+import { reviewDoneComment, reviewEndedComment, leftOutNote, reviewHeading, reviewRunningComment } from './reviewSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
 import { forgetUsage, keepUsage, usageRecord } from './analytics.mjs';
@@ -2965,7 +2965,7 @@ export function createFleet({
     // The author's choice and own sign-ins only for someone who passed the same checks as their Claude plan; never a
     // bot's. Anyone else's review runs the most the team keys can.
     const ownLogin = teamKeyWhy || login.endsWith('[bot]') ? null : login;
-    const { agents, choice = null, codexLogin = null, codexVia = null, codexAccount = null, ownSignIns = null, why: agentsWhy, keysUnread = false, expanded = true } = reviewAgents
+    const { agents, choice = null, leftOut = [], codexLogin = null, codexVia = null, codexAccount = null, ownSignIns = null, why: agentsWhy, keysUnread = false, expanded = true } = reviewAgents
       ? await reviewAgents.forReview({ login: ownLogin }) : { agents: ['claude'], why: null };
     if (agentsWhy) console.warn('fleet: review runs other than the author chose', { number, login, choice, agents, why: agentsWhy, ...projectField(project) });
     if (!agents.length && choice !== 'none' && keysUnread) {
@@ -2987,7 +2987,7 @@ export function createFleet({
       kind: 'pr', number, title: `Review: ${pull.title}`, startedBy: login, trigger: 'review', branch: pull.head.ref, project,
       review: {
         base: pull.base.ref, sha: pull.head.sha, heading: review.heading, author: review.author ?? null, check: mergeRisk?.check ?? null, commentId,
-        agents, ...(codexLogin ? { codexLogin } : {}), ...(codexVia ? { codexVia } : {}), ...(codexAccount ? { codexAccount } : {}),
+        agents, ...(leftOut.length ? { leftOut: leftOut.map(({ agent }) => ({ agent })) } : {}), ...(codexLogin ? { codexLogin } : {}), ...(codexVia ? { codexVia } : {}), ...(codexAccount ? { codexAccount } : {}),
         // Whose sign-in a Grok Build or OpenCode reviewer runs on, and how: never the sign-in itself, which the console's
         // proxy reads at each call (reviewAgentProxy.mjs).
         ...(ownSignIns ? { ownSignIns } : {}),
@@ -3002,7 +3002,7 @@ export function createFleet({
       ...projectField(project),
     });
     update(session, { review: { ...session.review, runningPosted: true } });
-    await postReviewComment(session, gh, reviewRunningComment({ sessionUrl: await qaSessionUrl(session, project), agents }));
+    await postReviewComment(session, gh, reviewRunningComment({ sessionUrl: await qaSessionUrl(session, project), agents, leftOut }));
     return { outcome: 'started', sessionId: session.id };
   }
 
@@ -3068,6 +3068,12 @@ export function createFleet({
     const hold = conclusion === 'APPROVE' && await qaWillRun(project, session.number);
     const scheduled = session.review.agents;
     const heading = reviewHeading(session.review.heading, agents ?? (scheduled?.length === 1 ? scheduled : null));
+    // The console's own sentence for a reviewer it left out, never the session's (reviewSessions.mjs leftOutNote).
+    const note = leftOutNote(session.review.leftOut);
+    if (note) {
+      summary = [summary, note].filter(Boolean).join('\n\n');
+      if (comment) comment = `${comment}\n\n${note}`;
+    }
     const ours = conclusion ? await submitReview(session, gh, { conclusion, heading, summary, comment, mergeRisk, inlineComments, sha, hold }) : false;
     if (ours && conclusion === 'APPROVE' && !hold) await resolveFixedThreads(session, gh, resolved);
     if (!conclusion) {
@@ -3075,7 +3081,7 @@ export function createFleet({
       await postReviewEnded(session, project, why ? `the session wrote no verdict (${why.replace(/[;\s]+$/, '')})` : 'the session wrote no verdict');
     } else if (!comment && session.review.runningPosted && session.review.commentId) {
       console.log('fleet: review wrote no comment, its running comment closed', { id: session.id, number: session.number, conclusion });
-      await postReviewComment(session, gh, reviewDoneComment({ conclusion, tier: mergeRisk?.tier ?? null }));
+      await postReviewComment(session, gh, reviewDoneComment({ conclusion, tier: mergeRisk?.tier ?? null, leftOut: session.review.leftOut }));
     }
     const held = hold && ours ? { sha, heading, summary, inlineComments, resolved } : null;
     // `posted`: GitHub took the verdict (or the console holds it for QA), which an ask for the same head stands on.
@@ -3260,7 +3266,7 @@ export function createFleet({
   async function postReviewEnded(session, project, reason) {
     // Only a run that posted its own running comment: an older run's comment id may hold an earlier review.
     if (!session.review.runningPosted || !session.review.commentId) return;
-    await postReviewComment(session, githubOf(project), reviewEndedComment({ reason, sessionUrl: await qaSessionUrl(session, project) }));
+    await postReviewComment(session, githubOf(project), reviewEndedComment({ reason, sessionUrl: await qaSessionUrl(session, project), leftOut: session.review.leftOut }));
   }
 
   async function postReviewComment(session, gh, body) {

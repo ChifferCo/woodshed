@@ -17,8 +17,8 @@
 // The session's grok reaches here by GROK_MODELS_BASE_URL, and its opencode by a provider's `baseURL` in its own config
 // (session/review.sh). Only what a review's model calls need passes, each path with the one method it needs: its turns
 // and the model list, never a key's files, batches, stored completions or anything else. The sign-in is read at each call, so one turned off, removed or expired since the review
-// started stops being used at once. The console never refreshes a Grok login (grokModels.mjs says why): one whose
-// `expires_at` has passed is refused, and the review's grok says so. OpenCode runs only on an API key here, never a login
+// started stops being used at once. The console refreshes a Grok login that has ended when no Grok session of its owner's holds it
+// (grokLogin.mjs); one it could not refresh is refused, and the review's grok says so. OpenCode runs only on an API key here, never a login
 // (OPENCODE_REVIEW_PROVIDERS says why). Nothing of a sign-in is logged: the login, the agent, how, and a status.
 //
 // Each body is read whole (up to MAX_BODY_BYTES) and checked before the sign-in is read or added: it must be JSON with
@@ -180,7 +180,7 @@ export function beginInteractiveGrok(session) {
   };
 }
 
-export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}, opencodeUpstreams = {}, now = Date.now } = {}) {
+export function createReviewAgentProxy({ userSettings = null, grokLogin = null, grokUpstreams = {}, opencodeUpstreams = {}, now = Date.now } = {}) {
   const routed = new Set();
 
   /**
@@ -190,8 +190,10 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
   async function authorCredential(login, agent, provider) {
     const product = agents.agent(agent).product;
     if (!userSettings?.usesOwnAgentForReviews(login, agent)) return { refused: `@${login} no longer has their ${product} sign-in on for reviews` };
-    const cred = ownReviewCredential(agent, await userSettings.agentAuth(login, agent), now());
-    if (cred.why) return { refused: cred.why.replace('the author', `@${login}`) };
+    // A login that ends mid-review is refreshed on the next call, when no Grok session of theirs holds it (grokLogin.mjs).
+    const renewed = agent === 'grok' && grokLogin ? await grokLogin.fresh(login) : null;
+    const cred = ownReviewCredential(agent, renewed ? renewed.saved : await userSettings.agentAuth(login, agent), now());
+    if (cred.why) return { refused: (renewed?.why ?? cred.why).replaceAll('the author', `@${login}`) };
     if (agent === 'grok') {
       const base = (cred.via === 'login' ? grokUpstreams.login : grokUpstreams.key) ?? cred.base;
       return { target: new URL(base), headers: { authorization: cred.authorization }, via: cred.via };

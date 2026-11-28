@@ -107,7 +107,7 @@ test('an expired login is not sent, and says a Grok session refreshes it', async
   const got = await grokModels.list('ana');
   assert.equal(fetch.calls.length, 0);
   assert.deepEqual([got.models, got.source], [[], null]);
-  assert.match(got.note, /type a model name, since your saved Grok Build login has expired: a Grok session refreshes it when it stops/);
+  assert.match(got.note, /type a model name, since your saved Grok Build login has expired and the console could not refresh it: a Grok session refreshes it when it stops/);
 });
 
 test('no sign-in, a timeout or an empty list gives no list and says why', async (t) => {
@@ -157,4 +157,22 @@ test('a token no header can carry is never sent, and no error of another\'s reac
   assert.equal(quoting.calls.length, 1);
   assert.ok(lines.some((l) => l.includes('catalog not read') && l.includes('TypeError')), lines.join('\n'));
   assert.ok(lines.every((l) => !l.includes(MARK)), lines.join('\n'));
+});
+
+test('an expired login that the refresher renews fills the catalog, read with the renewed access token', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const fetch = fakeFetch([{ status: 200, body: LOGIN_CATALOG }]);
+  const expired = login({ expires: '2020-01-01T00:00:00Z' });
+  const renewed = login({ key: 'renewed-access-token', expires: '2030-01-01T00:00:00Z' });
+  const asked = [];
+  const grokLogin = { fresh: async (who) => { asked.push(who); return { saved: renewed, state: 'refreshed', why: null }; } };
+  const userSettings = { agentAuth: async () => expired };
+  const got = await createGrokModels({ userSettings, grokLogin, fetch, now: () => Date.parse('2026-01-01'), loginUpstream: 'https://l.test/v1' }).list('ana');
+  assert.deepEqual(asked, ['ana']);
+  assert.equal(fetch.calls[0].headers.authorization, 'Bearer renewed-access-token');
+  assert.equal(got.source, 'login');
+  assert.deepEqual(got.models.map((m) => m.slug), ['grok-4.7', 'grok-4.7-build-fast', 'grok-4.6', 'grok-4.5']);
+  // The same expired login with no refresher gives no list, so the test above does fill it by renewing.
+  const without = await createGrokModels({ userSettings, fetch: fakeFetch([new Error('not called')]), now: () => Date.parse('2026-01-01') }).list('ana');
+  assert.deepEqual(without.models, []);
 });

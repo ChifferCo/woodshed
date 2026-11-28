@@ -178,7 +178,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       }),
       h('span', { class: 'toggle-label', id: `${id}-reviews-label` }, 'Also use it for reviews of my pull requests'),
       h('p', { class: 'sub' }, on
-        ? `${onNote} The console adds it to ${a.name}\u2019s calls; it never goes into the review session.${a.signIn.rotates && id === 'grok' ? ' A login that has expired is not used: a Grok session of yours refreshes it.' : ''}`
+        ? `${onNote} The console adds it to ${a.name}\u2019s calls; it never goes into the review session.${a.signIn.rotates && id === 'grok' ? ' The console refreshes a login that has expired when none of your Grok sessions is running; otherwise it is not used for reviews until one of them stops.' : ''}`
         : `Off: ${a.name} never reviews your pull requests. There is no team key for it.`),
       !saved && h('p', { class: 'why-off' }, 'Save a sign-in above to turn this on.'));
   }
@@ -187,7 +187,10 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     const a = A.agent(id);
     const saved = me.agentAuth?.[id];
     const set = Boolean(saved?.set);
-    const pill = set ? h('span', { class: 'pill is-ok' }, `Saved ${W.when(saved.savedAt)}`) : h('span', { class: 'pill' }, 'Not set');
+    // A Grok login whose access token ended and that the console could not refresh (grokLogin.mjs): a status in words.
+    const ended = set && saved.state === 'expired';
+    const pill = ended ? h('span', { class: 'pill is-warn' }, 'Expired for reviews')
+      : set ? h('span', { class: 'pill is-ok' }, `Saved ${W.when(saved.savedAt)}`) : h('span', { class: 'pill' }, 'Not set');
     // An agent with a team credential too (Antigravity) runs on that with no sign-in saved: a sign-in here is the plan to use.
     const optional = Boolean(a.signIn.optional);
     const how = [
@@ -195,9 +198,10 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     ];
     return row({
       id, title: a.product, pill,
-      value: set ? `Your own sign-in, for ${a.name} sessions${a.reviews && me.ownAgentForReviews?.[id] ? ' and reviews of your pull requests' : ''}`
-        : optional ? `Save ${a.signIn.kinds} to use your own plan. Without one, ${a.name} runs on the team\u2019s key`
-          : `Save ${a.signIn.kinds}, and New session offers ${a.name}`,
+      value: ended ? `${(saved.why ?? 'Your saved login has expired').replace(/^the author's/, 'Your').replace(/the author's/g, 'yours')}. Reviews leave ${a.name} out until it is refreshed.`
+        : set ? `Your own sign-in, for ${a.name} sessions${a.reviews && me.ownAgentForReviews?.[id] ? ' and reviews of your pull requests' : ''}`
+          : optional ? `Save ${a.signIn.kinds} to use your own plan. Without one, ${a.name} runs on the team\u2019s key`
+            : `Save ${a.signIn.kinds}, and New session offers ${a.name}`,
     },
       h('p', { class: 'sub' }, optional
         ? `${a.name} runs on your own sign-in when you save one here, which is your plan, and otherwise on the team\u2019s key through the console, when it has one. In your My Woodshed sessions only: never in a shared session.`
@@ -812,7 +816,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       grok: 'Needs your Grok Build sign-in (Sign-ins), on for reviews. There is no team key for it.',
       opencode: 'Needs an Anthropic or OpenAI API key in your OpenCode sign-ins (Sign-ins), on for reviews. There is no team key for it.',
     };
-    const rows = A.REVIEW_AGENT_IDS.map((id) => [id, A.agent(id).product, ownWhy[id] ? `${ownWhy[id].replace(/^the author's/, 'Your')}.` : needs[id]]);
+    const rows = A.REVIEW_AGENT_IDS.map((id) => [id, A.agent(id).product, ownWhy[id] ? `${ownWhy[id].replace(/^the author's/, 'Your').replace(/the author's/g, 'yours')}.` : needs[id]]);
     const pick = (agent, value) => {
       const next = new Set(on);
       if (value) next.add(agent); else next.delete(agent);

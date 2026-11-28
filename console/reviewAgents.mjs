@@ -64,8 +64,8 @@ export function ownReviewCredential(id, saved, now = Date.now()) {
     const cred = grokCredentialOf(saved, now);
     if (!cred) return { why: 'the author\'s saved Grok Build sign-in has no token' };
     if (cred.expired) return { why: 'the author\'s saved Grok Build login has expired' };
-    // A login whose end is not known is not offered: the console never refreshes one, so a review could start on a login
-    // that has already ended and spend its run on refusals.
+    // A login whose end is not known is not offered: the console cannot tell when to refresh it (grokLogin.mjs), so a
+    // review could start on a login that has already ended and spend its run on refusals.
     if (cred.source === 'login' && cred.expiresAt === null) return { why: 'the author\'s saved Grok Build login does not say when it expires' };
     if (!/^[\x21-\x7e]+ [\x21-\x7e]+$/.test(cred.authorization)) return { why: 'the author\'s saved Grok Build sign-in has a token that cannot be sent' };
     return { via: cred.source, base: cred.base, authorization: cred.authorization };
@@ -96,10 +96,11 @@ export function bestChoice(available, { expanded = true } = {}) {
  *            usesOwnAgentForReviews?: (login: string, id: string) => boolean,
  *            usesExpandedReviewDefault?: (login: string) => boolean,
  *            agentAuth?: (login: string, id: string) => Promise<string|null>}|null,
+ *          grokLogin?: {fresh: (login: string) => Promise<{saved: string|null, why: string|null}>}|null,
  *          now?: () => number}} deps
  *   `connected` says whether the console has each team key: Anthropic's and OpenAI's
  */
-export function createReviewAgents({ connected, userSettings = null, now = Date.now }) {
+export function createReviewAgents({ connected, userSettings = null, grokLogin = null, now = Date.now }) {
   async function teamKeys() {
     try {
       return { ...(await connected()), why: null };
@@ -135,8 +136,10 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
     const product = agentsRegistry.agent(id).product;
     if (!login || !userSettings?.usesOwnAgentForReviews?.(login, id)) return { use: null, off: true, why: `the author has no ${product} sign-in on for reviews` };
     try {
-      const cred = ownReviewCredential(id, await userSettings.agentAuth(login, id), now());
-      if (cred.why) return { use: null, why: cred.why };
+      // A Grok login that has ended is refreshed first, when it can be (grokLogin.mjs).
+      const renewed = id === 'grok' && grokLogin ? await grokLogin.fresh(login) : null;
+      const cred = ownReviewCredential(id, renewed ? renewed.saved : await userSettings.agentAuth(login, id), now());
+      if (cred.why) return { use: null, why: renewed?.why ?? cred.why };
       return { use: id === 'grok' ? { login, via: cred.via } : { login, provider: cred.provider }, why: null };
     } catch (err) {
       return { use: null, unread: true, why: `the author's ${product} sign-in could not be read: ${String(err?.message ?? err).split('\n')[0]}` };
@@ -192,11 +195,18 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
     const expanded = expandedDefault(login);
     const fallback = agentsRegistry.reviewersOf(bestChoice(available, { expanded }));
     let agents = chosen ?? fallback;
+    // Each reviewer the author chose that the console left out, for the note on the review (reviewSessions.mjs
+    // leftOutNote). Only ids: the session record reaches other people, and why is the state of the author's sign-in.
+    const leftOut = [];
     if (chosen && agents.some((a) => !available[a])) {
       const left = agents.filter((a) => available[a]);
       why.push(`the author chose ${choice}, which this console cannot run now`);
       // Grok Build and OpenCode run on nothing but the author's own sign-in: why each was left out.
-      for (const id of agents.filter((a) => !available[a] && OWN_ONLY_REVIEWERS.includes(a))) why.push(`${agentsRegistry.agent(id).product} left out: ${others[id].why}`);
+      for (const id of agents.filter((a) => !available[a] && OWN_ONLY_REVIEWERS.includes(a))) {
+        why.push(`${agentsRegistry.agent(id).product} left out: ${others[id].why}`);
+        leftOut.push({ agent: id });
+      }
+      for (const id of agents.filter((a) => !available[a] && !OWN_ONLY_REVIEWERS.includes(a))) leftOut.push({ agent: id });
       agents = left.length ? left : fallback;
     }
     if (team.why) why.push(team.why);
@@ -215,7 +225,7 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
     const unread = [codexOwn, ...Object.values(others)].filter((o) => o.unread);
     for (const o of unread) if (!why.some((w) => w.endsWith(o.why))) why.push(o.why);
     return {
-      agents, choice, ...codex, ...(Object.keys(ownSignIns).length ? { ownSignIns } : {}),
+      agents, choice, leftOut, ...codex, ...(Object.keys(ownSignIns).length ? { ownSignIns } : {}),
       why: why.length ? why.join('; ') : null, keysUnread: Boolean(team.why || unread.length), expanded,
     };
   }

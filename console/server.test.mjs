@@ -3515,3 +3515,37 @@ test('a hosted console pushes the live list only when its host says who is still
   assert.equal(expired, true);
   assert.ok(!second.body().includes('after the identity expired'));
 });
+
+test('My settings says a saved Grok login has expired for reviews, and gives the reason, rather than a plain saved', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const state = { value: { state: 'expired', endsAt: 1, why: 'the author\'s saved Grok Build login has expired, and xAI refused to refresh it: save a new one' } };
+  const asked = [];
+  const grokLogin = {
+    status: async (login) => { asked.push(login); return state.value; },
+    cached: () => state.value,
+    forget: (login) => asked.push(`forget ${login}`),
+  };
+  const userSettings = {
+    refresh: async () => {},
+    view: () => ({
+      claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: true, available: true,
+      agentAuth: Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, { set: true, savedAt: '2026-11-18T08:00:00.000Z' }])),
+    }),
+    setAgentAuth: async () => {},
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, auth, userSettings, grokLogin });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+  const mine = JSON.parse(await getBody(port, '/api/my', as));
+  assert.deepEqual(mine.agentAuth.grok, { set: true, savedAt: '2026-11-18T08:00:00.000Z', state: 'expired', endsAt: 1, why: state.value.why });
+  assert.equal(mine.agentAuth.opencode.state, undefined, 'only the Grok login ends this way');
+  assert.deepEqual(asked, ['mia-dev']);
+  // Saving a new login drops what was known of the old.
+  const saved = await post(port, '/api/my/agent-auth/grok', { value: 'xai-own-key-0123456789' }, as);
+  assert.equal(saved.status, 200);
+  assert.ok(asked.includes('forget mia-dev'));
+});

@@ -8,8 +8,9 @@
 //   own xAI key (xai-…)            GET https://api.x.ai/v1/models, Authorization: Bearer <key>: every xAI model, so the
 //                                  image and video ones, which a coding session cannot use, are left out
 //
-// The console never refreshes a login: that rotates its refresh token, which the person's sessions hold. A login whose
-// `expires_at` has passed is not sent at all, and gives the person's last list read, or none, and says so. Nothing read
+// An expired login is refreshed first when it can be (grokLogin.mjs, which says when it cannot: a Grok session of the
+// person's holds its refresh token). One whose `expires_at` has passed still is not sent at all, and gives the person's
+// last list read, or none, and says so. Nothing read
 // here is logged but the login, the source, a status and a count: never a token, an email or a name from auth.json.
 
 import agents from '../shared/agents.cjs';
@@ -73,6 +74,17 @@ export function modelsFrom(body) {
 }
 
 /**
+ * The entry of a parsed auth.json that Grok calls with, and the scope it is keyed by. The login's entry is keyed
+ * `https://auth.x.ai::<client id>`; any other entry with a key is read the same way after it.
+ * @returns {{scope?: string, entry?: object}}  empty when no entry has a token
+ */
+export function loginEntryOf(auth) {
+  const entries = Object.entries(auth ?? {}).filter(([, e]) => e && typeof e === 'object' && typeof e.key === 'string' && e.key);
+  const [scope, entry] = entries.find(([s]) => s.startsWith('https://auth.x.ai::')) ?? entries[0] ?? [];
+  return entry ? { scope, entry } : {};
+}
+
+/**
  * How a saved Grok sign-in reaches a catalog: where, its header, and which kind it is.
  * @param {string} saved  an `xai-` key, or the JSON of ~/.grok/auth.json (checkSignIn in shared/agents.cjs)
  * @returns {{url: string, base: string, authorization: string, source: 'login'|'key'}|{expired: true}|null}  null:
@@ -90,9 +102,7 @@ export function credentialOf(saved, now = Date.now(), { loginUpstream = LOGIN_UP
     return null;
   }
   if (!auth || typeof auth !== 'object') return null;
-  // The login's entry is keyed `https://auth.x.ai::<…>`; any other entry with a key is read the same way after it.
-  const entries = Object.entries(auth).filter(([, e]) => e && typeof e === 'object' && typeof e.key === 'string' && e.key);
-  const [, entry] = entries.find(([scope]) => scope.startsWith('https://auth.x.ai::')) ?? entries[0] ?? [];
+  const { entry } = loginEntryOf(auth);
   if (!entry) return null;
   if (entry.key.startsWith('xai-') && !entry.refresh_token) return key(entry.key);
   let expiresAt = null;
@@ -116,7 +126,7 @@ export function credentialOf(saved, now = Date.now(), { loginUpstream = LOGIN_UP
 // The errors this module throws itself, whose messages hold nothing of the person's.
 const OWN_MESSAGES = new Set(['the catalog is too large', 'the answer is not JSON']);
 
-export function createGrokModels({ userSettings = null, fetch: fetchImpl = globalThis.fetch, loginUpstream = LOGIN_UPSTREAM, keyUpstream = KEY_UPSTREAM, now = Date.now } = {}) {
+export function createGrokModels({ userSettings = null, grokLogin = null, fetch: fetchImpl = globalThis.fetch, loginUpstream = LOGIN_UPSTREAM, keyUpstream = KEY_UPSTREAM, now = Date.now } = {}) {
   // By login: the last list read, when, and the last failed try.
   const kept = new Map();
   const reading = new Map();
@@ -124,7 +134,7 @@ export function createGrokModels({ userSettings = null, fetch: fetchImpl = globa
   async function read(login) {
     let saved;
     try {
-      saved = userSettings ? await userSettings.agentAuth(login, 'grok') : null;
+      saved = grokLogin ? (await grokLogin.fresh(login)).saved : userSettings ? await userSettings.agentAuth(login, 'grok') : null;
     } catch (err) {
       console.warn('grokModels: credential not read', { login, message: err?.message });
       return { failed: 'the console could not read your Grok Build sign-in' };
@@ -140,7 +150,7 @@ export function createGrokModels({ userSettings = null, fetch: fetchImpl = globa
     }
     if (cred.expired) {
       console.log('grokModels: own login expired, not read', { login });
-      return { failed: 'your saved Grok Build login has expired: a Grok session refreshes it when it stops, or save a new one' };
+      return { failed: 'your saved Grok Build login has expired and the console could not refresh it: a Grok session refreshes it when it stops, or save a new one' };
     }
     try {
       const answer = await fetchImpl(cred.url, {

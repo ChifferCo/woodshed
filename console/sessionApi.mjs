@@ -389,7 +389,10 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
   // it when they saved one, and otherwise on the team's Gemini key through /gemini (`signIn.optional`): the answer then has
   // no `agentAuth`, which is how the session knows.
   const own = agents.OWN_SIGN_IN_AGENTS.includes(session.options?.agent) ? agents.agent(session.options.agent) : null;
-  const agentAuth = own && userSettings ? await userSettings.agentAuth(session.owner, own.id) : null;
+  // Read in the sign-in's turn, so a refresh by the console (grokLogin.mjs) is done, or not begun, when it is handed out.
+  const agentAuth = own && userSettings
+    ? await (userSettings.agentAuthTurn ? userSettings.agentAuthTurn(session.owner, own.id, ({ read }) => read()) : userSettings.agentAuth(session.owner, own.id))
+    : null;
   if (own && !agentAuth && !own.signIn.optional) {
     console.warn(`sessionApi: no ${own.product} sign-in for the owner`, { sessionId: session.id, owner: session.owner, agent: own.id });
     return reply(res, 409, { error: `@${session.owner} has no ${own.product} sign-in saved on My settings` });

@@ -4,7 +4,7 @@
 // another program can build one from services of its own and serve it from its own servers (README.md, "Embedding the
 // console").
 
-import { createAnalytics } from './analytics.mjs';
+import { createAnalytics, warmAtStart } from './analytics.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -42,6 +42,7 @@ import { createGeminiProxy } from './geminiProxy.mjs';
 import { createReviewAgentProxy } from './reviewAgentProxy.mjs';
 import { createCodexModels } from './codexModels.mjs';
 import { createGrokModels } from './grokModels.mjs';
+import { createGrokLogin } from './grokLogin.mjs';
 import { createSessionApi, sessionForToken } from './sessionApi.mjs';
 import { createSessionStarts, sessionForStartToken } from './sessionStarts.mjs';
 import { createReviewSource } from './review.mjs';
@@ -421,8 +422,10 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const gemini = createGeminiProxy({ secrets });
   const codexModels = createCodexModels({ userSettings, teamCredential: openai.teamCredential });
   // A review's Grok Build and OpenCode, on its author's own sign-in alone: there is no team key for them.
-  const reviewAgentProxy = createReviewAgentProxy({ userSettings });
-  const grokModels = createGrokModels({ userSettings });
+  // A Grok login is refreshed by the console only while none of its owner's Grok sessions runs (grokLogin.mjs).
+  const grokLogin = createGrokLogin({ userSettings, sessions: () => fleet.sessions() });
+  const reviewAgentProxy = createReviewAgentProxy({ userSettings, grokLogin });
+  const grokModels = createGrokModels({ userSettings, grokLogin });
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
   const access = mcpAccess({ loaded, secrets, launcher: provider.launcher });
@@ -431,7 +434,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // Who reviews a pull request in a review session, as its author chose on My settings, from what the team keys and their
   // own sign-ins can run.
   const reviewAgents = createReviewAgents({
-    userSettings,
+    userSettings, grokLogin,
     connected: async () => {
       const [claude, codex] = await Promise.all([anthropic.teamCredential(), openai.teamCredential()]);
       return { claude: Boolean(claude), codex: Boolean(codex) };
@@ -495,6 +498,13 @@ export async function createInstallation({ config: loaded, store, provider, trus
   members?.whenGone?.((login) => fleet.releaseAssignments({ login, by: 'the program' }));
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
+  // The Analytics page's pull requests are read again when one closes, and once at start, so a view does not wait for GitHub.
+  const analytics = createAnalytics({
+    config, sessions: () => fleet.sessions(), state: () => store.state, githubFor, gatesOf: fileGatesOf,
+    members: () => (members ? members.view().members.map((m) => m.login) : []),
+  });
+  pullWebhooks.watch({ name: 'analytics', stale: analytics.pullChanged });
+  if (tokens) warmAtStart(analytics);
   // Questions need the bot token to answer, and the session API to hear the answer.
   const asks = slack.canReply && config.sessionApi.host ? createAsks({
     store, fleet, slack, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null,
@@ -581,7 +591,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const handle = createHandler({
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
-    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, grokModels, openaiTeamKey: openai.teamCredential, geminiTeamKey: gemini.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
+    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, grokModels, grokLogin, openaiTeamKey: openai.teamCredential, geminiTeamKey: gemini.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
     workflowLinks: () => projectReader.workflowLinks(),
     projectAccess,
@@ -599,10 +609,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     slackSetup,
     cli,
     // The Analytics page: the fleet's sessions and those kept since they left its list, and each repo's pull requests.
-    analytics: createAnalytics({
-      config, sessions: () => fleet.sessions(), state: () => store.state, githubFor, gatesOf: fileGatesOf,
-      members: () => (members ? members.view().members.map((m) => m.login) : []),
-    }),
+    analytics,
     // Whether a repo's review can run in a session, for `woodshed review`: none with no GitHub App to run it.
     reviewReadiness: config.githubApp || hostApp ? createReviewReadiness({
       publicUrl: config.publicUrl, reviewer: reviewerApp, ownReviewer: !hostApp, appLogin: () => appIdentity.login(),

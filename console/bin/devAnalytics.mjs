@@ -4,6 +4,9 @@
 
 const DAY = 86_400_000;
 const REPO = 'example-org/example-repo';
+// A console with a second repo (DEV_CONSOLE_REPO_SETTINGS=1) has about one change in four on it, for the Repo menu.
+const TOOLS = 'example-org/example-tools';
+const repoOf = (n) => (process.env.DEV_CONSOLE_REPO_SETTINGS === '1' && n % 4 === 0 ? TOOLS : REPO);
 // Each person: sessions a week, pull requests a week without Woodshed, and how many of their sessions open one.
 const TEAM = [
   { login: 'octocat', sessions: 9, without: 1, opens: 0.6, agent: 'claude' },
@@ -53,7 +56,8 @@ export function devAnalytics(now) {
     if (rand() < 0.7) reviews.push({ state: 'COMMENTED', author: { login: 'claude[bot]', __typename: 'Bot' } });
     if (rand() < 0.35) reviews.push({ state: 'COMMENTED', author: { login: 'codex-reviewer[bot]', __typename: 'Bot' } });
     pulls.push({
-      number, url: `https://github.com/${REPO}/pull/${number}`, title: TITLES[number % TITLES.length],
+      __repo: repoOf(number),
+      number, url: `https://github.com/${repoOf(number)}/pull/${number}`, title: TITLES[number % TITLES.length],
       createdAt: new Date(at).toISOString(), mergedAt: merged ? new Date(at + mergeHours * 3_600_000).toISOString() : null,
       closedAt: merged ? new Date(at + mergeHours * 3_600_000).toISOString() : closed ? new Date(at + 3 * DAY).toISOString() : null,
       state: merged ? 'MERGED' : closed ? 'CLOSED' : 'OPEN', isDraft: false, additions: size, deletions: Math.round(size * rand() * 0.6),
@@ -77,7 +81,7 @@ export function devAnalytics(now) {
         const branch = `woodshed/${person.login}-${sessionId}`;
         const opened = rand() < person.opens ? pull({ login: person.login, at: at + 2 * 3_600_000, branch, woodshed: true }) : null;
         usageKept.push({
-          id: sessionId, project: 'example-repo', repo: REPO, kind: 'work', login: person.login, private: rand() < 0.7,
+          id: sessionId, project: opened && opened.__repo === TOOLS ? 'example-tools' : 'example-repo', repo: opened?.__repo ?? REPO, kind: 'work', login: person.login, private: rand() < 0.7,
           agent: rand() < 0.8 ? person.agent : 'codex', createdAt: new Date(at).toISOString(), title: TITLES[id % TITLES.length],
           branch, prUrls: opened ? [opened.url] : [], number: null, tier: null, status: 'stopped',
         });
