@@ -4956,3 +4956,20 @@ test('a working session slow to answer delays only its own next live read, as th
   answer({ state: 'working' });
   await settle();
 });
+
+test('a reviewer the author chose and the console left out is said so on the review, in the console\'s own words', async () => {
+  const leftOut = [{ agent: 'grok', code: 'expired' }];
+  const { fleet, calls } = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['claude'], choice: 'claude+grok', leftOut, why: 'Grok Build left out: SECRET-LOG-TEXT' }) } });
+  await fleet.reviewOnTag({ number: 7 });
+  const [session] = fleet.sessions();
+  assert.deepEqual(session.review.leftOut, leftOut, 'kept on the review session');
+  assert.match(calls.comments[0].body, /Grok Build was left out: your saved login has expired\./, 'the running comment');
+  await fleet.reviewFinished(session, { ...REVIEW_RESULT, summary: 'Looks good. Grok Build was left out: and so I say.' });
+  assert.match(calls.reviews[0].body, /Looks good\.[\s\S]*\n\nGrok Build was left out: your saved login has expired\.$/);
+  assert.match(calls.comments.at(-1).body, /Grok Build was left out: your saved login has expired\.$/);
+  assert.ok(![calls.reviews[0].body, ...calls.comments.map((c) => c.body)].some((b) => b.includes('SECRET-LOG-TEXT')), 'the console\'s log reason never reaches GitHub');
+  const plain = reviewSetup();
+  await plain.fleet.reviewOnTag({ number: 7 });
+  await plain.fleet.reviewFinished(plain.fleet.sessions()[0], REVIEW_RESULT);
+  assert.doesNotMatch(plain.calls.reviews[0].body, /left out/);
+});
