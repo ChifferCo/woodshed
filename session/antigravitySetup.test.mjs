@@ -27,7 +27,7 @@ function session(t, { checkout = (repo) => fs.writeFileSync(path.join(repo, 'AGE
   const configure = (auth = 'key', env = {}) => {
     const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }',
       'agentDir() { [ ! -L "$1" ] || die "$2\'s folder $1 is a symlink"; mkdir -p "$1"; chmod 700 "$1"; }',
-      `. "${SESSION_DIR}/antigravitySetup.sh"`, `configureAntigravity ${auth}`].join('\n');
+      `. "${SESSION_DIR}/antigravitySetup.sh"`, `configureAntigravity ${auth}`, 'echo "[flag] ${WOODSHED_REPO_STARTUP_CODE:-unset}"'].join('\n');
     try {
       const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, HOME: home, REPO_DIR: repo, SESSION_DIR, WOODSHED_RULES_FILE: path.join(tmp, 'woodshed-rules.md'), ...env }) });
       return { out, read };
@@ -131,7 +131,9 @@ test('a repo that ships hooks, MCP servers or plugins is a warning on the team\'
   const warned = key.configure('key');
   assert.ok(!warned.failed, warned.out);
   assert.match(warned.out, /WARNING: the repo ships hooks, MCP servers or plugins that Antigravity CLI runs by itself \(files: .*\.agents\/hooks\.json .*\.agent\/plugins/);
-  // It leaves a marker naming the files, for statusd, which then puts no personal sign-in of the owner's in the container.
+  // It exports what statusd is started with (the entrypoint execs statusd after this), which no code in the container can change.
+  assert.match(warned.out, /\[flag\] 1/);
+  // It leaves a marker naming the files, for a statusd started again.
   assert.match(key.read('.config/woodshed/repo-startup-code'), /\.agents\/hooks\.json\n\.agent\/plugins\n?/);
   assert.equal(fs.statSync(path.join(key.home, '.config/woodshed/repo-startup-code')).mode & 0o777, 0o600);
   // The owner's own login, or another agent's beside it: what such code could read.
@@ -147,6 +149,7 @@ test('a repo that ships hooks, MCP servers or plugins is a warning on the team\'
   const plain = session(t, { checkout: (repo) => { fs.mkdirSync(path.join(repo, '.agents/rules'), { recursive: true }); fs.writeFileSync(path.join(repo, '.agents/rules/a.md'), 'x'); } });
   assert.doesNotMatch(plain.configure('own').out, /ships/);
   assert.equal(plain.read('.config/woodshed/repo-startup-code'), null, 'no startup code, no marker');
+  assert.match(plain.configure('key').out, /\[flag\] unset/, 'no startup code, nothing exported');
   // A start that is refused went no further: nothing left behind, and nothing for agy to run.
   const refused = session(t, shipped);
   assert.ok(refused.configure('own').failed);

@@ -12,7 +12,9 @@
 ANTIGRAVITY_DIR=${ANTIGRAVITY_DIR:-$HOME/.gemini}
 # Left when a start went ahead on the team's key although the checkout ships startup code (below): agy then runs that code
 # for as long as it is open, as the session's user, and statusd refuses to put a personal sign-in of the owner's in the container
-# while the marker is there (session/statusd.mjs, refuseWhileRepoStartupCodeRuns). It names the files, never anything else.
+# from then on (session/statusd.mjs, refuseWhileRepoStartupCodeRuns). That code runs as the user who owns this file, so it can
+# delete it: statusd's own memory and the WOODSHED_REPO_STARTUP_CODE variable it is started with, which no code in the
+# container can change, are what it relies on; this file only names the files, and covers a statusd that was started again.
 REPO_STARTUP_CODE_MARKER=${REPO_STARTUP_CODE_MARKER:-$HOME/.config/woodshed/repo-startup-code}
 
 # What a branch can ship that agy runs by itself when it opens in a trusted folder: hooks, MCP servers and plugins, from
@@ -96,6 +98,8 @@ configureAntigravity() {
     fi
     log "WARNING: the repo ships hooks, MCP servers or plugins that Antigravity CLI runs by itself" "(files: $(tr '\n' ' ' <<< "$found"))"
     # Agents started beside this one later must not be given a personal sign-in: that code, already running, would read it.
+    # The variable reaches statusd, which the entrypoint starts after this; nothing the repo runs can unset it there.
+    export WOODSHED_REPO_STARTUP_CODE=1
     mkdir -p "$(dirname "$REPO_STARTUP_CODE_MARKER")"
     (umask 077 && printf '%s\n' "$found" > "$REPO_STARTUP_CODE_MARKER")
   fi

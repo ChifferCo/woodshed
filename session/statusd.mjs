@@ -69,7 +69,7 @@
 import { createPaneLock, reopenUnderLock } from './paneLock.mjs';
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
-import { appendFileSync, createReadStream, existsSync, openSync, readFileSync } from 'node:fs';
+import { appendFileSync, createReadStream, existsSync, lstatSync, openSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -671,9 +671,27 @@ const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.
 // code by itself as this user for as long as it is open (antigravitySetup.sh leaves this marker). No personal sign-in of the
 // owner's goes into the container after it: the code could read it. A new session, started with nothing of the sort running,
 // is the way round.
+//
+// That code runs as the user who owns the marker file, so it can delete it, and the checkout's files too: what this relies on
+// is statusd's own memory (`repoStartupCodeRuns`), which the entrypoint's variable seeds when the session's own agent is the
+// Antigravity CLI that started it and which an extra Antigravity start sets, and which no code in the container can reach.
+// The file is the third source, for a statusd that was started again.
 const REPO_STARTUP_CODE_MARKER = process.env.REPO_STARTUP_CODE_MARKER || path.join(os.homedir(), '.config/woodshed/repo-startup-code');
+let repoStartupCodeRuns = process.env.WOODSHED_REPO_STARTUP_CODE === '1';
+// What a branch can ship that agy runs by itself in a trusted folder (antigravitySetup.sh, repoRunsCode).
+const REPO_STARTUP_CODE_FILES = ['.agents', '.agent', '_agents', '_agent'].flatMap((dir) => ['hooks.json', 'mcp_config.json', 'plugins.json', 'plugins'].map((f) => path.join(REPO_DIR, dir, f)));
+function repoShipsStartupCode() {
+  return REPO_STARTUP_CODE_FILES.some((file) => {
+    try {
+      lstatSync(file);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
 function refuseWhileRepoStartupCodeRuns(what) {
-  if (!existsSync(REPO_STARTUP_CODE_MARKER)) return;
+  if (!repoStartupCodeRuns && !existsSync(REPO_STARTUP_CODE_MARKER)) return;
   throw Object.assign(new Error(`Antigravity CLI started in this session on a repo that ships startup code, which runs by itself and could read ${what}: it is not put here. Start a new session to use it`), { status: 409 });
 }
 
@@ -812,6 +830,15 @@ async function antigravityBeside(given) {
   if (!existsSync(REAL_AGY)) throw Object.assign(new Error('Antigravity CLI is not in this session\'s image: start a new session'), { status: 409 });
   if (ANTIGRAVITY) return { env: { WOODSHED_AGY_AUTH: process.env.WOODSHED_AGY_AUTH === 'own' ? 'own' : 'key' } };
   const own = typeof given === 'string' && given.trim() !== '';
+  // The owner's login is not written anywhere before these are asked: agy started on a repo that ships startup code, or about
+  // to be, runs it as this user, which could read the login (the setup script refuses the second as well, but only after
+  // the file would be written).
+  if (own) {
+    refuseWhileRepoStartupCodeRuns('the owner\'s Google login');
+    if (repoShipsStartupCode()) {
+      throw Object.assign(new Error('the repo ships hooks, MCP servers or plugins which Antigravity CLI would run as it opens, where it can read a saved sign-in: it is not started on this branch'), { status: 409 });
+    }
+  }
   // A login there before this start is not this start's to take back.
   const hadLogin = existsSync(ANTIGRAVITY_LOGIN_FILE);
   const takeBackLogin = async () => {
@@ -836,6 +863,8 @@ async function antigravityBeside(given) {
     if (own) await takeBackLogin();
     throw Object.assign(new Error(err.stderr?.trim() || 'could not set up Antigravity CLI in this session'), { status: 409 });
   }
+  // Set up and about to open: a repo that ships startup code has it run from here, for as long as agy is open.
+  if (repoShipsStartupCode()) repoStartupCodeRuns = true;
   console.log('statusd: Antigravity CLI agent beside another set up', { own });
   return {
     env: { WOODSHED_AGY_AUTH: own ? 'own' : 'key' },

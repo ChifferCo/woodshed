@@ -19,9 +19,11 @@
 // those APIs' own paths, but a model call that names one by its resource name would still read it under the team's project,
 // whoever put it there. A call the console cannot read as JSON does not go either.
 //
-// A session that has seen production data (a tainted one) reaches Google only through here, and its calls are also checked
-// for what asks Google to reach out for it (grounding with Google Search, the URL context tool), which would take what the
-// session saw past its network's lockdown, as anthropicProxy.mjs does for Anthropic's.
+// A session whose lockdown has started (fleet.isLocked) is refused at the door, and its calls on their way are cut from the
+// moment each was authorized, a body still arriving included; each call is asked again, whole, just before it goes. A tainted
+// session still running its own Antigravity reaches Google only through here, and its calls are also checked for what asks
+// Google to reach out for it (grounding with Google Search, the URL context tool), which would take what the session saw
+// past its network's lockdown, as anthropicProxy.mjs does for Anthropic's.
 
 import http from 'node:http';
 import https from 'node:https';
