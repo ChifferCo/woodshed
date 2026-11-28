@@ -156,7 +156,7 @@ runGrok() {
     > "$GROK_REVIEW_HOME/config.toml"
   local model flags=()
   model=$(modelFor grok)
-  [ -n "$model" ] && flags=(--model "$model") && say "Grok Build reviews on the model $model the author picked"
+  [ -n "$model" ] && flags=(--model "$model") && say "Grok Build reviews on the model the author picked"
   XAI_API_KEY=$SESSION_TOKEN GROK_HOME=$GROK_REVIEW_HOME GROK_MODELS_BASE_URL=$WOODSHED_CONSOLE_URL/grok/v1 \
     WOODSHED_CLAUDE_STATE_FILE=$GROK_REVIEW_HOME/state.json \
     timeout --kill-after=30 "$AGENT_MINUTES"m "$SESSION_DIR/bin/grok" -p "$(agentPrompt "Grok Build" "$GROK_DIR")" \
@@ -193,8 +193,8 @@ runOpencode() {
   # Only the provider that is on can serve a model: the pick must be that provider's (`openai/gpt-5.5`).
   local model flags=()
   model=$(modelFor opencode)
-  if [ -n "$model" ] && [ "${model%%/*}" = "$provider" ]; then flags=(--model "$model"); say "OpenCode reviews on the model $model the author picked"
-  elif [ -n "$model" ]; then say "OpenCode's picked model $model is not on $provider, which this review runs on, so it uses the default"; fi
+  if [ -n "$model" ] && [ "${model%%/*}" = "$provider" ]; then flags=(--model "$model"); say "OpenCode reviews on the model the author picked"
+  elif [ -n "$model" ]; then say "OpenCode's picked model is not on $provider, which this review runs on, so it uses the default"; fi
   XDG_DATA_HOME=$home/data XDG_CONFIG_HOME=$home/config OPENCODE_DISABLE_AUTOUPDATE=1 \
     timeout --kill-after=30 "$AGENT_MINUTES"m "$SESSION_DIR/bin/opencode" run --pure --auto "${flags[@]}" --format json \
     "$(agentPrompt OpenCode "$OPENCODE_DIR")" > "$DIR/logs/opencode.jsonl" 2>&1 < /dev/null
@@ -252,7 +252,7 @@ runCodex() {
   # codex's own default model unless the author picked one.
   CODEX_MODEL=()
   model=$(modelFor codex)
-  [ -n "$model" ] && CODEX_MODEL=(--model "$model") && say "Codex reviews on the model $model the author picked"
+  [ -n "$model" ] && CODEX_MODEL=(--model "$model") && say "Codex reviews on the model the author picked"
   prepareAgentDir "$CODEX_DIR" Codex "$1" || { say "Could not write Codex's review prompt"; return 0; }
   # The container is the sandbox, as for a Codex session; the review's GitHub token is read-only, and no sign-in is here.
   if [ "$via" = chatgpt ]; then

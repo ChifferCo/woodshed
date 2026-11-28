@@ -166,7 +166,7 @@
   // model name is. Not the whole of shared/secretLike.mjs (an ES module, and this file is also the browser's): the console
   // checks a pick against that as well (userSettings.mjs).
   function looksLikeSecret(part) {
-    return /^(?:gh[pousr]_|github_pat_|glpat-|sk-|sk_|rk_|xai-|gsk_|hf_|npm_|pplx-|AIza|AKIA|ASIA|xox[a-z]-|wsc_|wt_)/i.test(part)
+    return /^(?:gh[pousr]_|github_pat_|glpat-|sk-|sk_|rk_|xai-|gsk_|hf_|npm_|pplx-|AIza|AKIA|ASIA|xox[a-z]-|xapp-|xoxe\.|wsc_|wt_)/i.test(part)
       || (part.length >= 32 && /^[A-Za-z0-9_]+$/.test(part) && /[a-z]/.test(part) && /[A-Z]/.test(part) && /\d/.test(part));
   }
 

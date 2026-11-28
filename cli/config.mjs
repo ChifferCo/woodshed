@@ -188,6 +188,10 @@ export async function configCommand({ origin, rest }, ctx) {
 
   const read = await ask('/api/cli/config');
   if (read.refusal) throw fail(read.refusal.error);
+  // A console from before model picks would take the models-only body as `choice: null` and reset who reviews.
+  if (sub === 'set' && key === 'review-models' && !Object.hasOwn(read.body, 'review-models')) {
+    throw fail(`${origin} is a console from before review models: it would reset who reviews. Update it first`);
+  }
   const current = view(read.body);
   // What is sent back (the other half of the git identity) is the console's own text, never the printable copy: that
   // would save a mark printable() took out as a space.

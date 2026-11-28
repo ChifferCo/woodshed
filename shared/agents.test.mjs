@@ -110,6 +110,8 @@ test('review models: Claude Code takes its named models, the others a model name
   assert.equal(agents.reviewModelOk('grok', `AIza${'aB1'.repeat(11)}`), false, 'a Google API key');
   assert.equal(agents.reviewModelOk('codex', 'aB1'.repeat(11)), false, 'a long mixed-case run is no model name');
   assert.equal(agents.reviewModelOk('opencode', 'anthropic/claude-sonnet-4-5-20250929'), true);
+  assert.equal(agents.reviewModelOk('opencode', `openai/xapp-1-A0123BCDEF-1234567890123-${'ab12'.repeat(16)}`), false, 'a Slack app-level token');
+  assert.equal(agents.reviewModelOk('opencode', `openai/xoxe.xapp-1-A0123BCDEF-${'ab12'.repeat(8)}`), false);
   assert.equal(agents.reviewModelOk('codex', ''), false, 'empty is no pick');
   assert.equal(agents.reviewModelOk('nobody', 'x'), false);
   assert.deepEqual(agents.reviewModelsOf({ codex: 'gpt-5.5', claude: 'opus', grok: 'bad model', other: 'x', __proto__: { opencode: 'a/b' } }), { claude: 'opus', codex: 'gpt-5.5' }, 'in the registry\'s order, the misshapen and unknown left out');

@@ -378,8 +378,10 @@ test('the models an author picked are passed to each reviewer, and a reviewer wi
   const codex = LOGGING('${@: -1}');
   const grok = LOGGING('$2');
   const opencode = LOGGING('${@: -1}');
-  await runReview(t, { agents: 'claude codex grok opencode', via: 'key', provider: 'openai', claude, codex, grok, opencode, models: 'claude=sonnet codex=gpt-5.5 grok=grok-4:beta opencode=openai/ft:gpt-5:acme' });
+  const run = await runReview(t, { agents: 'claude codex grok opencode', via: 'key', provider: 'openai', claude, codex, grok, opencode, models: 'claude=sonnet codex=gpt-5.5 grok=grok-4:beta opencode=openai/ft:gpt-5:acme' });
   const seen = fs.readFileSync(log, 'utf8');
+  assert.match(run.output, /Grok Build reviews on the model the author picked/);
+  assert.doesNotMatch(run.output, /grok-4:beta|gpt-5\.5|ft:gpt-5/, 'the pane never shows a pick');
   assert.match(seen, /^claude --model sonnet -p <prompt> /m);
   assert.match(seen, /^codex exec --model gpt-5\.5 /m);
   assert.match(seen, /^grok -p <prompt> --model grok-4:beta /m, 'the exact model, colon and all');

@@ -231,7 +231,7 @@ try {
     'the review started in review mode': /mode: review|SESSION_MODE=review|Review of pull request/.test(logOf() + pane),
     'grok started in review mode': /Grok Build reviews on the author's own sign-in/.test(pane),
     'opencode started in review mode': new RegExp(`OpenCode reviews on the author's own ${OPENCODE_PROVIDER} key`).test(pane),
-    ...Object.fromEntries(['grok', 'opencode'].filter((id) => MODELS[id]).map((id) => [`${id} was run on the model picked, ${MODELS[id]}`, pane.includes(`the model ${MODELS[id]} the author picked`)])),
+    ...Object.fromEntries(['grok', 'opencode'].filter((id) => MODELS[id]).map((id) => [`${id} was run on the model picked, ${MODELS[id]}`, pane.includes(`${id === 'grok' ? 'Grok Build' : 'OpenCode'} reviews on the model the author picked`)])),
     'every call reached the console\'s proxy with the session\'s token alone': proxyCalls.length > 0 && proxyCalls.every((c) => c.sessionToken),
     'grok\'s first model call reached the console\'s proxy': proxyCalls.some((c) => c.url.startsWith('/grok/v1/')),
     [`the proxy sent grok's calls on with the made-up ${GROK_VIA === 'login' ? 'login, to the login\'s upstream' : 'xAI key'}`]: grokCalls.length > 0 && grokCalls.every((c) => c.grokKey),
