@@ -2610,6 +2610,11 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   passes that start `{latestImage: true}` as `start`'s third argument: the launcher leaves an outdated machine, its data
   with it, and makes a new one (`fleet: resuming a private session` with `latestImage`). One that threw answers none
   (`fleet: kept machine not read`).
+- A launcher's `forget(sessionId, {why})`, for one that keeps something per stopped session (`providers/README.md`,
+  "Telling the launcher a session is gone"): called when a shared session's kept data is cleaned up or a private session is
+  removed, never while a Resume of it is possible. A call that threw or took over 30 s is kept in `state.forgetPending` and
+  tried again every 10 minutes (`fleet: launcher not told the session was forgotten`, then `fleet: launcher told the
+  session was forgotten`); it never fails or holds up the cleanup.
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
   `toMessage` makes the message from GitHub's own payload): the GitHub poll then runs only as a fallback.
 

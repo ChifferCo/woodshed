@@ -641,6 +641,10 @@ URL on top of each env file's Repo settings values
   10 minutes; one with no session at all shows there too, with **Delete**.
   `heldData: the Claude homes could not be listed` means the console's role
   lost `s3:ListBucket` on the homes bucket, and the page says so.
+- **A launcher still keeps something for a session that was cleaned up or removed.** A launcher that has `forget` is told
+  once the session cannot be resumed (`fleet: launcher told the session was forgotten` with `why`). A call that failed or
+  did not answer in 30 s logs `fleet: launcher not told the session was forgotten` with `why` and `message`, and is tried
+  again every 10 minutes from `state.forgetPending` in `state.json`; a launcher without `forget` is never asked.
 - **An ended session is still on the list, or one vanished.** A deleted shared session leaves the list the Console
   settings page's days after its delete, or at once with Remove in its ⋯ menu: the console logs `fleet: deleted
   session taken off the list` with `why`. One whose Claude home is still being deleted waits for it.

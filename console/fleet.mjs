@@ -68,6 +68,8 @@ const TITLE_CHARS = 80;
 const PR_STATE_CHECK_MS = 15 * 60_000;
 // A Claude home whose delete failed is tried again after this, until it goes.
 const HOME_DELETE_RETRY_MS = 10 * 60_000;
+const FORGET_RETRY_MS = 10 * 60_000;
+const FORGET_TIMEOUT_MS = 30_000;
 // ECS's words when the account's Fargate quota, or the region's capacity, has no room for another task.
 const NO_ROOM_RE = /limit on the number of vCPUs|LimitExceeded|Capacity is unavailable|RESOURCE:(CPU|MEMORY)/i;
 // A start AWS had no room for waits in the queue this long before it is tried again.
@@ -298,7 +300,7 @@ const MESSAGE_PREVIEW_CHARS = 200;
  *   it, every repo has the console's label and both on
  */
 export function createFleet({
-  config, store, launcher, github, statusd = callStatusd, startableRepos = null, now = Date.now, later = laterUnref, databases = null, slack = null, homes = null,
+  config, store, launcher, github, statusd = callStatusd, startableRepos = null, now = Date.now, later = laterUnref, forgetTimeoutMs = FORGET_TIMEOUT_MS, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, qaRecordings = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, reviewGates = async (name) => withDefaultReview(await pullRequests(name)), projectBlocker = async () => null, githubFor = null,
   consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null, repoTriggers = null, reviewAgents = null,
@@ -323,6 +325,7 @@ export function createFleet({
   // Private sessions whose statusd last refused or missed review feedback, so it is warned of once.
   const untypedSaid = new Set();
   const homeDeleteTriedAt = new Map();
+  const forgetTriedAt = new Map();
   let ticking = false;
   // The quick check has its own guard: sharing the tick's would skip ticks while starting sessions time out.
   let checkingStarts = false;
@@ -591,6 +594,56 @@ export function createFleet({
     if (!Number.isFinite(from) || now() < from + after) return;
     console.log('fleet: tainted session removed', { id: session.id, owner: session.owner, why: `stopped ${spanText(after)} ago` });
     await removePrivateSession({ owner: session.owner, id: session.id });
+  }
+
+  // Tells the launcher, once, that a session is gone for good, for one that keeps something per stopped session (a
+  // machine kept for a Resume). A launcher without `forget` is unaffected. The call never fails the caller: one that
+  // throws or does not answer in time is queued in `state.forgetPending` and tried again on a later tick, so the
+  // launcher may be asked more than once for the same session and must take that.
+  async function tellLauncherForgotten(session, why) {
+    if (typeof launcher.forget !== 'function') return;
+    const id = session.id;
+    if (!(state.forgetPending ??= []).some((item) => item.id === id)) {
+      state.forgetPending.push({ id, why });
+      store.save();
+    }
+    await attemptForget(id);
+  }
+
+  async function attemptForget(id) {
+    const item = (state.forgetPending ?? []).find((i) => i.id === id);
+    if (!item) return;
+    // A session still on the list that can be resumed (kept, running, or a private one) is never forgotten.
+    const listed = find(id);
+    if (listed && (listed.kept || listed.owner || ACTIVE_STATUSES.has(listed.status) || listed.status === 'stopping')) {
+      state.forgetPending = state.forgetPending.filter((i) => i !== item);
+      store.save();
+      return;
+    }
+    forgetTriedAt.set(id, now());
+    let timer;
+    try {
+      await Promise.race([
+        launcher.forget(id, { why: item.why }),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('the launcher did not answer in time')), forgetTimeoutMs); timer.unref?.(); }),
+      ]);
+    } catch (err) {
+      console.warn('fleet: launcher not told the session was forgotten', { id, why: item.why, message: firstLine(err) });
+      return;
+    } finally {
+      clearTimeout(timer);
+    }
+    forgetTriedAt.delete(id);
+    state.forgetPending = (state.forgetPending ?? []).filter((i) => i !== item);
+    store.save();
+    console.log('fleet: launcher told the session was forgotten', { id, why: item.why });
+  }
+
+  async function retryForgets() {
+    for (const item of [...(state.forgetPending ?? [])]) {
+      if (now() - (forgetTriedAt.get(item.id) ?? -Infinity) < FORGET_RETRY_MS) continue;
+      await attemptForget(item.id);
+    }
   }
 
   // A tainted session's saved home that could not be deleted when it was removed: tried again until it goes.
@@ -1446,6 +1499,7 @@ export function createFleet({
       for (const session of [...state.sessions]) await safely('tainted session removal', () => removeTainted(session));
       for (const session of [...state.sessions]) await safely('taint notice', () => tellTainted(session));
       await safely('tainted homes', () => retryTaintedHomes());
+      await safely('launcher forgets', () => retryForgets());
       await sweepDatabases();
       await announcer.check();
     } finally {
@@ -1526,6 +1580,7 @@ export function createFleet({
     prCheckedAt.delete(session.id);
     console.log('fleet: kept session cleaned up', { id: session.id, why });
     await deleteHome(session);
+    await tellLauncherForgotten(session, why);
   }
 
   async function deleteHome(session) {
@@ -2343,6 +2398,7 @@ export function createFleet({
     store.save();
     console.log('fleet: private session removed', { id, owner });
     await forgetPrivateData(session);
+    await tellLauncherForgotten(session, 'removed from the console');
   }
 
   // The files attached at its start were kept for each Resume.
@@ -2385,6 +2441,7 @@ export function createFleet({
     const forgotten = forgetUsage(state, owner);
     store.save();
     console.log('fleet: private sessions removed', { owner, stopped: live.length + interrupted.length, removed: theirs.length, usageForgotten: forgotten });
+    for (const session of theirs) await tellLauncherForgotten(session, 'My Woodshed removed');
     return { stopped: live.length + interrupted.length, removed: theirs.length };
   }
 

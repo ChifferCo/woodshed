@@ -81,6 +81,17 @@ machine, what it held with it, and makes a new one; a machine that is not outdat
 option is safe on a start tried again. Neither provider here has one: an ECS task and a local container are made
 anew at every start.
 
+### Telling the launcher a session is gone
+
+A launcher that keeps something per stopped session (a machine or VM held for a Resume, its disk) may have
+`forget(sessionId, {why})`, so it can free that instead of keeping it on a timer of its own. The console calls it when it
+forgets the session for good: a shared session's kept data cleaned up (retention, Delete now) and a private session
+removed (Remove, Remove My Woodshed, a tainted one's removal), and only then: never for a session that is kept, running or
+still on a person's list, so no Resume of it is possible afterwards. It may be called more than once for the same session
+(a failed or unanswered call is tried again every 10 minutes), so it must take that; it may throw, which only queues the
+retry, and a call that does not answer in 30 s counts as failed. A launcher without it is unaffected. Neither provider
+here has one: an ECS task and a local container keep nothing once stopped.
+
 To add one: a folder with an `index.mjs` returning that object, an entry in `console.mjs`'s `PROVIDERS`, its own
 settings in `NEEDS` so the other providers refuse them, and a README in the shape of these two: what it gives, how to
 set it up, how to use it day to day, how to remove it.

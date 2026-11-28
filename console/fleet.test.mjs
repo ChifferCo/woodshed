@@ -18,7 +18,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null, reviewAgents = null, reviewGates = undefined, startableRepos = null } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null, reviewAgents = null, reviewGates = undefined, startableRepos = null, forgetTimeoutMs = undefined } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], startOptions: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
@@ -114,7 +114,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     ...(runsOnName ? { runsOnName } : {}),
   };
   const fleet = createFleet({
-    config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, qaRecordings, now: () => clock, startableRepos,
+    config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, qaRecordings, now: () => clock, startableRepos, forgetTimeoutMs,
     // A read the fleet asks for in a moment (soon) runs when a test says, never by itself.
     later: (fn, ms) => { laters.push({ fn, ms }); },
     pings, pullRequests: async () => gates, ...(reviewGates !== undefined ? { reviewGates: typeof reviewGates === 'function' ? reviewGates : async () => reviewGates } : {}), projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, reviewAgents, ...(consoleLinks ? { consoleLinks } : {}),
@@ -4982,4 +4982,86 @@ test('a reviewer the author chose and the console left out is said so on the rev
   await plain.fleet.reviewOnTag({ number: 7 });
   await plain.fleet.reviewFinished(plain.fleet.sessions()[0], REVIEW_RESULT);
   assert.doesNotMatch(plain.calls.reviews[0].body, /left out/);
+});
+
+test('the launcher is told once when a shared session\'s kept data is cleaned up, never while it can be resumed', async () => {
+  const ctx = setup();
+  const told = [];
+  ctx.launcher.forget = async (id, info) => { told.push([id, info.why]); };
+  await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = ctx.fleet.sessions();
+  ctx.statuses[session.id] = { state: 'done' };
+  await ctx.fleet.tick();
+  await ctx.fleet.stop(session, 'test');
+  await ctx.fleet.tick();
+  assert.deepEqual(told, [], 'a kept, resumable session is not forgotten');
+  await ctx.fleet.deleteShared(session, 'joel');
+  assert.deepEqual(told, [[session.id, 'deleted from the console by @joel']]);
+  ctx.advance(60 * 60_000);
+  await ctx.fleet.tick();
+  ctx.fleet.removeShared(session, 'joel');
+  await ctx.fleet.tick();
+  assert.equal(told.length, 1, 'told once');
+  assert.deepEqual(ctx.store.state.forgetPending, []);
+});
+
+test('a launcher that fails to forget is asked again on a later tick, and does not fail the cleanup', async () => {
+  const ctx = setup();
+  let failing = true;
+  const calls = [];
+  ctx.launcher.forget = async (id) => { calls.push(id); if (failing) throw new Error('the pool did not answer'); };
+  await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = ctx.fleet.sessions();
+  ctx.statuses[session.id] = { state: 'done' };
+  await ctx.fleet.tick();
+  await ctx.fleet.stop(session, 'test');
+  await ctx.fleet.deleteShared(session, 'joel');
+  assert.equal(session.kept, false, 'the cleanup went through');
+  assert.deepEqual(ctx.store.state.forgetPending.map((i) => i.id), [session.id]);
+  await ctx.fleet.tick();
+  assert.equal(calls.length, 1, 'not again before the retry delay');
+  ctx.advance(11 * 60_000);
+  await ctx.fleet.tick();
+  assert.equal(calls.length, 2, 'asked again');
+  failing = false;
+  ctx.advance(11 * 60_000);
+  await ctx.fleet.tick();
+  assert.equal(calls.length, 3);
+  assert.deepEqual(ctx.store.state.forgetPending, []);
+  ctx.advance(11 * 60_000);
+  await ctx.fleet.tick();
+  assert.equal(calls.length, 3, 'done, not asked again');
+});
+
+test('a launcher with no forget is unaffected, and a removed private session is forgotten after it left the list', async () => {
+  const ctx = setup();
+  const first = await ctx.fleet.startPrivate({ owner: 'joel', prompt: 'a' });
+  ctx.statuses[first.id] = { state: 'working' };
+  await ctx.fleet.tick();
+  await ctx.fleet.removePrivateSession({ owner: 'joel', id: first.id });
+  assert.equal(ctx.store.state.forgetPending, undefined, 'nothing queued for a launcher without forget');
+
+  const seen = [];
+  ctx.launcher.forget = async (id) => { seen.push([id, Boolean(ctx.fleet.find(id))]); };
+  const second = await ctx.fleet.startPrivate({ owner: 'joel', prompt: 'b' });
+  const third = await ctx.fleet.startPrivate({ owner: 'joel', prompt: 'c' });
+  ctx.statuses[second.id] = { state: 'working' };
+  ctx.statuses[third.id] = { state: 'working' };
+  await ctx.fleet.tick();
+  await ctx.fleet.removePrivateSession({ owner: 'joel', id: second.id });
+  assert.deepEqual(seen, [[second.id, false]], 'told once it is off the list, so no Resume of it exists');
+  await ctx.fleet.removePrivate('joel');
+  assert.deepEqual(seen.map(([id]) => id), [second.id, third.id]);
+});
+
+test('a launcher that never answers does not hold the cleanup', async () => {
+  const ctx = setup({ forgetTimeoutMs: 20 });
+  ctx.launcher.forget = () => new Promise(() => {});
+  const first = await ctx.fleet.startPrivate({ owner: 'joel', prompt: 'a' });
+  ctx.statuses[first.id] = { state: 'working' };
+  await ctx.fleet.tick();
+  const done = ctx.fleet.removePrivateSession({ owner: 'joel', id: first.id });
+  const result = await Promise.race([done.then(() => 'done'), new Promise((r) => setTimeout(() => r('hung'), 2_000))]);
+  assert.equal(result, 'done');
+  assert.equal(ctx.store.state.forgetPending.length, 1, 'kept for a retry');
 });
