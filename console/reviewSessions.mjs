@@ -103,7 +103,9 @@ export function leftOutNote(leftOut) {
   if (!Array.isArray(leftOut)) return '';
   return leftOut
     .filter((l) => agentsRegistry.REVIEW_AGENT_IDS.includes(l?.agent))
-    .map((l) => `${productOf(l.agent)} was left out of this review. The author can see why on My settings.`)
+    // Grok Build and OpenCode run on the author's own sign-in, which My settings explains; Claude Code and Codex on the
+    // team's keys, whose reason belongs to the installation.
+    .map((l) => `${productOf(l.agent)} was left out of this review.${['grok', 'opencode'].includes(l.agent) ? ' The author can see why on My settings.' : ''}`)
     .join(' ');
 }
 

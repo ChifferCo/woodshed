@@ -70,6 +70,7 @@ test('leftOutNote names the reviewers left out and nothing of why', () => {
   assert.equal(leftOutNote([{ agent: 'grok', code: 'expired' }]), 'Grok Build was left out of this review. The author can see why on My settings.');
   assert.equal(leftOutNote([{ agent: 'grok', code: 'off' }, { agent: 'opencode', code: 'no-key' }]),
     'Grok Build was left out of this review. The author can see why on My settings. OpenCode was left out of this review. The author can see why on My settings.');
+  assert.equal(leftOutNote([{ agent: 'codex', code: 'no-key' }]), 'Codex was left out of this review.', 'a team key\'s reason is not on My settings');
   assert.equal(leftOutNote([{ agent: 'evil [x](y)', code: 'expired' }]), '', 'an unknown reviewer is dropped');
   assert.equal(leftOutNote(null), '');
   assert.match(reviewRunningComment({ sessionUrl: null, leftOut: [{ agent: 'grok', code: 'expired' }] }), /Grok Build was left out of this review\./);
