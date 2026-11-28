@@ -122,46 +122,75 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
       const at = atOf(item);
       if (!at) continue;
       const i = bucketIndex(trend, at);
-      if (i >= 0) out[i][keyOf(item)]++;
+      if (i >= 0) { const k = keyOf(item); out[i][k] = (out[i][k] ?? 0) + 1; }
     }
     return out;
   }
   const dayCounts = (items, atOf, keyOf) => window.WoodshedAnalyticsDays.dayCounts(items, atOf, keyOf, data.since, data.until);
 
-  // Bars over the window: a single series, or two stacked (components/TrendBars). A bar's numbers are in its tooltip and
-  // the chart's label, never its colour alone. `buckets`: {start, a, b}; series name which of a and b they are.
+  // A y axis's ticks: a round step (1, 2 or 5 times a power of ten) that gives about four, up to the first at or over the max.
+  function niceTicks(max) {
+    max = Math.max(2, max); // an empty chart still has a 0 and a 2, never a zero-high axis
+    const raw = max / 4;
+    const mag = 10 ** Math.floor(Math.log10(raw));
+    const step = Math.max(1, [1, 2, 5, 10].map((m) => m * mag).find((v) => v >= raw));
+    const ticks = [];
+    for (let v = 0; v < max + step; v += step) { ticks.push(v); if (v >= max) break; }
+    return ticks;
+  }
+  // The x labels: about seven, spread evenly, the last one `today`; never two close enough to touch.
+  function axisLabels(trend) {
+    const every = Math.max(1, Math.ceil(trend.length / 7));
+    const out = [];
+    trend.forEach((b, i) => {
+      const last = i === trend.length - 1;
+      if (last) out.push({ i, text: 'today' });
+      else if (i % every === 0 && trend.length - 1 - i >= every * 0.75) out.push({ i, text: day(b.start) });
+    });
+    return out;
+  }
+
+  // The page's one chart: bars over the window, a single series or several stacked (components/TrendBars), with a y axis
+  // of labelled ticks on light gridlines, labelled days under, and a tooltip on hover or focus naming the day, each
+  // series and the total. `buckets`: {start, <series key>: count}; `series`: {key, cls, word, label}.
   function trendBars({ label, buckets, series, unit = data.step === 'day' ? 'Day of' : 'From', ico }) {
     const trend = buckets;
-    const totals = trend.map((b) => series.reduce((sum, s) => sum + b[s.key], 0));
-    const max = Math.max(1, ...totals);
-    const W_ = 600;
-    const H_ = 120;
-    const gap = trend.length > 40 ? 1 : trend.length > 20 ? 2 : 6;
-    const width = (W_ - gap * (trend.length - 1)) / trend.length;
-    const scale = (v) => (v / max) * (H_ - 4);
-    const bars = trend.map((b, i) => {
-      let y = H_;
-      const x = i * (width + gap);
-      const tip = `${unit} ${day(b.start)}: ${series.map((s) => `${b[s.key]} ${s.word}`).join(', ')}`;
-      const parts = series.map((s) => {
-        const hgt = scale(b[s.key]);
-        if (!hgt) return null;
-        y -= hgt;
-        // A 2px gap of ground between stacked parts.
-        return svg('rect', { class: `trend-bar ${s.cls}`, x, y: y + (y + hgt < H_ ? 1 : 0), width, height: Math.max(1, hgt - (y + hgt < H_ ? 2 : 0)), rx: 2 });
-      });
-      return svg('g', null, svg('title', null, tip), svg('rect', { class: 'trend-hit', x, y: 0, width, height: H_ }), parts);
+    const count = (b, s) => b[s.key] ?? 0;
+    const totals = trend.map((b) => series.reduce((sum, s) => sum + count(b, s), 0));
+    const ticks = niceTicks(Math.max(...totals));
+    const top = ticks[ticks.length - 1];
+    const tipFor = (b, total) => [h('strong', null, `${unit} ${day(b.start)}`),
+      ...series.filter((s) => series.length === 1 || count(b, s) > 0).map((s) => h('span', { class: 'trend-tip-row' }, h('i', { class: `trend-key ${s.cls}`, 'aria-hidden': 'true' }), `${n(count(b, s))} ${s.word}`)),
+      series.length > 1 && h('span', { class: 'trend-tip-row is-total' }, `${n(total)} in all`)];
+    const tip = h('div', { class: 'trend-tip', role: 'tooltip', hidden: true });
+    const show = (col, b, total, i) => {
+      tip.replaceChildren(...tipFor(b, total).filter(Boolean));
+      tip.hidden = false;
+      const mid = (i + 0.5) / trend.length;
+      tip.style.left = `${mid * 100}%`;
+      tip.classList.toggle('is-left', mid > 0.6);
+      col.classList.add('is-hot');
+    };
+    const hide = (col) => { tip.hidden = true; col.classList.remove('is-hot'); };
+    const cols = trend.map((b, i) => {
+      const col = h('div', {
+        class: 'trend-col', tabindex: '0',
+        'aria-label': `${unit} ${day(b.start)}: ${series.map((s) => `${count(b, s)} ${s.word}`).join(', ')}${series.length > 1 ? `, ${totals[i]} in all` : ''}`,
+        onmouseenter: () => show(col, b, totals[i], i), onmouseleave: () => hide(col), onfocus: () => show(col, b, totals[i], i), onblur: () => hide(col),
+      }, series.map((s) => count(b, s) > 0 && h('span', { class: `trend-seg ${s.cls}`, style: `height: ${(count(b, s) / top) * 100}%` })));
+      return col;
     });
-    const chart = svg('svg', {
-      viewBox: `0 0 ${W_} ${H_}`, preserveAspectRatio: 'none', class: 'trend-svg', role: 'img',
-      'aria-label': `${label}: ${trend.map((b, i) => `${day(b.start)} ${series.length > 1 ? series.map((s) => `${b[s.key]} ${s.word}`).join(', ') : totals[i]}`).join('; ')}`,
-    }, svg('line', { class: 'trend-base', x1: 0, x2: W_, y1: H_ - 0.5, y2: H_ - 0.5 }), bars);
+    const labels = axisLabels(trend);
     return h('div', { class: 'trend' },
       h('div', { class: 'trend-head' }, h('span', { class: 'figure-label' }, ico && icon(ico), label),
-        series.length > 1 && h('span', { class: 'trend-legend' }, series.map((s) => h('span', null, h('i', { class: `trend-key ${s.cls}`, 'aria-hidden': 'true' }), s.label))),
-        h('span', { class: 'trend-max mono' }, `max ${n(Math.max(...totals))}`)),
-      chart,
-      h('div', { class: 'trend-axis mono' }, h('span', null, day(trend[0]?.start)), h('span', null, 'today')));
+        series.length > 1 && h('span', { class: 'trend-legend' }, series.map((s) => h('span', null, h('i', { class: `trend-key ${s.cls}`, 'aria-hidden': 'true' }), s.label)))),
+      h('div', { class: 'trend-chart', role: 'group', 'aria-label': `${label}, up to ${top}` },
+        h('div', { class: 'trend-y mono', 'aria-hidden': 'true' }, ticks.map((t) => h('span', { style: `bottom: ${(t / top) * 100}%` }, n(t)))),
+        h('div', { class: 'trend-plot' },
+          h('div', { class: 'trend-grid', 'aria-hidden': 'true' }, ticks.map((t) => h('i', { style: `bottom: ${(t / top) * 100}%` }))),
+          h('div', { class: 'trend-cols', style: `gap: ${trend.length > 40 ? 1 : trend.length > 20 ? 3 : 6}px` }, cols),
+          tip),
+        h('div', { class: 'trend-x mono', 'aria-hidden': 'true' }, labels.map((l) => h('span', { style: `left: ${((l.i + 0.5) / trend.length) * 100}%` }, l.text)))));
   }
 
   // Everything below filters by the person and the repo picked (the By repo table keeps every repo, to pick from).
@@ -203,7 +232,11 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     const agents = Object.entries(counted).sort((a, b) => b[1] - a[1]);
     const total = narrowed ? mine.length : s.work;
     const privateCount = narrowed ? mine.filter((r) => r.private).length : s.private;
-    const buckets = data.step === 'day' ? dayCounts(mine, (r) => r.createdAt, () => 'a') : bucketCounts(data.trend, mine, (r) => r.createdAt, () => 'a');
+    const agentKey = (r) => (AGENT_NAMES[r.agent] ? r.agent : 'other');
+    const buckets = data.step === 'day' ? dayCounts(mine, (r) => r.createdAt, agentKey) : bucketCounts(data.trend, mine, (r) => r.createdAt, agentKey);
+    // One series for each agent in the window, in the colours of the Agents bar above, Claude at the bottom.
+    const agentSeries = ['claude', 'codex', 'grok', 'opencode', 'other'].filter((id) => mine.some((r) => agentKey(r) === id))
+      .map((id) => ({ key: id, cls: `is-agent-${id}`, word: id === 'other' ? 'other agents' : AGENT_NAMES[id], label: id === 'other' ? 'Other' : AGENT_NAMES[id] }));
     return group({ id: 'analytics-totals', label: 'Sessions', note: 'Work sessions started in the window: My Woodshed, and shared ones from a label, a comment or the console.' },
       figures([
         { label: 'Sessions started', icon: 'sessions', tone: 'violet', value: n(total), sub: `${n(privateCount)} My Woodshed · ${n(total - privateCount)} shared` },
@@ -212,7 +245,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
         { label: 'Most used agent', icon: 'agent', tone: 'amber', value: agents.length ? `${AGENT_NAMES[agents[0][0]] ?? agents[0][0]} ${pct(agents[0][1] / total)}` : '—', sub: total && agents.length ? 'of sessions, split below' : 'of sessions' },
       ]),
       agentMix(agents, total),
-      trendBars({ label: 'Sessions started', ico: 'sessions', buckets, series: [{ key: 'a', cls: 'is-violet', word: 'sessions', label: 'Sessions' }] }));
+      trendBars({ label: 'Sessions started', ico: 'sessions', buckets, series: agentSeries }));
   }
 
   // A stacked bar of the agents sessions ran on, each in the colour of its tag, with a tag and count for each.
@@ -330,14 +363,26 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
     }).filter((p) => p.sessions || p.woodshed.opened || p.other.opened);
   }
 
+  // A person's merge risk: a small stacked bar of their reviewed pull requests by level with each count in words under it.
+  // A dash means none of their pull requests was reviewed, so there is no risk to show; a level at 0 is not hidden.
+  function riskMix(p) {
+    const t = { Low: p.woodshed.tiers.Low + p.other.tiers.Low, Medium: p.woodshed.tiers.Medium + p.other.tiers.Medium, High: p.woodshed.tiers.High + p.other.tiers.High };
+    const total = t.Low + t.Medium + t.High;
+    if (!total) return h('span', { class: 'quiet', title: 'None of their pull requests was reviewed, so there is no merge risk to show' }, '—');
+    const words = `${t.Low} low, ${t.Medium} medium, ${t.High} high`;
+    return h('div', { class: 'risk-mix', title: `${words} (of ${total} reviewed)` },
+      h('span', { class: 'risk-bar', role: 'img', 'aria-label': `Merge risk: ${words}` },
+        [['is-low', t.Low], ['is-medium', t.Medium], ['is-high', t.High]].map(([c, v]) => v > 0 && h('span', { class: `risk-seg ${c}`, style: `flex: ${v} 1 0` }))),
+      h('span', { class: 'risk-mix-counts' },
+        h('span', { class: 'is-low' }, `${t.Low} low`), h('span', { class: 'is-medium' }, `${t.Medium} med`), h('span', { class: t.High ? 'is-high' : null }, `${t.High} high`)));
+  }
+
   function peopleGroup() {
     const picked = who();
     const people = peopleOf(repoPick());
     const mostSessions = Math.max(1, ...people.map((p) => p.sessions));
     const rows = people.map((p) => {
       const opened = p.woodshed.opened + p.other.opened;
-      const risky = p.woodshed.tiers.High + p.other.tiers.High;
-      const reviewed = (t) => t.Low + t.Medium + t.High;
       const pickedHere = sameLogin(p.login, picked);
       return h('tr', { class: pickedHere ? 'is-picked' : null },
         h('td', null, h('button', {
@@ -351,7 +396,7 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
         h('td', { class: 'num' }, `${n(p.other.opened)}`, h('span', { class: 'quiet' }, ` / ${n(p.other.merged)}`)),
         h('td', { class: 'num' }, opened ? pct(p.share) : '—'),
         h('td', { class: 'num' }, hours(p.woodshed.medianMergeHours), h('span', { class: 'quiet' }, ` / ${hours(p.other.medianMergeHours)}`)),
-        h('td', null, risky ? h('span', { class: 'pill is-bad' }, `${risky} high`) : h('span', { class: 'quiet' }, reviewed(p.woodshed.tiers) + reviewed(p.other.tiers) ? 'none high' : '—')),
+        h('td', null, riskMix(p)),
         h('td', { class: 'num' }, lines(p.woodshed.added + p.other.added, p.woodshed.removed + p.other.removed)));
     });
     return group({ id: 'analytics-people', label: `By person · ${people.length}`, note: repoPick() ? `Each person's sessions and pull requests on ${repoPick()}.` : 'Pick a name to see only their sessions, pull requests and repos below. Members who started nothing are listed too.' },
@@ -361,11 +406,11 @@ window.Woodshed.settingsPage('/analytics', (app, life) => {
           h('th', { scope: 'col', class: 'num' }, 'Sessions'),
           h('th', { scope: 'col', class: 'num', title: 'Days they started at least one session' }, 'Days'),
           h('th', { scope: 'col' }, 'Last'),
-          h('th', { scope: 'col', class: 'num', title: 'Opened through Woodshed / merged' }, 'Woodshed PRs'),
-          h('th', { scope: 'col', class: 'num', title: 'Opened without Woodshed / merged' }, 'Other PRs'),
+          h('th', { scope: 'col', class: 'num', title: 'Opened through Woodshed / merged' }, 'Woodshed PRs', h('span', { class: 'th-sub' }, 'opened / merged')),
+          h('th', { scope: 'col', class: 'num', title: 'Opened without Woodshed / merged' }, 'Other PRs', h('span', { class: 'th-sub' }, 'opened / merged')),
           h('th', { scope: 'col', class: 'num', title: 'Of the pull requests they opened, how many went through Woodshed' }, 'Share'),
-          h('th', { scope: 'col', class: 'num', title: 'Median opened to merged: through Woodshed / without' }, 'To merge'),
-          h('th', { scope: 'col' }, 'Merge risk'),
+          h('th', { scope: 'col', class: 'num', title: 'Median opened to merged: through Woodshed / without' }, 'To merge', h('span', { class: 'th-sub' }, 'Woodshed / without')),
+          h('th', { scope: 'col', title: 'Their reviewed pull requests by merge risk. A dash: none was reviewed' }, 'Merge risk'),
           h('th', { scope: 'col', class: 'num', title: 'A rough size, not a measure of output' }, 'Lines'))),
         h('tbody', null, rows))) : h('p', { class: 'empty' }, 'Nobody has started a session or opened a pull request in this window.'));
   }

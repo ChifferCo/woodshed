@@ -63,7 +63,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - A count over time (sessions started each week, pull requests merged) is trend bars (`components/TrendBars`), under
   the group's figures in the same box: `slate` bars, Woodshed's on the rest's `idle-dot` grey when there are two, the
   numbers in each bar's tooltip. Never a line chart with two scales, and never a status colour for a count. Analytics may
-  give a chart a tone of its own (violet for sessions, teal for pull requests without Woodshed), and draws merge risk as a
+  stack a chart by agent in the agents' tag colours, and give pull requests without Woodshed teal, and draws merge risk as a
   stacked bar of green, amber and red with a count in words for each level: the tier is a status, so its colour is allowed there.
 - The Analytics page is the console's own (admins only), a page of its own under Console beside Settings, not one of
   Settings' tabs. It counts a My Woodshed session and links its pull request, but never shows its title or prompt:
