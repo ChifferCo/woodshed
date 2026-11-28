@@ -78,6 +78,12 @@ function serve(fleet) {
     userSettings: {
       claudeToken: async () => null,
       agentAuth: async (login, id) => (id === AGENT ? SIGN_INS[id] : null),
+      // The real console hands the sign-in out inside its turn (userSettings.agentAuthTurn), so a refresh of a Grok login is
+      // done or not begun when a session reads it: this one runs the same path and says so, never with the value.
+      agentAuthTurn: async (login, id, fn) => {
+        console.log('agentInImage: sign-in read in its turn', { login, agent: id });
+        return fn({ read: async () => (id === AGENT ? SIGN_INS[id] : null), save: async () => {} });
+      },
       ownFiles: async () => ({}),
       gitIdentity: () => ({ name: null, email: null }),
       terminal: () => 'tmux',

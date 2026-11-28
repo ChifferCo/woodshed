@@ -383,7 +383,10 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
   const codex = session.options?.agent === 'codex';
   // Grok Build and OpenCode run on their owner's own sign-in, and on nothing else (shared/agents.cjs).
   const own = agents.OWN_SIGN_IN_AGENTS.includes(session.options?.agent) ? agents.agent(session.options.agent) : null;
-  const agentAuth = own && userSettings ? await userSettings.agentAuth(session.owner, own.id) : null;
+  // Read in the sign-in's turn, so a refresh by the console (grokLogin.mjs) is done, or not begun, when it is handed out.
+  const agentAuth = own && userSettings
+    ? await (userSettings.agentAuthTurn ? userSettings.agentAuthTurn(session.owner, own.id, ({ read }) => read()) : userSettings.agentAuth(session.owner, own.id))
+    : null;
   if (own && !agentAuth) {
     console.warn(`sessionApi: no ${own.product} sign-in for the owner`, { sessionId: session.id, owner: session.owner, agent: own.id });
     return reply(res, 409, { error: `@${session.owner} has no ${own.product} sign-in saved on My settings` });

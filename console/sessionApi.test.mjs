@@ -1315,3 +1315,27 @@ test('/repo-settings hands out the typed values, and logs none of it, when a pro
     assert.ok(said.every((l) => !l.startsWith('sessionApi: repo settings not read')), `${what}: nothing left for the session API to catch and log`);
   }
 });
+
+test('a Grok session starting while the console refreshes its owner\'s login is handed the refreshed one, read in the sign-in\'s turn', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const order = [];
+  let current = 'old-login';
+  const userSettings = {
+    claudeToken: async () => { throw new Error('never asked for a Claude token'); },
+    agentAuth: async () => { throw new Error('read outside the turn'); },
+    agentAuthTurn: async (login, id, fn) => {
+      order.push(`turn ${login}/${id}`);
+      return fn({ read: async () => current });
+    },
+    ownFiles: async () => ({}), gitIdentity: () => null,
+  };
+  const sessions = [{ id: 'aaaaaaaa', status: 'starting', token: 'grok-token', owner: 'joel', options: { agent: 'grok' } }];
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  current = 'refreshed-login';
+  const got = await request(server.address().port, { path: '/settings', authorization: 'Bearer grok-token' });
+  assert.equal(got.body.agentAuth, 'refreshed-login');
+  assert.deepEqual(order, ['turn joel/grok']);
+});

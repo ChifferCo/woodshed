@@ -64,8 +64,8 @@ export function ownReviewCredential(id, saved, now = Date.now()) {
     const cred = grokCredentialOf(saved, now);
     if (!cred) return { why: 'the author\'s saved Grok Build sign-in has no token' };
     if (cred.expired) return { why: 'the author\'s saved Grok Build login has expired' };
-    // A login whose end is not known is not offered: the console never refreshes one, so a review could start on a login
-    // that has already ended and spend its run on refusals.
+    // A login whose end is not known is not offered: the console cannot tell when to refresh it (grokLogin.mjs), so a
+    // review could start on a login that has already ended and spend its run on refusals.
     if (cred.source === 'login' && cred.expiresAt === null) return { why: 'the author\'s saved Grok Build login does not say when it expires' };
     if (!/^[\x21-\x7e]+ [\x21-\x7e]+$/.test(cred.authorization)) return { why: 'the author\'s saved Grok Build sign-in has a token that cannot be sent' };
     return { via: cred.source, base: cred.base, authorization: cred.authorization };
@@ -96,10 +96,11 @@ export function bestChoice(available, { expanded = true } = {}) {
  *            usesOwnAgentForReviews?: (login: string, id: string) => boolean,
  *            usesExpandedReviewDefault?: (login: string) => boolean,
  *            agentAuth?: (login: string, id: string) => Promise<string|null>}|null,
+ *          grokLogin?: {fresh: (login: string) => Promise<{saved: string|null, why: string|null}>}|null,
  *          now?: () => number}} deps
  *   `connected` says whether the console has each team key: Anthropic's and OpenAI's
  */
-export function createReviewAgents({ connected, userSettings = null, now = Date.now }) {
+export function createReviewAgents({ connected, userSettings = null, grokLogin = null, now = Date.now }) {
   async function teamKeys() {
     try {
       return { ...(await connected()), why: null };
@@ -135,8 +136,10 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
     const product = agentsRegistry.agent(id).product;
     if (!login || !userSettings?.usesOwnAgentForReviews?.(login, id)) return { use: null, off: true, why: `the author has no ${product} sign-in on for reviews` };
     try {
-      const cred = ownReviewCredential(id, await userSettings.agentAuth(login, id), now());
-      if (cred.why) return { use: null, why: cred.why };
+      // A Grok login that has ended is refreshed first, when it can be (grokLogin.mjs).
+      const renewed = id === 'grok' && grokLogin ? await grokLogin.fresh(login) : null;
+      const cred = ownReviewCredential(id, renewed ? renewed.saved : await userSettings.agentAuth(login, id), now());
+      if (cred.why) return { use: null, why: renewed?.why ?? cred.why };
       return { use: id === 'grok' ? { login, via: cred.via } : { login, provider: cred.provider }, why: null };
     } catch (err) {
       return { use: null, unread: true, why: `the author's ${product} sign-in could not be read: ${String(err?.message ?? err).split('\n')[0]}` };

@@ -38,7 +38,7 @@ function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 }
 
-async function setup(t, { on = { grok: ['gil', 'lou', 'old'], opencode: ['oto', 'ovi'] }, signIns = SIGN_INS } = {}) {
+async function setup(t, { on = { grok: ['gil', 'lou', 'old'], opencode: ['oto', 'ovi'] }, signIns = SIGN_INS, grokLogin = null } = {}) {
   const seen = [];
   const upstream = http.createServer((req, res) => {
     let body = '';
@@ -56,7 +56,7 @@ async function setup(t, { on = { grok: ['gil', 'lou', 'old'], opencode: ['oto', 
     agentAuth: async (login, id) => { reads.push(id); return signIns[id]?.[login] ?? null; },
   };
   const reviewAgentProxy = createReviewAgentProxy({
-    userSettings, now: () => NOW,
+    userSettings, grokLogin, now: () => NOW,
     grokUpstreams: { key: `${up}/xai/v1`, login: `${up}/grok-login/v1` }, opencodeUpstreams: { anthropic: `${up}/anthropic`, openai: `${up}/openai` },
   });
   const handle = createSessionApi({ fleet: { sessions: () => SESSIONS }, tokens: { token: async () => ({}) }, reviewAgentProxy });
@@ -116,6 +116,23 @@ test('an expired Grok login is refused, and says so to the review', async (t) =>
   assert.match(JSON.parse(res.body).error.message, /@old's saved Grok Build login has expired/);
   assert.equal(seen.length, 0);
   assert.ok(lines.some((l) => l.includes('reviewAgentProxy: refused, the author\'s sign-in not usable')));
+});
+
+test('a Grok login that ended mid-review is refreshed for the next call, and goes on with the new access token', async (t) => {
+  const lines = logged(t);
+  const renewed = JSON.stringify({ 'https://auth.x.ai::made-up': { key: 'made-up-renewed-access', refresh_token: 'made-up-renewed-refresh', expires_at: '2026-11-18T13:00:00Z' } });
+  const { seen, call } = await setup(t, { grokLogin: { fresh: async (login) => ({ saved: login === 'old' ? renewed : SIGN_INS.grok[login], state: 'refreshed', why: null }) } });
+  assert.equal((await call('review-old')).status, 200);
+  assert.equal(seen[0].headers.authorization, 'Bearer made-up-renewed-access');
+  assert.ok(!lines.join('\n').includes('made-up-renewed'), 'no token is logged');
+});
+
+test('a Grok login the console could not refresh is refused with the refresher\'s reason', async (t) => {
+  const { seen, call } = await setup(t, { grokLogin: { fresh: async () => ({ saved: SIGN_INS.grok.old, state: 'expired', why: 'the author\'s saved Grok Build login has expired, and a Grok session of the author\'s is running: it refreshes the login when it stops' }) } });
+  const res = await call('review-old');
+  assert.equal(res.status, 403);
+  assert.match(JSON.parse(res.body).error.message, /@old's saved Grok Build login has expired, and a Grok session of @old's is running/);
+  assert.equal(seen.length, 0);
 });
 
 test('a switch turned off, or a sign-in removed, since the review started stops it at the next call', async (t) => {

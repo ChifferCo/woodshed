@@ -15,6 +15,10 @@ still says its value.
 - A list people add to (Settings' repos, its MCP servers) is a row per thing, then **Add a …** as the group's last
   row. A thing's row opens on its own form, with Remove outlined in `bad` beside its Save: there is no Edit button,
   and closing the row is its Cancel. With nothing yet, a plain row says so above the Add row.
+- A sign-in that was saved and can no longer be used for something says so in its pill, in words, instead of a plain
+  **Saved**: Grok Build's login that has expired and could not be refreshed is **Expired for reviews** (`is-warn`), and
+  its line gives the reason in one sentence (a Grok session of theirs is running, xAI refused the refresh, the login
+  holds no refresh token) instead of the usual value. The row stays a button, and Replace the sign-in is the fix.
 - A row of numbers says **Defaults** or **Changed** (`is-ok`) on its pill, and **Not saved** (`is-warn`) while a typed
   number waits for its Save. Numbers that are saved together are one row; ones that are not are two.
 - A setting that is one pick (the theme, the default project) has its control on the row and no form to open: a
