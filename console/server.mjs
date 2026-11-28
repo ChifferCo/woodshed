@@ -961,7 +961,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, stillSignedIn = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, appPorts = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, stillSignedIn = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, grokLogin = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
   cli = null, reviewReadiness = null, analytics = null,
 }) {
@@ -1807,6 +1807,9 @@ export function createHandler({
 
   function myView(login) {
     const view = userSettings ? userSettings.view(login) : { claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, agentAuth: {}, setUp: false, available: false };
+    // A saved Grok login that has ended and could not be refreshed (grokLogin.mjs): the row says so, not a plain Saved.
+    const grok = view.agentAuth?.grok?.set ? grokLogin?.cached(login) : null;
+    if (grok) view.agentAuth = { ...view.agentAuth, grok: { ...view.agentAuth.grok, state: grok.state, endsAt: grok.endsAt, why: grok.why } };
     return {
       login, ...view,
       // The agents New session offers: each only with something to run it on.
@@ -2149,7 +2152,10 @@ export function createHandler({
           await firstDatabases(login);
         }
         // As for Codex: the Grok models list was read on the sign-in that is gone.
-        if (agentMatch[1] === 'grok') grokModels?.forget(login);
+        if (agentMatch[1] === 'grok') {
+          grokModels?.forget(login);
+          grokLogin?.forget(login);
+        }
         return reply(res, 200, myView(login));
       }
       if (pathname === MY_LIMITS_PATH) {
@@ -3316,6 +3322,10 @@ export function createHandler({
         console.warn('userSettings: stored sign-ins not followed', { message: String(err?.message ?? err).split('\n')[0] });
       });
       await Promise.all([readProjectBlockers(user.login), first ? looking : null, readTeamOpenAiKey(), readSavedChoices(user.login)]);
+      // The Grok login's state, which refreshes one that has ended when it can: after the first look, which says whether one is saved.
+      if (grokLogin && userSettings?.view(user.login).agentAuth?.grok?.set) {
+        await grokLogin.status(user.login).catch((err) => console.warn('grokLogin: state not read', { message: String(err?.message ?? err).split('\n')[0].slice(0, 120) }));
+      }
       return reply(res, 200, myView(user.login));
     }
     if (pathname === '/api/my/reviews') return reply(res, 200, await myReviewsView(user.login));

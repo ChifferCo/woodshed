@@ -107,7 +107,7 @@ test('an expired login is not sent, and says a Grok session refreshes it', async
   const got = await grokModels.list('ana');
   assert.equal(fetch.calls.length, 0);
   assert.deepEqual([got.models, got.source], [[], null]);
-  assert.match(got.note, /type a model name, since your saved Grok Build login has expired: a Grok session refreshes it when it stops/);
+  assert.match(got.note, /type a model name, since your saved Grok Build login has expired and the console could not refresh it: a Grok session refreshes it when it stops/);
 });
 
 test('no sign-in, a timeout or an empty list gives no list and says why', async (t) => {

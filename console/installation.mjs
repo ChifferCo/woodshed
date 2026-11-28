@@ -41,6 +41,7 @@ import { createOpenAiProxy } from './openaiProxy.mjs';
 import { createReviewAgentProxy } from './reviewAgentProxy.mjs';
 import { createCodexModels } from './codexModels.mjs';
 import { createGrokModels } from './grokModels.mjs';
+import { createGrokLogin } from './grokLogin.mjs';
 import { createSessionApi, sessionForToken } from './sessionApi.mjs';
 import { createSessionStarts, sessionForStartToken } from './sessionStarts.mjs';
 import { createReviewSource } from './review.mjs';
@@ -417,8 +418,10 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const openai = createOpenAiProxy({ secrets, teamKey: config.sessionEnv.OPENAI_API_KEY ?? null, userSettings });
   const codexModels = createCodexModels({ userSettings, teamCredential: openai.teamCredential });
   // A review's Grok Build and OpenCode, on its author's own sign-in alone: there is no team key for them.
-  const reviewAgentProxy = createReviewAgentProxy({ userSettings });
-  const grokModels = createGrokModels({ userSettings });
+  // A Grok login is refreshed by the console only while none of its owner's Grok sessions runs (grokLogin.mjs).
+  const grokLogin = createGrokLogin({ userSettings, sessions: () => fleet.sessions() });
+  const reviewAgentProxy = createReviewAgentProxy({ userSettings, grokLogin });
+  const grokModels = createGrokModels({ userSettings, grokLogin });
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
   const access = mcpAccess({ loaded, secrets, launcher: provider.launcher });
@@ -427,7 +430,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // Who reviews a pull request in a review session, as its author chose on My settings, from what the team keys and their
   // own sign-ins can run.
   const reviewAgents = createReviewAgents({
-    userSettings,
+    userSettings, grokLogin,
     connected: async () => {
       const [claude, codex] = await Promise.all([anthropic.teamCredential(), openai.teamCredential()]);
       return { claude: Boolean(claude), codex: Boolean(codex) };
@@ -576,7 +579,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const handle = createHandler({
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
-    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, grokModels, openaiTeamKey: openai.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
+    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, grokModels, grokLogin, openaiTeamKey: openai.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
     workflowLinks: () => projectReader.workflowLinks(),
     projectAccess,

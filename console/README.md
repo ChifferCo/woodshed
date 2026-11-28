@@ -963,8 +963,8 @@ Grok Build's **Model** is a menu when the console could read its models on your 
 https://cli-chat-proxy.grok.com/v1/models` with its access token, and an xAI key `GET https://api.x.ai/v1/models`, whose
 image and video models a session cannot use and are left out. The list is kept 10 minutes, tried again a minute after a
 failure, and forgotten when you save or remove the sign-in. **Effort** is then the picked model's efforts, its default
-marked, kept to the registry's. As for Codex, the console never refreshes the login: one whose `expires_at` has passed is
-not sent, and gives your last list read or none. With none (no sign-in, an expired login, xAI not answering) the
+marked, kept to the registry's. Unlike Codex's, a Grok login the console finds ended (or ending within 10 minutes) is refreshed first
+(`grokLogin.mjs`, below); one that still could not be is not sent, and gives your last list read or none. With none (no sign-in, an expired login, xAI not answering) the
 Model is the box to type in again, and a line under the menus says why. A start is checked against the registry's shape
 alone, never the list, so a model typed while the list cannot be read still starts.
 
@@ -1479,8 +1479,21 @@ Grok Build and OpenCode review the same way, on the author's own sign-in alone, 
   It runs with `--disallowed-tools x_search`, since `--disable-web-search` leaves xAI's X search in, and the proxy takes
   the `id` off the reasoning items it sends back on `/v1/responses` (reviewAgentScope.mjs says why). The proxy sends
   them on with the author's xAI key to `api.x.ai/v1`, or with a login's access token to `cli-chat-proxy.grok.com/v1`,
-  only while its `expires_at` is ahead: the console never refreshes a login (`grokModels.mjs` says why), which a Grok
-  session of theirs does at its stop.
+  only while its `expires_at` is ahead. The console refreshes a login that has ended, or ends within 10 minutes, when a
+  review starts, when My settings or New session reads it, and on each call of a review (`grokLogin.mjs`): it reads
+  xAI's `.well-known/openid-configuration` on the issuer in the login's scope (`https://auth.x.ai` alone, no other
+  host), and posts a `refresh_token` grant with the scope's client id to its `token_endpoint` (a public client: no
+  secret; measured from grok 1.0.x's binary and xAI's discovery document). xAI rotates the refresh token, so the
+  console refreshes **only inside that sign-in's own turn** (`userSettings.agentAuthTurn`, which My settings' save, a
+  session's write-back and the handing of the login to a starting session also take) and **only while none of the
+  owner's Grok sessions is queued, starting, running or stopping**: such a session holds the refresh token and writes its
+  own refresh back at its stop, which a refresh by the console would kill. Then the login is left as it is, the review
+  leaves Grok Build out, and My settings' Grok Build row says **Expired for reviews** with why (a session of yours is
+  running, xAI refused the refresh, the console could not reach xAI, or the login holds no refresh token). A session
+  that starts meanwhile is in the fleet before it asks for the login, and its read waits for the turn, so it is given
+  the refreshed one. xAI refusing a refresh (a 4xx but 408 and 429) is not tried again until a new login is saved,
+  since sending a rotated token again can end its whole family; xAI not answering is tried again after a minute. The
+  refresh keeps every other field of `auth.json`, and nothing of it, no token, is logged.
 - **OpenCode** reviews only on an API key (`{type: 'api'}`) of Anthropic or OpenAI, the first of those the author's
   `auth.json` has (`OPENCODE_REVIEW_PROVIDERS` in shared/agents.cjs), and the session gets `REVIEW_OPENCODE_PROVIDER`.
   Its own config points that provider alone at the console's `/opencode/<provider>/v1` (its `baseURL`), with the

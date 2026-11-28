@@ -220,3 +220,25 @@ test('an author\'s Grok Build or OpenCode sign-in that could not be read is said
   assert.deepEqual([r.agents, r.keysUnread], [[], true]);
   assert.match(r.why, /the author's Grok Build sign-in could not be read: Secrets Manager timed out/);
 });
+
+test('an expired Grok login is refreshed before Grok Build is left out of a review, and says why when it cannot be', async () => {
+  const fresh = JSON.stringify({ 'https://auth.x.ai::made-up': { key: 'made-up-new-access', refresh_token: 'made-up-new-refresh', expires_at: '2026-11-18T13:00:00Z' } });
+  const asked = [];
+  const make = (answer) => createReviewAgents({
+    connected: async () => ({ claude: true, codex: true }),
+    userSettings: {
+      reviewAgents: () => 'claude+grok', usesOwnTokenForShared: () => false, usesOwnCodexForReviews: () => false, usesExpandedReviewDefault: () => true,
+      usesOwnAgentForReviews: (login, id) => id === 'grok' && login === 'old',
+      agentAuth: async () => { throw new Error('read through the refresher alone'); },
+    },
+    grokLogin: { fresh: async (login) => { asked.push(login); return answer; } },
+    now: () => NOW,
+  });
+  const ok = await make({ saved: fresh, state: 'refreshed', why: null }).forReview({ login: 'old' });
+  assert.deepEqual(ok.agents, ['claude', 'grok']);
+  assert.deepEqual(ok.ownSignIns, { grok: { login: 'old', via: 'login' } });
+  assert.deepEqual(asked, ['old']);
+  const held = await make({ saved: AGENT_SIGN_INS.grok.old, state: 'expired', why: 'the author\'s saved Grok Build login has expired, and a Grok session of the author\'s is running: it refreshes the login when it stops' }).forReview({ login: 'old' });
+  assert.deepEqual(held.agents, ['claude']);
+  assert.match(held.why, /Grok Build left out: the author's saved Grok Build login has expired, and a Grok session of the author's is running/);
+});
