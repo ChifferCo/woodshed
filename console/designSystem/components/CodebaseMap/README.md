@@ -7,8 +7,9 @@ no new colour tokens. Key-change emphasis stays off orange (`--accent` is reserv
 Architecture section's teal `--c-arch` (`#0f766e` in light, `#2dd4bf` in dark: 5.47:1 light and 8.45:1 dark on `--panel`
 for outlined `KEY` tags and highway counts), additions use `--add`, deletions use `--del`, and interactive links, hovers,
 focus outlines and the minimap viewport use `--slate`. The preview shows it in the console's nearest tokens: `--ink` is
-`ink`, `--muted` is `meta`, `--rule` is `line-soft`, `--rule-strong` is `line`, `--panel` is `ground`, `--sunk` is
-`stopped`, `--add` is `green`, `--del` is `bad`, `--c-arch` is `proj-teal`, `--slate` is `slate`.
+`ink`, `--muted` is `meta` on `ground` and `sub` on `stopped`, `--rule` is `line-soft`, `--rule-strong` is `line`,
+`--panel` is `ground`, `--sunk` is `stopped`, `--add` is `green`, `--del` is `bad`, `--c-arch` is `proj-teal`, and
+`--slate` is `slate`.
 
 - **Semantic zoom.** Zoomed out, each module district shows its name, a short plain-English summary (from its README,
   package description or entrypoint doc comment), file and line counts, and its change badge (`2 key · 1 minor +71 −9`).
