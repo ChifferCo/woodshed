@@ -17,7 +17,7 @@ them, or in a screenshot, until they ask to see it.
   and when ("Kept since 3 May"), and a new paste replaces it ("Leave empty to keep the saved one").
 - The sentence under it says the secret is kept sealed and never shown again, when that is so.
 
-The console's own pages draw it in the browser (My settings' Claude token, Settings → Slack's keys, an MCP server's
+The console's own pages draw it in the browser (My settings' Claude token and the sign-in files pasted for Codex, Grok Build, OpenCode and Antigravity CLI, Settings → Slack's keys, an MCP server's
 header value, Secrets & webhooks). A program embedding the console draws it on its server with `secretField` in
 `console/settingsMarkup.mjs`, which takes no value and draws its label when given one; `public/hostRows.js` makes its Show work. `.secret-field` in
 `public/style.css` lays out the field and its button.
